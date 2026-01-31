@@ -25,7 +25,25 @@
         "command": "cybershuttle.openWorkspace",
         "title": "CyberShuttle: Open Workspace"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cybershuttle",
+          "title": "CyberShuttle",
+          "icon": "resources/cybershuttle.svg"
+        }
+      ]
+    },
+    "views": {
+      "cybershuttle": [
+        {
+          "type": "webview",
+          "id": "cybershuttle.sidebarView",
+          "name": "CyberShuttle"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

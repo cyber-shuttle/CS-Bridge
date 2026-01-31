@@ -3,6 +3,7 @@
 import * as vscode from 'vscode';
 import { CsCommands } from './cscommands';
 import { CsStorage } from './csstorage';
+import { CybershuttleViewProvider } from './CybershuttleViewProvider';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -12,6 +13,13 @@ export function activate(context: vscode.ExtensionContext) {
 	// This line of code will only be executed once when your extension is activated
 	console.log('Congratulations, your extension "cybershuttle" is now active!');
 	const csStorage = new CsStorage(context.secrets);
+
+	// Register the webview sidebar provider
+	const sidebarProvider = new CybershuttleViewProvider(context.extensionUri);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.viewType, sidebarProvider)
+	);
+
 	// The command has been defined in the package.json file
 	// Now provide the implementation of the command with registerCommand
 	// The commandId parameter must match the command field in package.json
