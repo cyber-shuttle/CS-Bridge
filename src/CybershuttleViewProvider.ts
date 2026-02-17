@@ -122,8 +122,38 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.refresh();
                     break;
                 }
+                case 'addSshHost': {
+                    this.addSshHost();
+                    break;
+                }
             }
         });
+    }
+
+    /**
+     * Add a new SSH host using VS Code Remote-SSH extension
+     */
+    private async addSshHost() {
+        // Try different commands that Remote-SSH extension provides
+        try {
+            // This command opens the "Add New SSH Host" dialog
+            await vscode.commands.executeCommand('opensshremotes.addNewSshHost');
+        } catch {
+            try {
+                // Alternative command
+                await vscode.commands.executeCommand('remote-ssh.addNewSshHost');
+            } catch {
+                // If Remote-SSH commands aren't available, show instructions
+                const action = await vscode.window.showWarningMessage(
+                    'Remote-SSH extension is required to add SSH hosts. Would you like to install it?',
+                    'Install Extension',
+                    'Cancel'
+                );
+                if (action === 'Install Extension') {
+                    vscode.commands.executeCommand('workbench.extensions.installExtension', 'ms-vscode-remote.remote-ssh');
+                }
+            }
+        }
     }
 
     /**
@@ -340,6 +370,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             font-size: 11px;
             margin: 0;
         }
+        .header-actions {
+            display: flex;
+            gap: 4px;
+        }
         .section {
             margin-bottom: 20px;
         }
@@ -357,7 +391,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     <div class="section">
         <h3>
             SSH Connections
-            <button id="refresh-btn" class="refresh-btn">Refresh</button>
+            <div class="header-actions">
+                <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
+                <button id="refresh-btn" class="refresh-btn" title="Refresh">↻</button>
+            </div>
         </h3>
         <div id="ssh-hosts">
             ${hostsHtml}
@@ -377,6 +414,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         document.getElementById('refresh-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'refresh' });
+        });
+
+        document.getElementById('add-ssh-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'addSshHost' });
         });
 
         // Add click handlers to all connect buttons
