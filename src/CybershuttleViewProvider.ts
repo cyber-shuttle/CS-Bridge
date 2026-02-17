@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { exec } from 'child_process';
+import * as crypto from 'crypto';
+import { spawn } from 'child_process';
 
 interface SshHost {
     name: string;
@@ -15,9 +16,29 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     private _view?: vscode.WebviewView;
     private _outputChannel: vscode.OutputChannel;
+    private _sshControlDir: string;
 
     constructor(private readonly _extensionUri: vscode.Uri) {
         this._outputChannel = vscode.window.createOutputChannel('CyberShuttle');
+        // Short path to stay under macOS 104-byte Unix socket limit
+        this._sshControlDir = path.join(os.homedir(), '.cs-ssh');
+        if (!fs.existsSync(this._sshControlDir)) {
+            fs.mkdirSync(this._sshControlDir, { mode: 0o700 });
+        }
+    }
+
+    /**
+     * Get SSH args for connection multiplexing (ControlMaster).
+     * Uses a short hashed socket name to stay under the 104-byte limit.
+     */
+    private getControlMasterArgs(hostName: string): string[] {
+        const hash = crypto.createHash('sha256').update(hostName).digest('hex').substring(0, 16);
+        const socketPath = path.join(this._sshControlDir, hash);
+        return [
+            '-o', `ControlMaster=auto`,
+            '-o', `ControlPath=${socketPath}`,
+            '-o', `ControlPersist=600`,
+        ];
     }
 
     /**
@@ -182,10 +203,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * List files on a remote SSH host and display in Output channel
+     * List files on a remote SSH host and display in Output channel.
+     * Shows password/passphrase prompts as VS Code input boxes (like Remote-SSH)
+     * using an SSH_ASKPASS helper script for IPC.
      */
     private async listRemoteFiles(hostName: string) {
-        // Prompt for the remote path to list
         const remotePath = await vscode.window.showInputBox({
             title: `List files on ${hostName}`,
             prompt: 'Enter the remote directory path to list',
@@ -199,25 +221,109 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         this._outputChannel.show(true);
         this._outputChannel.appendLine(`\n--- Listing files on ${hostName}:${remotePath} ---`);
-        this._outputChannel.appendLine(`Running: ssh ${hostName} "ls -la ${remotePath}"`);
-        this._outputChannel.appendLine('');
 
-        exec(`ssh ${hostName} "ls -la ${remotePath}"`, (error, stdout, stderr) => {
-            if (error) {
-                this._outputChannel.appendLine(`Error: ${error.message}`);
-                if (stderr) {
-                    this._outputChannel.appendLine(`stderr: ${stderr}`);
-                }
-                vscode.window.showErrorMessage(`Failed to list files on ${hostName}: ${error.message}`);
+        // Create a temp directory for askpass IPC
+        const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
+        const cancelFile = path.join(sessionDir, 'cancel');
+
+        // Path to our askpass helper script
+        const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
+
+        // Detach stdin so SSH is forced to use SSH_ASKPASS
+        const sshProcess = spawn('ssh', [
+            ...this.getControlMasterArgs(hostName),
+            '-o', 'NumberOfPasswordPrompts=3',
+            hostName,
+            `ls -la ${remotePath}`
+        ], {
+            env: {
+                ...process.env,
+                SSH_ASKPASS: askpassScript,
+                SSH_ASKPASS_REQUIRE: 'force',
+                CS_ASKPASS_DIR: sessionDir,
+                DISPLAY: ':0',
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stdoutData = '';
+        let stderrData = '';
+        let disposed = false;
+        // Track prompt files we've already handled
+        const handledPrompts = new Set<string>();
+
+        sshProcess.stdout.on('data', (data: Buffer) => {
+            stdoutData += data.toString();
+        });
+
+        sshProcess.stderr.on('data', (data: Buffer) => {
+            stderrData += data.toString();
+        });
+
+        // Poll for prompt-* files from the askpass script
+        const pollInterval = setInterval(async () => {
+            if (disposed) {
                 return;
             }
 
-            if (stderr) {
-                this._outputChannel.appendLine(`stderr: ${stderr}`);
-            }
+            try {
+                const files = fs.readdirSync(sessionDir);
+                for (const file of files) {
+                    if (!file.startsWith('prompt-') || handledPrompts.has(file)) {
+                        continue;
+                    }
 
-            this._outputChannel.appendLine(stdout);
-            this._outputChannel.appendLine(`--- End of listing ---\n`);
+                    // Mark as handled immediately to prevent duplicate input boxes
+                    handledPrompts.add(file);
+
+                    const promptFilePath = path.join(sessionDir, file);
+                    const content = fs.readFileSync(promptFilePath, 'utf-8');
+                    const { id, prompt } = JSON.parse(content);
+                    const responseFile = path.join(sessionDir, `response-${id}`);
+
+                    const password = await vscode.window.showInputBox({
+                        title: `SSH Authentication — ${hostName}`,
+                        prompt: prompt.trim(),
+                        password: true,
+                        ignoreFocusOut: true,
+                    });
+
+                    if (password !== undefined) {
+                        fs.writeFileSync(responseFile, password, 'utf-8');
+                    } else {
+                        fs.writeFileSync(cancelFile, '', 'utf-8');
+                        sshProcess.kill();
+                    }
+                }
+            } catch {
+                // Ignore file access errors during polling
+            }
+        }, 200);
+
+        const cleanup = () => {
+            disposed = true;
+            clearInterval(pollInterval);
+            try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+        };
+
+        sshProcess.on('close', (code: number | null) => {
+            cleanup();
+            if (code === 0) {
+                this._outputChannel.appendLine(stdoutData);
+                this._outputChannel.appendLine(`--- End of listing ---\n`);
+            } else {
+                this._outputChannel.appendLine(`SSH exited with code ${code}`);
+                if (stderrData) {
+                    this._outputChannel.appendLine(stderrData);
+                }
+                vscode.window.showErrorMessage(`Failed to list files on ${hostName} (exit code ${code})`);
+            }
+        });
+
+        sshProcess.on('error', (err: Error) => {
+            cleanup();
+            this._outputChannel.appendLine(`Error: ${err.message}`);
+            vscode.window.showErrorMessage(`Failed to run SSH: ${err.message}`);
         });
     }
 
