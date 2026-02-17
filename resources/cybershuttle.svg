@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- C letter -->
+  <path fill="#C5C5C5" d="M2 2h5v2H4v8h3v2H2V2z"/>
+  <!-- S letter -->
+  <path fill="#C5C5C5" d="M9 2h5v4h-2V4h-1v3h3v6H9v-4h2v2h1V8H9V2z"/>
+</svg>
