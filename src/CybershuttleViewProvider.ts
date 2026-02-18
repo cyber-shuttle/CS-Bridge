@@ -18,6 +18,8 @@ interface JobSession {
     memory: string;
     gpu: string;
     wallTime: string;
+    queue: string;
+    allocation: string;
     status: 'Pending' | 'Active';
     submittedAt: Date;
 }
@@ -160,7 +162,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     break;
                 }
                 case 'createJob': {
-                    this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime);
+                    this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime, data.queue, data.allocation);
                     break;
                 }
                 case 'removeSession': {
@@ -203,7 +205,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Stores the job session and refreshes the sidebar to show it
      * under Active / Pending Sessions.
      */
-    private async createJob(hostName: string, cpus: string, memory: string, gpu: string, wallTime: string) {
+    private async createJob(hostName: string, cpus: string, memory: string, gpu: string, wallTime: string, queue: string, allocation: string) {
         const session: JobSession = {
             id: crypto.randomBytes(4).toString('hex'),
             host: hostName,
@@ -211,6 +213,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             memory,
             gpu,
             wallTime,
+            queue,
+            allocation,
             status: 'Pending',
             submittedAt: new Date(),
         };
@@ -218,7 +222,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._jobSessions.push(session);
         this.refresh();
 
-        vscode.window.showInformationMessage(`Job submitted on ${hostName} — ${cpus} CPUs, ${memory}, GPU: ${gpu}, Wall: ${wallTime}`);
+        vscode.window.showInformationMessage(`Job submitted on ${hostName} — ${cpus} CPUs, ${memory}, GPU: ${gpu}, Wall: ${wallTime}, Queue: ${queue}, Allocation: ${allocation}`);
     }
 
     /**
@@ -247,9 +251,108 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Run a command on a remote SSH host.
+     * Handles SSH_ASKPASS IPC for password/passphrase prompts and ControlMaster multiplexing.
+     * Returns a promise that resolves with { stdout, stderr, code }.
+     */
+    private runRemoteCommand(hostName: string, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+        return new Promise((resolve, reject) => {
+            // Create a temp directory for askpass IPC
+            const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
+            const cancelFile = path.join(sessionDir, 'cancel');
+
+            // Path to our askpass helper script
+            const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
+
+            // Detach stdin so SSH is forced to use SSH_ASKPASS
+            const sshProcess = spawn('ssh', [
+                ...this.getControlMasterArgs(hostName),
+                '-o', 'NumberOfPasswordPrompts=3',
+                hostName,
+                command,
+            ], {
+                env: {
+                    ...process.env,
+                    SSH_ASKPASS: askpassScript,
+                    SSH_ASKPASS_REQUIRE: 'force',
+                    CS_ASKPASS_DIR: sessionDir,
+                    DISPLAY: ':0',
+                },
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            let stdoutData = '';
+            let stderrData = '';
+            let disposed = false;
+            const handledPrompts = new Set<string>();
+
+            sshProcess.stdout.on('data', (data: Buffer) => {
+                stdoutData += data.toString();
+            });
+
+            sshProcess.stderr.on('data', (data: Buffer) => {
+                stderrData += data.toString();
+            });
+
+            // Poll for prompt-* files from the askpass script
+            const pollInterval = setInterval(async () => {
+                if (disposed) {
+                    return;
+                }
+
+                try {
+                    const files = fs.readdirSync(sessionDir);
+                    for (const file of files) {
+                        if (!file.startsWith('prompt-') || handledPrompts.has(file)) {
+                            continue;
+                        }
+
+                        handledPrompts.add(file);
+
+                        const promptFilePath = path.join(sessionDir, file);
+                        const content = fs.readFileSync(promptFilePath, 'utf-8');
+                        const { id, prompt } = JSON.parse(content);
+                        const responseFile = path.join(sessionDir, `response-${id}`);
+
+                        const password = await vscode.window.showInputBox({
+                            title: `SSH Authentication — ${hostName}`,
+                            prompt: prompt.trim(),
+                            password: true,
+                            ignoreFocusOut: true,
+                        });
+
+                        if (password !== undefined) {
+                            fs.writeFileSync(responseFile, password, 'utf-8');
+                        } else {
+                            fs.writeFileSync(cancelFile, '', 'utf-8');
+                            sshProcess.kill();
+                        }
+                    }
+                } catch {
+                    // Ignore file access errors during polling
+                }
+            }, 200);
+
+            const cleanup = () => {
+                disposed = true;
+                clearInterval(pollInterval);
+                try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+            };
+
+            sshProcess.on('close', (code: number | null) => {
+                cleanup();
+                resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 });
+            });
+
+            sshProcess.on('error', (err: Error) => {
+                cleanup();
+                reject(err);
+            });
+        });
+    }
+
+    /**
      * List files on a remote SSH host and display in Output channel.
-     * Shows password/passphrase prompts as VS Code input boxes (like Remote-SSH)
-     * using an SSH_ASKPASS helper script for IPC.
      */
     private async listRemoteFiles(hostName: string) {
         const remotePath = await vscode.window.showInputBox({
@@ -266,109 +369,23 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._outputChannel.show(true);
         this._outputChannel.appendLine(`\n--- Listing files on ${hostName}:${remotePath} ---`);
 
-        // Create a temp directory for askpass IPC
-        const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
-        const cancelFile = path.join(sessionDir, 'cancel');
+        try {
+            const result = await this.runRemoteCommand(hostName, `ls -la ${remotePath}`);
 
-        // Path to our askpass helper script
-        const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
-
-        // Detach stdin so SSH is forced to use SSH_ASKPASS
-        const sshProcess = spawn('ssh', [
-            ...this.getControlMasterArgs(hostName),
-            '-o', 'NumberOfPasswordPrompts=3',
-            hostName,
-            `ls -la ${remotePath}`
-        ], {
-            env: {
-                ...process.env,
-                SSH_ASKPASS: askpassScript,
-                SSH_ASKPASS_REQUIRE: 'force',
-                CS_ASKPASS_DIR: sessionDir,
-                DISPLAY: ':0',
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
-
-        let stdoutData = '';
-        let stderrData = '';
-        let disposed = false;
-        // Track prompt files we've already handled
-        const handledPrompts = new Set<string>();
-
-        sshProcess.stdout.on('data', (data: Buffer) => {
-            stdoutData += data.toString();
-        });
-
-        sshProcess.stderr.on('data', (data: Buffer) => {
-            stderrData += data.toString();
-        });
-
-        // Poll for prompt-* files from the askpass script
-        const pollInterval = setInterval(async () => {
-            if (disposed) {
-                return;
-            }
-
-            try {
-                const files = fs.readdirSync(sessionDir);
-                for (const file of files) {
-                    if (!file.startsWith('prompt-') || handledPrompts.has(file)) {
-                        continue;
-                    }
-
-                    // Mark as handled immediately to prevent duplicate input boxes
-                    handledPrompts.add(file);
-
-                    const promptFilePath = path.join(sessionDir, file);
-                    const content = fs.readFileSync(promptFilePath, 'utf-8');
-                    const { id, prompt } = JSON.parse(content);
-                    const responseFile = path.join(sessionDir, `response-${id}`);
-
-                    const password = await vscode.window.showInputBox({
-                        title: `SSH Authentication — ${hostName}`,
-                        prompt: prompt.trim(),
-                        password: true,
-                        ignoreFocusOut: true,
-                    });
-
-                    if (password !== undefined) {
-                        fs.writeFileSync(responseFile, password, 'utf-8');
-                    } else {
-                        fs.writeFileSync(cancelFile, '', 'utf-8');
-                        sshProcess.kill();
-                    }
-                }
-            } catch {
-                // Ignore file access errors during polling
-            }
-        }, 200);
-
-        const cleanup = () => {
-            disposed = true;
-            clearInterval(pollInterval);
-            try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-        };
-
-        sshProcess.on('close', (code: number | null) => {
-            cleanup();
-            if (code === 0) {
-                this._outputChannel.appendLine(stdoutData);
+            if (result.code === 0) {
+                this._outputChannel.appendLine(result.stdout);
                 this._outputChannel.appendLine(`--- End of listing ---\n`);
             } else {
-                this._outputChannel.appendLine(`SSH exited with code ${code}`);
-                if (stderrData) {
-                    this._outputChannel.appendLine(stderrData);
+                this._outputChannel.appendLine(`SSH exited with code ${result.code}`);
+                if (result.stderr) {
+                    this._outputChannel.appendLine(result.stderr);
                 }
-                vscode.window.showErrorMessage(`Failed to list files on ${hostName} (exit code ${code})`);
+                vscode.window.showErrorMessage(`Failed to list files on ${hostName} (exit code ${result.code})`);
             }
-        });
-
-        sshProcess.on('error', (err: Error) => {
-            cleanup();
+        } catch (err: any) {
             this._outputChannel.appendLine(`Error: ${err.message}`);
             vscode.window.showErrorMessage(`Failed to run SSH: ${err.message}`);
-        });
+        }
     }
 
     /**
@@ -456,6 +473,26 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                                 <option value="24:00:00">24 hours</option>
                             </select>
                         </div>
+                        <div class="form-row">
+                            <label>Queue</label>
+                            <select class="form-select" data-field="queue">
+                                <option value="default">default</option>
+                                <option value="batch">batch</option>
+                                <option value="debug">debug</option>
+                                <option value="gpu">gpu</option>
+                                <option value="preempt">preempt</option>
+                                <option value="interactive">interactive</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label>Allocation</label>
+                            <select class="form-select" data-field="allocation">
+                                <option value="default">default</option>
+                                <option value="research">research</option>
+                                <option value="education">education</option>
+                                <option value="startup">startup</option>
+                            </select>
+                        </div>
                         <button class="submit-job-btn" data-host="${escapeHtml(host.name)}">Submit Job</button>
                     </div>
                 </div>
@@ -473,6 +510,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         <div class="session-info">
                             <span class="session-name">${statusIcon} ${escapeHtml(session.host)}</span>
                             <span class="session-detail">${escapeHtml(session.cpus)} CPUs · ${escapeHtml(session.memory)} · GPU: ${escapeHtml(session.gpu)}</span>
+                            <span class="session-detail">Queue: ${escapeHtml(session.queue)} · Alloc: ${escapeHtml(session.allocation)}</span>
                             <span class="session-detail">Wall: ${escapeHtml(session.wallTime)} · Submitted ${time}</span>
                         </div>
                         <div class="session-actions">
@@ -795,7 +833,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const memory = form.querySelector('[data-field="memory"]').value;
                 const gpu = form.querySelector('[data-field="gpu"]').value;
                 const wallTime = form.querySelector('[data-field="wallTime"]').value;
-                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime });
+                const queue = form.querySelector('[data-field="queue"]').value;
+                const allocation = form.querySelector('[data-field="allocation"]').value;
+                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation });
             });
         });
 
