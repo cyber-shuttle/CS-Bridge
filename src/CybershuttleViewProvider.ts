@@ -165,6 +165,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime, data.queue, data.allocation);
                     break;
                 }
+                case 'queryAssociations': {
+                    this.queryAssociations(data.host);
+                    break;
+                }
                 case 'removeSession': {
                     this._jobSessions = this._jobSessions.filter(s => s.id !== data.sessionId);
                     this.refresh();
@@ -223,6 +227,52 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this.refresh();
 
         vscode.window.showInformationMessage(`Job submitted on ${hostName} — ${cpus} CPUs, ${memory}, GPU: ${gpu}, Wall: ${wallTime}, Queue: ${queue}, Allocation: ${allocation}`);
+    }
+
+    /**
+     * Query SLURM associations for the current user on a remote host,
+     * parse the account→QOS mapping, and send it to the webview
+     * to populate the Allocation and Queue dropdowns.
+     */
+    private async queryAssociations(hostName: string) {
+        this._outputChannel.show(true);
+        this._outputChannel.appendLine(`\n--- Querying SLURM associations on ${hostName} ---`);
+
+        try {
+            const result = await this.runRemoteCommand(hostName, 'sacctmgr show associations where user=$USER format=Cluster,Account,Partition,QOS -p');
+
+            if (result.code === 0) {
+                this._outputChannel.appendLine(result.stdout);
+
+                // Parse pipe-delimited output into account → QOS mapping
+                // Format: Cluster|Account|Partition|QOS|
+                const lines = result.stdout.trim().split('\n');
+                const associations: { [account: string]: string[] } = {};
+
+                for (let i = 1; i < lines.length; i++) { // skip header
+                    const parts = lines[i].split('|');
+                    if (parts.length >= 4) {
+                        const account = parts[1].trim();
+                        const qosList = parts[3].trim().split(',').filter(q => q.length > 0);
+                        if (account) {
+                            associations[account] = qosList;
+                        }
+                    }
+                }
+
+                // Send to webview
+                this.postMessage({ type: 'associations', host: hostName, associations });
+            } else {
+                this._outputChannel.appendLine(`Command exited with code ${result.code}`);
+                if (result.stderr) {
+                    this._outputChannel.appendLine(result.stderr);
+                }
+            }
+            this._outputChannel.appendLine(`--- End of associations ---\n`);
+        } catch (err: any) {
+            this._outputChannel.appendLine(`Error: ${err.message}`);
+            vscode.window.showErrorMessage(`Failed to query associations on ${hostName}: ${err.message}`);
+        }
     }
 
     /**
@@ -474,23 +524,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             </select>
                         </div>
                         <div class="form-row">
-                            <label>Queue</label>
-                            <select class="form-select" data-field="queue">
-                                <option value="default">default</option>
-                                <option value="batch">batch</option>
-                                <option value="debug">debug</option>
-                                <option value="gpu">gpu</option>
-                                <option value="preempt">preempt</option>
-                                <option value="interactive">interactive</option>
+                            <label>Allocation</label>
+                            <select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
+                                <option value="">Loading...</option>
                             </select>
                         </div>
                         <div class="form-row">
-                            <label>Allocation</label>
-                            <select class="form-select" data-field="allocation">
-                                <option value="default">default</option>
-                                <option value="research">research</option>
-                                <option value="education">education</option>
-                                <option value="startup">startup</option>
+                            <label>Queue</label>
+                            <select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
+                                <option value="">Select allocation first</option>
                             </select>
                         </div>
                         <button class="submit-job-btn" data-host="${escapeHtml(host.name)}">Submit Job</button>
@@ -812,13 +854,17 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
         });
 
-        // Add click handlers to all create buttons (toggle form)
+        // Add click handlers to all create buttons (toggle form + query associations)
         document.querySelectorAll('.create-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const host = btn.getAttribute('data-host');
                 const form = document.getElementById('job-form-' + host);
                 if (form) {
-                    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+                    const isOpening = form.style.display === 'none';
+                    form.style.display = isOpening ? 'block' : 'none';
+                    if (isOpening) {
+                        vscode.postMessage({ type: 'queryAssociations', host: host });
+                    }
                 }
             });
         });
@@ -853,6 +899,57 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const sessionId = btn.getAttribute('data-session-id');
                 vscode.postMessage({ type: 'removeSession', sessionId: sessionId });
             });
+        });
+
+        // Handle messages from the extension (e.g. associations data)
+        window.addEventListener('message', event => {
+            const msg = event.data;
+            if (msg.type === 'associations') {
+                const host = msg.host;
+                const associations = msg.associations; // { account: [qos1, qos2, ...], ... }
+                const form = document.getElementById('job-form-' + host);
+                if (!form) { return; }
+
+                const allocSelect = form.querySelector('[data-field="allocation"]');
+                const queueSelect = form.querySelector('[data-field="queue"]');
+
+                // Populate Allocation dropdown
+                allocSelect.innerHTML = '';
+                const accounts = Object.keys(associations);
+                if (accounts.length === 0) {
+                    allocSelect.innerHTML = '<option value="">No allocations found</option>';
+                    queueSelect.innerHTML = '<option value="">N/A</option>';
+                    return;
+                }
+                accounts.forEach((acct, i) => {
+                    const opt = document.createElement('option');
+                    opt.value = acct;
+                    opt.textContent = acct;
+                    if (i === 0) { opt.selected = true; }
+                    allocSelect.appendChild(opt);
+                });
+
+                // Update Queue dropdown based on selected allocation
+                function updateQueues() {
+                    const selectedAcct = allocSelect.value;
+                    const qosList = associations[selectedAcct] || [];
+                    queueSelect.innerHTML = '';
+                    if (qosList.length === 0) {
+                        queueSelect.innerHTML = '<option value="">No queues available</option>';
+                        return;
+                    }
+                    qosList.forEach((qos, i) => {
+                        const opt = document.createElement('option');
+                        opt.value = qos;
+                        opt.textContent = qos;
+                        if (i === 0) { opt.selected = true; }
+                        queueSelect.appendChild(opt);
+                    });
+                }
+
+                allocSelect.addEventListener('change', updateQueues);
+                updateQueues(); // populate for initial selection
+            }
         });
     </script>
 </body>
