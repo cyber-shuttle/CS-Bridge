@@ -11,12 +11,24 @@ interface SshHost {
     user?: string;
 }
 
+interface JobSession {
+    id: string;
+    host: string;
+    cpus: string;
+    memory: string;
+    gpu: string;
+    wallTime: string;
+    status: 'Pending' | 'Active';
+    submittedAt: Date;
+}
+
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sidebarView';
 
     private _view?: vscode.WebviewView;
     private _outputChannel: vscode.OutputChannel;
     private _sshControlDir: string;
+    private _jobSessions: JobSession[] = [];
 
     constructor(private readonly _extensionUri: vscode.Uri) {
         this._outputChannel = vscode.window.createOutputChannel('CyberShuttle');
@@ -147,6 +159,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.addSshHost();
                     break;
                 }
+                case 'createJob': {
+                    this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime);
+                    break;
+                }
+                case 'removeSession': {
+                    this._jobSessions = this._jobSessions.filter(s => s.id !== data.sessionId);
+                    this.refresh();
+                    break;
+                }
             }
         });
     }
@@ -175,6 +196,29 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
             }
         }
+    }
+
+    /**
+     * Create a job on a remote SSH host.
+     * Stores the job session and refreshes the sidebar to show it
+     * under Active / Pending Sessions.
+     */
+    private async createJob(hostName: string, cpus: string, memory: string, gpu: string, wallTime: string) {
+        const session: JobSession = {
+            id: crypto.randomBytes(4).toString('hex'),
+            host: hostName,
+            cpus,
+            memory,
+            gpu,
+            wallTime,
+            status: 'Pending',
+            submittedAt: new Date(),
+        };
+
+        this._jobSessions.push(session);
+        this.refresh();
+
+        vscode.window.showInformationMessage(`Job submitted on ${hostName} — ${cpus} CPUs, ${memory}, GPU: ${gpu}, Wall: ${wallTime}`);
     }
 
     /**
@@ -351,6 +395,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const hostsHtml = sshHosts.length > 0
             ? sshHosts.map(host => `
                 <div class="ssh-host">
+                    <div class="ssh-host-row">
                     <div class="host-info">
                         <span class="host-name">${escapeHtml(host.name)}</span>
                         ${host.hostname ? `<span class="host-detail">${escapeHtml(host.hostname)}</span>` : ''}
@@ -358,11 +403,86 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     </div>
                     <div class="host-actions">
                         <button class="list-btn" data-host="${escapeHtml(host.name)}" title="List files">📁</button>
+                        <button class="create-btn" data-host="${escapeHtml(host.name)}">Create</button>
                         <button class="connect-btn" data-host="${escapeHtml(host.name)}">Connect</button>
+                    </div>
+                    </div>
+                    <div class="job-form" id="job-form-${escapeHtml(host.name)}" style="display:none;">
+                        <div class="form-row">
+                            <label>CPUs</label>
+                            <select class="form-select" data-field="cpus">
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="4">4</option>
+                                <option value="8">8</option>
+                                <option value="16">16</option>
+                                <option value="32">32</option>
+                                <option value="64">64</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label>Memory</label>
+                            <select class="form-select" data-field="memory">
+                                <option value="1 GB">1 GB</option>
+                                <option value="2 GB">2 GB</option>
+                                <option value="4 GB">4 GB</option>
+                                <option value="8 GB">8 GB</option>
+                                <option value="16 GB">16 GB</option>
+                                <option value="32 GB">32 GB</option>
+                                <option value="64 GB">64 GB</option>
+                                <option value="128 GB">128 GB</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label>GPU</label>
+                            <select class="form-select" data-field="gpu">
+                                <option value="None">None</option>
+                                <option value="NVIDIA A100">NVIDIA A100</option>
+                                <option value="NVIDIA V100">NVIDIA V100</option>
+                                <option value="NVIDIA T4">NVIDIA T4</option>
+                                <option value="NVIDIA A40">NVIDIA A40</option>
+                                <option value="NVIDIA H100">NVIDIA H100</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label>Wall Time</label>
+                            <select class="form-select" data-field="wallTime">
+                                <option value="00:30:00">30 min</option>
+                                <option value="01:00:00">1 hour</option>
+                                <option value="02:00:00">2 hours</option>
+                                <option value="04:00:00">4 hours</option>
+                                <option value="08:00:00">8 hours</option>
+                                <option value="12:00:00">12 hours</option>
+                                <option value="24:00:00">24 hours</option>
+                            </select>
+                        </div>
+                        <button class="submit-job-btn" data-host="${escapeHtml(host.name)}">Submit Job</button>
                     </div>
                 </div>
             `).join('')
             : '<p class="empty-message">No SSH hosts found in ~/.ssh/config</p>';
+
+        // Build sessions HTML
+        const sessionsHtml = this._jobSessions.length > 0
+            ? this._jobSessions.map(session => {
+                const time = session.submittedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const statusIcon = session.status === 'Active' ? '🟢' : '🟡';
+                return `
+                <div class="session-entry">
+                    <div class="session-row">
+                        <div class="session-info">
+                            <span class="session-name">${statusIcon} ${escapeHtml(session.host)}</span>
+                            <span class="session-detail">${escapeHtml(session.cpus)} CPUs · ${escapeHtml(session.memory)} · GPU: ${escapeHtml(session.gpu)}</span>
+                            <span class="session-detail">Wall: ${escapeHtml(session.wallTime)} · Submitted ${time}</span>
+                        </div>
+                        <div class="session-actions">
+                            <button class="connect-session-btn" data-session-id="${escapeHtml(session.id)}" data-host="${escapeHtml(session.host)}">Connect</button>
+                            <button class="remove-session-btn" data-session-id="${escapeHtml(session.id)}" title="Remove">✕</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('')
+            : '<p class="empty-message">No active sessions</p>';
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -416,15 +536,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
         .ssh-host {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            flex-direction: column;
             padding: 8px;
             margin: 4px 0;
             background: var(--vscode-list-hoverBackground);
             border-radius: 4px;
         }
-        .ssh-host:hover {
-            background: var(--vscode-list-activeSelectionBackground);
+        .ssh-host > .host-info,
+        .ssh-host > .host-actions {
+            /* keep the top row as a horizontal strip */
+        }
+        .ssh-host-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .host-info {
             display: flex;
@@ -449,6 +574,54 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             padding: 4px 10px;
             font-size: 12px;
             flex-shrink: 0;
+        }
+        .create-btn {
+            margin: 0 4px 0 0;
+            padding: 4px 10px;
+            font-size: 12px;
+            flex-shrink: 0;
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+        .create-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+        .job-form {
+            width: 100%;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--vscode-panel-border);
+        }
+        .form-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        .form-row label {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            flex-shrink: 0;
+            width: 70px;
+        }
+        .form-select {
+            flex: 1;
+            padding: 4px 6px;
+            font-size: 12px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border, transparent);
+            border-radius: 3px;
+            outline: none;
+        }
+        .form-select:focus {
+            border-color: var(--vscode-focusBorder);
+        }
+        .submit-job-btn {
+            width: 100%;
+            margin: 6px 0 0 0;
+            padding: 6px 10px;
+            font-size: 12px;
         }
         .list-btn {
             margin: 0 4px 0 0;
@@ -483,6 +656,58 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         .section {
             margin-bottom: 20px;
         }
+        .session-entry {
+            padding: 8px;
+            margin: 4px 0;
+            background: var(--vscode-list-hoverBackground);
+            border-radius: 4px;
+        }
+        .session-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .session-info {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .session-name {
+            font-weight: 600;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .session-detail {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .session-actions {
+            display: flex;
+            flex-shrink: 0;
+            gap: 4px;
+        }
+        .connect-session-btn {
+            margin: 0;
+            padding: 4px 10px;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+        .remove-session-btn {
+            margin: 0;
+            padding: 4px 8px;
+            font-size: 12px;
+            flex-shrink: 0;
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+        .remove-session-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
     </style>
 </head>
 <body>
@@ -496,7 +721,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     <div class="section">
         <h3>
-            SSH Connections
+            Remote Servers
             <div class="header-actions">
                 <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
                 <button id="refresh-btn" class="refresh-btn" title="Refresh">↻</button>
@@ -504,6 +729,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         </h3>
         <div id="ssh-hosts">
             ${hostsHtml}
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>Active / Pending Sessions</h3>
+        <div id="sessions">
+            ${sessionsHtml}
         </div>
     </div>
 
@@ -539,6 +771,47 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             btn.addEventListener('click', () => {
                 const host = btn.getAttribute('data-host');
                 vscode.postMessage({ type: 'listFiles', host: host });
+            });
+        });
+
+        // Add click handlers to all create buttons (toggle form)
+        document.querySelectorAll('.create-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const host = btn.getAttribute('data-host');
+                const form = document.getElementById('job-form-' + host);
+                if (form) {
+                    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+                }
+            });
+        });
+
+        // Add click handlers to submit job buttons
+        document.querySelectorAll('.submit-job-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const host = btn.getAttribute('data-host');
+                const form = document.getElementById('job-form-' + host);
+                if (!form) { return; }
+                const cpus = form.querySelector('[data-field="cpus"]').value;
+                const memory = form.querySelector('[data-field="memory"]').value;
+                const gpu = form.querySelector('[data-field="gpu"]').value;
+                const wallTime = form.querySelector('[data-field="wallTime"]').value;
+                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime });
+            });
+        });
+
+        // Add click handlers to session connect buttons
+        document.querySelectorAll('.connect-session-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const host = btn.getAttribute('data-host');
+                vscode.postMessage({ type: 'connectSsh', host: host });
+            });
+        });
+
+        // Add click handlers to session remove buttons
+        document.querySelectorAll('.remove-session-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const sessionId = btn.getAttribute('data-session-id');
+                vscode.postMessage({ type: 'removeSession', sessionId: sessionId });
             });
         });
     </script>
