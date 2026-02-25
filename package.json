@@ -20,16 +20,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "cybershuttle.helloWorld",
-        "title": "Hello World"
-      },
-      {
         "command": "cybershuttle.auth",
         "title": "CyberShuttle: Auth"
-      },
-      {
-        "command": "cybershuttle.openWorkspace",
-        "title": "CyberShuttle: Open Workspace"
       }
     ],
     "viewsContainers": {

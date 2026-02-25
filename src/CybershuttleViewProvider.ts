@@ -61,6 +61,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _logTailProcesses: Map<string, ChildProcess> = new Map();
     private _browseRequestId: Map<string, number> = new Map();
     private _localProcesses: Map<string, ChildProcess> = new Map();
+    private _devTunnelAccount: string | null = null;
 
     private static readonly SESSIONS_KEY = 'cybershuttle.jobSessions';
 
@@ -378,6 +379,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
+        // Check Dev Tunnels auth on startup
+        this.checkDevTunnelAuth();
+
         webviewView.onDidDispose(() => {
             this.disposePersistentShells();
             this.stopAllLogStreams();
@@ -389,10 +393,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             switch (data.type) {
                 case 'auth': {
                     vscode.commands.executeCommand('cybershuttle.auth');
-                    break;
-                }
-                case 'openWorkspace': {
-                    vscode.commands.executeCommand('cybershuttle.openWorkspace');
                     break;
                 }
                 case 'connectSsh': {
@@ -465,6 +465,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.testLocal();
                     break;
                 }
+                case 'devTunnelSignIn': {
+                    this.signInDevTunnel();
+                    break;
+                }
+                case 'devTunnelSwitch': {
+                    this.switchDevTunnelAccount();
+                    break;
+                }
                 case 'stopLocal': {
                     this.stopLocalSession(data.sessionId);
                     break;
@@ -522,7 +530,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      */
     private async createJob(hostName: string, cpus: string, memory: string, gpu: string, wallTime: string, queue: string, allocation: string) {
         const sessionId = crypto.randomBytes(4).toString('hex');
-        const script = this.generateSlurmScript({ cpus, memory, gpu, wallTime, queue, allocation });
+
+        let authToken: string;
+        try {
+            authToken = await this.getDevTunnelAuthToken();
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to get Dev Tunnels auth token: ${err.message}`);
+            return;
+        }
+
+        const script = this.generateSlurmScript({ cpus, memory, gpu, wallTime, queue, allocation, authToken });
 
         const session: JobSession = {
             id: sessionId,
@@ -544,6 +561,109 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'scriptPreview', sessionId, host: hostName, script });
     }
 
+    private static readonly DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
+    private static readonly DEV_TUNNELS_SCOPE = `${CybershuttleViewProvider.DEV_TUNNELS_APP_ID}/.default`;
+
+    /**
+     * Check Dev Tunnels auth on startup and update the webview auth state.
+     */
+    private async checkDevTunnelAuth() {
+        try {
+            const session = await vscode.authentication.getSession(
+                'microsoft',
+                [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+                { silent: true },
+            );
+            if (session) {
+                this._devTunnelAccount = session.account.label;
+                this._outputChannel.appendLine('Dev Tunnels: signed in as ' + session.account.label);
+            } else {
+                this._devTunnelAccount = null;
+            }
+        } catch {
+            this._devTunnelAccount = null;
+        }
+        this.postAuthState();
+    }
+
+    /**
+     * Trigger interactive sign-in for Dev Tunnels, then update webview.
+     */
+    private async signInDevTunnel() {
+        try {
+            const token = await this.getDevTunnelAuthToken();
+            // getSession with createIfNone also gives us the account
+            const session = await vscode.authentication.getSession(
+                'microsoft',
+                [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+                { silent: true },
+            );
+            this._devTunnelAccount = session?.account.label ?? 'Signed in';
+            this._outputChannel.appendLine('Dev Tunnels: signed in as ' + this._devTunnelAccount);
+        } catch (err: any) {
+            this._devTunnelAccount = null;
+            vscode.window.showErrorMessage(`Dev Tunnels sign-in failed: ${err.message}`);
+        }
+        this.postAuthState();
+    }
+
+    /**
+     * Sign out of the current Microsoft session and prompt to sign in with a different account.
+     */
+    private async switchDevTunnelAccount() {
+        // Clear the current session by requesting it silently, then signing out
+        try {
+            const session = await vscode.authentication.getSession(
+                'microsoft',
+                [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+                { silent: true },
+            );
+            if (session) {
+                // VS Code doesn't expose a direct "sign out" API for auth providers.
+                // The standard way is to use the "clear session preference" approach or
+                // ask the user to sign in with { forceNewSession: true }.
+                // forceNewSession will prompt user to pick a different account.
+            }
+        } catch {
+            // ignore
+        }
+
+        try {
+            const session = await vscode.authentication.getSession(
+                'microsoft',
+                [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+                { clearSessionPreference: true, createIfNone: true },
+            );
+            this._devTunnelAccount = session.account.label;
+            this._outputChannel.appendLine('Dev Tunnels: switched to ' + session.account.label);
+        } catch (err: any) {
+            this._devTunnelAccount = null;
+            vscode.window.showErrorMessage(`Dev Tunnels sign-in failed: ${err.message}`);
+        }
+        this.postAuthState();
+    }
+
+    /**
+     * Send current auth state to the webview.
+     */
+    private postAuthState() {
+        this.postMessage({ type: 'authState', account: this._devTunnelAccount });
+    }
+
+    /**
+     * Get a Microsoft Entra ID token for the Dev Tunnels service.
+     * Uses VS Code's built-in Microsoft authentication provider.
+     * The token is needed by linkspan's SDK-based tunnel management.
+     */
+    private async getDevTunnelAuthToken(): Promise<string> {
+        const session = await vscode.authentication.getSession(
+            'microsoft',
+            [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+            { createIfNone: true },
+        );
+        return session.accessToken;
+    }
+
     /**
      * Generate a SLURM batch script from job parameters.
      * The script embeds a workflow YAML and pipes it to linkspan via stdin heredoc.
@@ -556,8 +676,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         wallTime: string;
         queue: string;
         allocation: string;
+        authToken: string;
     }): string {
-        const { cpus, memory, gpu, wallTime, queue, allocation } = params;
+        const { cpus, memory, gpu, wallTime, queue, allocation, authToken } = params;
 
         // Parse memory value (e.g. "8 GB" → "8G")
         const memSlurm = memory.replace(/\s+/g, '');
@@ -598,6 +719,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    params:`,
             `      tunnel_name: "ls-$SLURM_JOB_ID"`,
             `      expiration: "1d"`,
+            `      auth_token: "{{.TunnelAuthToken}}"`,
             `      ports:`,
             `        - "{{.ssh_port}}"`,
             `    outputs:`,
@@ -607,7 +729,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    name: "Host devtunnel"`,
             `    params:`,
             `      tunnel_name: "ls-$SLURM_JOB_ID"`,
-            `      create_token: true`,
+            `      auth_token: "{{.TunnelAuthToken}}"`,
             `    outputs:`,
             `      connection_url: "tunnel_url"`,
             `      token: "tunnel_token"`,
@@ -618,7 +740,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             ...sbatchLines,
             ``,
             `# --- Run linkspan with workflow from stdin ---`,
-            `linkspan --workflow - <<'WORKFLOW_EOF'`,
+            `linkspan --tunnel-auth-token '${authToken}' --workflow - <<'WORKFLOW_EOF'`,
             workflowYaml,
             `WORKFLOW_EOF`,
         ].join('\n');
@@ -858,6 +980,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private async testLocal() {
         const sessionId = crypto.randomBytes(4).toString('hex');
 
+        // Get auth token for Dev Tunnels service before building the workflow
+        let authToken: string;
+        try {
+            authToken = await this.getDevTunnelAuthToken();
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to get Dev Tunnels auth token: ${err.message}`);
+            return;
+        }
+
         const tunnelName = `ls-${sessionId}`;
         const workflowYaml = [
             `name: "cs-bridge-hpc-setup"`,
@@ -873,6 +1004,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    params:`,
             `      tunnel_name: "${tunnelName}"`,
             `      expiration: "1d"`,
+            `      auth_token: "{{.TunnelAuthToken}}"`,
             `      ports:`,
             `        - "{{.ssh_port}}"`,
             `    outputs:`,
@@ -882,7 +1014,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    name: "Host devtunnel"`,
             `    params:`,
             `      tunnel_name: "${tunnelName}"`,
-            `      create_token: true`,
+            `      auth_token: "{{.TunnelAuthToken}}"`,
             `    outputs:`,
             `      connection_url: "tunnel_url"`,
             `      token: "tunnel_token"`,
@@ -912,7 +1044,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._outputChannel.appendLine(`\n--- Starting local linkspan session ---`);
 
         try {
-            const proc = spawn('linkspan', ['--port', '0', '--workflow', '-'], {
+            const proc = spawn('linkspan', ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
                 stdio: ['pipe', 'pipe', 'pipe'],
                 env: { ...process.env },
             });
@@ -951,7 +1083,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     }
 
                     // Detect workflow step errors
-                    const errMatch = line.match(/workflow: workflow step \d+ \(([^)]+)\): Error: (.+)/);
+                    const errMatch = line.match(/workflow: workflow step \d+ \(([^)]+)\): (.+)/);
                     if (errMatch) {
                         const [, stepName, errMsg] = errMatch;
                         session.status = 'Failed';
@@ -2172,10 +2304,58 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         .cancel-preview-btn:hover {
             background: var(--vscode-button-secondaryHoverBackground) !important;
         }
+        .auth-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 8px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            background: var(--vscode-list-hoverBackground);
+        }
+        .auth-bar.signed-in {
+            border-left: 3px solid var(--vscode-charts-green, #89d185);
+        }
+        .auth-bar.signed-out {
+            border-left: 3px solid var(--vscode-charts-yellow, #cca700);
+        }
+        .auth-bar-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            overflow: hidden;
+        }
+        .auth-bar-info .codicon {
+            flex-shrink: 0;
+            font-size: 14px;
+        }
+        .auth-bar-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .auth-bar-btn {
+            margin: 0;
+            padding: 2px 8px;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
     <h2>CyberShuttle</h2>
+
+    <div id="auth-bar" class="auth-bar ${this._devTunnelAccount ? 'signed-in' : 'signed-out'}">
+        <div class="auth-bar-info">
+            <i class="codicon ${this._devTunnelAccount ? 'codicon-verified-filled' : 'codicon-warning'}"></i>
+            <span id="auth-bar-label" class="auth-bar-label">${this._devTunnelAccount ? escapeHtml(this._devTunnelAccount) : 'Not signed in to Dev Tunnels'}</span>
+        </div>
+        ${this._devTunnelAccount
+            ? '<button id="auth-bar-switch-btn" class="auth-bar-btn">Switch</button>'
+            : '<button id="auth-bar-sign-in-btn" class="auth-bar-btn">Sign In</button>'}
+    </div>
+
     <p class="description">Connect to remote HPC workspaces</p>
 
     <div class="tab-row">
@@ -2247,6 +2427,23 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         document.getElementById('test-local-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'testLocal' });
         });
+
+        // Auth bar buttons
+        function bindAuthBarButtons() {
+            const signInBtn = document.getElementById('auth-bar-sign-in-btn');
+            if (signInBtn) {
+                signInBtn.addEventListener('click', () => {
+                    vscode.postMessage({ type: 'devTunnelSignIn' });
+                });
+            }
+            const switchBtn = document.getElementById('auth-bar-switch-btn');
+            if (switchBtn) {
+                switchBtn.addEventListener('click', () => {
+                    vscode.postMessage({ type: 'devTunnelSwitch' });
+                });
+            }
+        }
+        bindAuthBarButtons();
 
         document.getElementById('refresh-sessions-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'refreshSessions' });
@@ -2468,6 +2665,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Handle messages from the extension (e.g. associations data, script preview)
         window.addEventListener('message', event => {
             const msg = event.data;
+
+            if (msg.type === 'authState') {
+                const bar = document.getElementById('auth-bar');
+                if (msg.account) {
+                    bar.className = 'auth-bar signed-in';
+                    bar.innerHTML = '<div class="auth-bar-info"><i class="codicon codicon-verified-filled"></i><span id="auth-bar-label" class="auth-bar-label">' + msg.account + '</span></div><button id="auth-bar-switch-btn" class="auth-bar-btn">Switch</button>';
+                } else {
+                    bar.className = 'auth-bar signed-out';
+                    bar.innerHTML = '<div class="auth-bar-info"><i class="codicon codicon-warning"></i><span id="auth-bar-label" class="auth-bar-label">Not signed in to Dev Tunnels</span></div><button id="auth-bar-sign-in-btn" class="auth-bar-btn">Sign In</button>';
+                }
+                bindAuthBarButtons();
+                return;
+            }
 
             if (msg.type === 'scriptPreview') {
                 previewSessionId = msg.sessionId;

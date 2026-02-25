@@ -3,18 +3,6 @@ import { CsStorage } from './csstorage';
 
 export class CsCommands {
 
-    public async authenticate(): Promise<void> {
-        console.log('authenticate');
-        const token = await vscode.window.showInputBox({
-			title: "Enter a path",
-			placeHolder: "e.g. /home/exouser/dir1",
-			value: "/home/exouser/dir1",
-			validateInput: (value) => {
-				return value === "" ? "Please enter a path" : null;
-			}
-		});
-    }
-
     public async deviceAuth(csStorage: CsStorage): Promise<void> {
         const data = new URLSearchParams({
             client_id: "cybershuttle-agent",
@@ -30,9 +18,9 @@ export class CsCommands {
             },
         });
 
-        const result = await response.json() as { 
-            device_code: string, 
-            interval: number, 
+        const result = await response.json() as {
+            device_code: string,
+            interval: number,
             expires_in: number, user_code: string,
             verification_uri: string,
             verification_uri_complete: string,};
@@ -43,9 +31,9 @@ export class CsCommands {
     }
 
     private async pollForToken(
-        deviceCode: string, 
-        interval: number, 
-        expires_in: number, 
+        deviceCode: string,
+        interval: number,
+        expires_in: number,
         csStorage: CsStorage): Promise<void> {
         const data = new URLSearchParams({
             client_id: "cybershuttle-agent",
@@ -71,15 +59,15 @@ export class CsCommands {
                 console.error(result.error_description);
             }
         } else if (response.status === 200) {
-            const result = await response.json() as { 
-                access_token: string, 
-                expires_in: number, 
-                refresh_token: string, 
-                token_type: string, 
-                scope: string, 
-                id_token: string, 
-                session_state: string, 
-                not_before_policy: number, 
+            const result = await response.json() as {
+                access_token: string,
+                expires_in: number,
+                refresh_token: string,
+                token_type: string,
+                scope: string,
+                id_token: string,
+                session_state: string,
+                not_before_policy: number,
             };
 
             csStorage.storeAccessToken(result.access_token);
@@ -88,49 +76,5 @@ export class CsCommands {
             console.log("Refresh token: " + result.refresh_token);
             console.log("ID token: " + result.id_token);
         }
-    }
-
-    public async selectWorkspaces() : Promise<void> {
-    // Create an array of QuickPickItem objects
-        const items: vscode.QuickPickItem[] = [
-            { label: 'IBL_foundation_model', description: 'IBL_foundation_model deployed on Jetstream' },
-            { label: 'Workspace1-Anvil', description: 'Empty workspace deployed on Anvil'},
-        ];
-    
-        // Show the quick pick menu
-        vscode.window.showQuickPick(items, { placeHolder: 'Select an option' })
-            .then(selected => {
-            if (selected) {
-                this.openWorkspace(selected.label);
-            }
-            });
-    }
-
-    public openWorkspace(workspaceId: String){
-        vscode.window.showInformationMessage(`Openning workspace: ${workspaceId}`);
-        if (workspaceId === 'IBL_foundation_model'){
-            vscode.commands.executeCommand(
-                "vscode.openFolder",
-                vscode.Uri.from({
-                    scheme: "vscode-remote",
-                    authority: "ssh-remote+js",
-                    path: "/home/exouser/IBL_foundation_model",
-                }),
-                // Open this in a new window!
-                true,
-                );
-        } else if (workspaceId === 'Workspace1-Anvil'){
-            vscode.commands.executeCommand(
-                "vscode.openFolder",
-                vscode.Uri.from({
-                    scheme: "vscode-remote",
-                    authority: "ssh-remote+anvil",
-                    path: "/home/x-gcommunityus/vscode-workdir",
-                }),
-                // Open this in a new window!
-                true,
-                );
-        }
-        
     }
 }

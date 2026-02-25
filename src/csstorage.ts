@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 
 export class CsStorage {
     secretStorage: vscode.SecretStorage;
-    // constructor() {
     public constructor(secretStorage: vscode.SecretStorage) {
         this.secretStorage = secretStorage;
     }
