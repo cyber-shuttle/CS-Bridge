@@ -9,13 +9,13 @@ import { CybershuttleViewProvider } from './CybershuttleViewProvider';
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
 	// vscode.window.registerUriHandler
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
+	// Use the console to output diagnostthic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	console.log('Congratulations, your extension "cybershuttle" is now active!');
 	const csStorage = new CsStorage(context.secrets);
 
 	// Register the webview sidebar provider
-	const sidebarProvider = new CybershuttleViewProvider(context.extensionUri);
+	const sidebarProvider = new CybershuttleViewProvider(context.extensionUri, context.globalState);
 	context.subscriptions.push(
 		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.viewType, sidebarProvider)
 	);
