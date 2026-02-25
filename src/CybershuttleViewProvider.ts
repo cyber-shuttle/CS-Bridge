@@ -926,46 +926,77 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             proc.stdin!.write(workflowYaml);
             proc.stdin!.end();
 
-            // Parse linkspan workflow output for captured variables.
-            // The workflow engine logs: "workflow: captured <var> = <value>"
-            const parseCaptured = (text: string) => {
+            // Parse linkspan workflow output for captured variables and errors.
+            // The workflow engine logs:
+            //   "workflow: captured <var> = <value>"  — variable captures
+            //   "workflow: workflow step N (...): Error: ..."  — step failures
+            const parseOutput = (text: string) => {
                 for (const line of text.split('\n')) {
-                    const m = line.match(/workflow: captured (\S+) = (.+)/);
-                    if (!m) { continue; }
-                    const [, varName, value] = m;
-                    if (varName === 'ssh_port') {
-                        session.sshPort = parseInt(value, 10);
-                    } else if (varName === 'tunnel_url') {
-                        session.tunnelUrl = value.trim();
-                    } else if (varName === 'tunnel_token') {
-                        session.tunnelToken = value.trim();
-                    } else if (varName === 'tunnel_id') {
-                        session.tunnelId = value.trim();
+                    // Capture workflow variables
+                    const cap = line.match(/workflow: captured (\S+) = (.+)/);
+                    if (cap) {
+                        const [, varName, value] = cap;
+                        if (varName === 'ssh_port') {
+                            session.sshPort = parseInt(value, 10);
+                        } else if (varName === 'tunnel_url') {
+                            session.tunnelUrl = value.trim();
+                        } else if (varName === 'tunnel_token') {
+                            session.tunnelToken = value.trim();
+                        } else if (varName === 'tunnel_id') {
+                            session.tunnelId = value.trim();
+                        }
+                        this._saveSessions();
+                        this.refresh();
+                        continue;
                     }
-                    this._saveSessions();
-                    this.refresh();
+
+                    // Detect workflow step errors
+                    const errMatch = line.match(/workflow: workflow step \d+ \(([^)]+)\): Error: (.+)/);
+                    if (errMatch) {
+                        const [, stepName, errMsg] = errMatch;
+                        session.status = 'Failed';
+                        session.errorMessage = `${stepName}: ${errMsg.trim()}`;
+                        this._saveSessions();
+                        this.refresh();
+                        vscode.window.showErrorMessage(`Linkspan workflow failed — ${stepName}: ${errMsg.trim()}`);
+                        continue;
+                    }
+
+                    // Detect fatal errors (e.g. "failed to listen", panic, etc.)
+                    const fatal = line.match(/(?:fatal|FATAL|panic): (.+)/);
+                    if (fatal) {
+                        session.status = 'Failed';
+                        session.errorMessage = fatal[1].trim();
+                        this._saveSessions();
+                        this.refresh();
+                        vscode.window.showErrorMessage(`Linkspan error: ${fatal[1].trim()}`);
+                    }
                 }
             };
 
             proc.stdout!.on('data', (data: Buffer) => {
                 const text = data.toString();
                 this._outputChannel.appendLine(text.trimEnd());
-                parseCaptured(text);
+                parseOutput(text);
             });
 
             proc.stderr!.on('data', (data: Buffer) => {
                 const text = data.toString();
                 this._outputChannel.appendLine(text.trimEnd());
-                parseCaptured(text);
+                parseOutput(text);
             });
 
             proc.on('close', (code) => {
                 this._localProcesses.delete(sessionId);
                 const s = this._jobSessions.find(s => s.id === sessionId);
                 if (s) {
-                    s.status = code === 0 ? 'Completed' : 'Failed';
-                    if (code !== 0 && code !== null) {
-                        s.errorMessage = `linkspan exited with code ${code}`;
+                    // Only update status if not already marked as Failed by error parsing
+                    if (s.status !== 'Failed') {
+                        s.status = code === 0 ? 'Completed' : 'Failed';
+                        if (code !== 0 && code !== null) {
+                            s.errorMessage = `linkspan exited with code ${code}`;
+                            vscode.window.showErrorMessage(`Linkspan exited with code ${code}. Check output for details.`);
+                        }
                     }
                     s.localPid = undefined;
                     this._saveSessions();
