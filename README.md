@@ -120,6 +120,40 @@ This installs the extension globally so it appears in all VS Code windows, inclu
 
 After making code changes, re-run both commands to update the installed version.
 
+## Install from GitHub
+
+To install the extension directly from the GitHub repository:
+
+### Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Node.js](https://nodejs.org/) 20+
+- [VS Code](https://code.visualstudio.com/) 1.98+
+
+### Steps
+
+```sh
+git clone https://github.com/cyber-shuttle/CS-Bridge.git
+cd CS-Bridge
+npm install
+npx @vscode/vsce package
+code --install-extension cybershuttle-0.0.1.vsix --force
+```
+
+After installation, reload VS Code. The CyberShuttle icon will appear in the activity bar sidebar.
+
+### Updating
+
+To update to the latest version:
+
+```sh
+cd CS-Bridge
+git pull
+npm install
+npx @vscode/vsce package
+code --install-extension cybershuttle-0.0.1.vsix --force
+```
+
 ## Configuration
 
 ### SSH Hosts
