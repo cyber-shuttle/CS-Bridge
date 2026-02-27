@@ -1,71 +1,150 @@
-# cybershuttle README
+# CyberShuttle (CS-Bridge)
 
-This is the README for your extension "cybershuttle". After writing up a brief description, we recommend including the following sections.
+VS Code extension for launching and managing interactive HPC sessions. Submit SLURM jobs to remote clusters, set up SSH tunnels via Microsoft Dev Tunnels, and connect to remote VS Code sessions — all from the sidebar.
 
-## Features
+## Architecture
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+```
+Local VS Code                        Remote HPC Cluster
+┌─────────────────────┐              ┌──────────────────────────┐
+│  CS-Bridge sidebar  │──── SSH ────▶│  SLURM (sbatch/squeue)   │
+│  (webview UI)       │              │                          │
+│                     │              │  Compute Node:           │
+│  SSH ControlMaster  │              │  ┌──────────────────┐    │
+│  (connection pool)  │              │  │  linkspan         │    │
+│                     │              │  │  ├─ VS Code Server│    │
+│  Persistent shells  │              │  │  └─ Dev Tunnel ───┼────┼──▶ devtunnels.ms
+│  (file browser,     │              │  └──────────────────┘    │
+│   job monitoring)   │              └──────────────────────────┘
+└─────────────────────┘
+         │
+         ▼
+  Remote-SSH window
+  (connects via tunnel)
+```
 
-For example if there is an image subfolder under your extension project workspace:
+### Source Layout
 
-\!\[feature X\]\(images/feature-x.png\)
+```
+src/
+├── extension.ts                 # Entry point — registers sidebar view + auth command
+├── CybershuttleViewProvider.ts  # Main provider — webview UI, SSH, SLURM, tunnels (~3k lines)
+├── cscommands.ts                # OAuth device flow auth against auth.cybershuttle.org
+├── csstorage.ts                 # Thin wrapper around VS Code SecretStorage for tokens
+└── test/
+    └── extension.test.ts
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+scripts/
+├── askpass.js    # SSH_ASKPASS helper — bridges SSH password prompts to VS Code input dialogs
+└── info.sh       # Queries SLURM partitions, accounts, GPU/CPU capabilities via sinfo/sacctmgr
 
-## Requirements
+resources/
+└── cybershuttle.svg   # Activity bar icon
+```
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+### Key Components
 
-## Extension Settings
+| Class | Responsibility |
+|---|---|
+| `CybershuttleViewProvider` | Webview sidebar, SSH host management, SLURM job submission/monitoring, Dev Tunnel integration, file browser, log streaming |
+| `CsCommands` | OAuth 2.0 device authorization flow (Keycloak) |
+| `CsStorage` | Persists access/refresh tokens in OS keychain via `vscode.SecretStorage` |
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+### How a Session Works
 
-For example:
+1. User selects an SSH host and configures resources (CPUs, memory, GPU, wall time)
+2. Extension queries SLURM partitions/accounts via `scripts/info.sh` over SSH
+3. Extension generates a SLURM batch script that runs **linkspan** on the compute node
+4. linkspan starts a VS Code Server, creates a Dev Tunnel, and emits connection details
+5. Extension polls `squeue`/`sacct` + tails linkspan logs to capture tunnel URL and SSH port
+6. User clicks **Connect** — opens a Remote-SSH window through the tunnel
 
-This extension contributes the following settings:
+### External Dependencies
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+| Dependency | Purpose |
+|---|---|
+| [linkspan](../linkspan) | Runs on the compute node — starts VS Code Server + Dev Tunnel. Must be in `$PATH` on the remote host. |
+| [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) | VS Code extension used to open the remote session |
+| Microsoft Dev Tunnels | Port forwarding service — requires Microsoft account sign-in from the sidebar |
+| SSH config (`~/.ssh/config`) | Extension reads this to populate the host dropdown |
 
-## Known Issues
+## Development Setup
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+### Prerequisites
 
-## Release Notes
+- Node.js 20+
+- npm 10+
+- VS Code 1.98+
 
-Users appreciate release notes as you update your extension.
+### Install and Build
 
-### 1.0.0
+```sh
+cd CS-Bridge
+npm install
+npm run compile
+```
 
-Initial release of ...
+### Run in Development Mode
 
-### 1.0.1
+1. Open the `CS-Bridge` folder in VS Code
+2. Press **F5** (or Run > Start Debugging)
+3. A new VS Code window opens with the extension loaded (Extension Development Host)
+4. The CyberShuttle icon appears in the activity bar sidebar
 
-Fixed issue #.
+Changes to TypeScript files require recompilation. Use watch mode for convenience:
 
-### 1.1.0
+```sh
+npm run watch
+```
 
-Added features X, Y, and Z.
+Then reload the Extension Development Host window (`Cmd+Shift+P` > "Developer: Reload Window").
 
----
+> **Note:** Development mode only loads the extension in the Extension Development Host window. If you open a new Remote-SSH window from there, the extension won't appear. To test in Remote-SSH windows, install the packaged extension (see below).
 
-## Following extension guidelines
+### Lint
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+```sh
+npm run lint
+```
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+## Packaging and Installing
 
-## Working with Markdown
+Package the extension as a `.vsix` file and install it into VS Code:
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+```sh
+npx @vscode/vsce package
+code --install-extension cybershuttle-0.0.1.vsix --force
+```
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+This installs the extension globally so it appears in all VS Code windows, including Remote-SSH sessions.
 
-## For more information
+After making code changes, re-run both commands to update the installed version.
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+## Configuration
 
-**Enjoy!**
+### SSH Hosts
+
+The extension reads `~/.ssh/config` to populate the host dropdown. Ensure your HPC hosts are configured there:
+
+```
+Host delta
+  ProxyCommand ssh -q exouser@149.165.171.64 nc %h %p
+  HostName login.delta.ncsa.illinois.edu
+  User svcscigapgwuser
+  IdentityFile ~/.ssh/ext_delta
+```
+
+### linkspan on Remote Hosts
+
+The `linkspan` binary (Linux AMD64) must be installed in `$PATH` on each remote host:
+
+```sh
+scp linkspan/bin/linkspan-linux-amd64 <host>:~/bin/linkspan
+ssh <host> 'chmod +x ~/bin/linkspan'
+```
+
+Ensure `~/bin` is in `$PATH` (add `export PATH=$HOME/bin:$PATH` to `~/.bashrc` if needed).
+
+### SSH ControlMaster
+
+The extension uses SSH ControlMaster for connection multiplexing. Control sockets are stored in `~/.cs-ssh/` with hashed names to stay under the 104-byte macOS socket path limit. No manual configuration is needed.
