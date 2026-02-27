@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
+import * as https from 'https';
 
 interface PersistentShell {
     process: ChildProcess;
@@ -751,6 +752,82 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private static readonly DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
     private static readonly DEV_TUNNELS_SCOPE = `${CybershuttleViewProvider.DEV_TUNNELS_APP_ID}/.default`;
 
+    private static readonly LINKSPAN_VERSION = 'v0.4.0';
+    private static readonly LINKSPAN_DOWNLOAD_BASE = 'https://github.com/cyber-shuttle/linkspan/releases/download';
+
+    /**
+     * Ensure the linkspan binary is available locally, downloading it if necessary.
+     * Returns the absolute path to the linkspan binary.
+     */
+    private async ensureLocalLinkspan(): Promise<string> {
+        const version = CybershuttleViewProvider.LINKSPAN_VERSION;
+        const binDir = path.join(os.homedir(), '.cybershuttle', 'bin');
+        const binPath = path.join(binDir, 'linkspan');
+
+        if (fs.existsSync(binPath)) {
+            return binPath;
+        }
+
+        // Map Node.js platform/arch to GoReleaser names
+        const platformMap: Record<string, string> = { darwin: 'Darwin', linux: 'Linux', win32: 'Windows' };
+        const archMap: Record<string, string> = { x64: 'x86_64', arm64: 'arm64' };
+        const osName = platformMap[process.platform];
+        const archName = archMap[process.arch];
+        if (!osName || !archName) {
+            throw new Error(`Unsupported platform: ${process.platform}/${process.arch}`);
+        }
+
+        const url = `${CybershuttleViewProvider.LINKSPAN_DOWNLOAD_BASE}/${version}/linkspan_${osName}_${archName}.tar.gz`;
+        this._outputChannel.appendLine(`Downloading linkspan ${version} from ${url}`);
+
+        fs.mkdirSync(binDir, { recursive: true });
+        const tarPath = path.join(binDir, 'linkspan.tar.gz');
+
+        await this.downloadFile(url, tarPath);
+        execSync(`tar xzf ${JSON.stringify(tarPath)} -C ${JSON.stringify(binDir)}`);
+        fs.chmodSync(binPath, 0o755);
+        fs.unlinkSync(tarPath);
+
+        this._outputChannel.appendLine(`linkspan ${version} installed to ${binPath}`);
+        return binPath;
+    }
+
+    /**
+     * Download a file from a URL, following redirects (GitHub releases redirect to S3).
+     */
+    private downloadFile(url: string, destPath: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const file = fs.createWriteStream(destPath);
+            const request = (targetUrl: string) => {
+                https.get(targetUrl, (res) => {
+                    if (res.statusCode === 302 || res.statusCode === 301) {
+                        file.close();
+                        fs.unlinkSync(destPath);
+                        const redirect = res.headers.location;
+                        if (!redirect) { return reject(new Error('Redirect with no location header')); }
+                        const redirectFile = fs.createWriteStream(destPath);
+                        https.get(redirect, (rRes) => {
+                            if (rRes.statusCode !== 200) {
+                                redirectFile.close();
+                                return reject(new Error(`Download failed: HTTP ${rRes.statusCode}`));
+                            }
+                            rRes.pipe(redirectFile);
+                            redirectFile.on('finish', () => { redirectFile.close(); resolve(); });
+                        }).on('error', (err) => { redirectFile.close(); reject(err); });
+                        return;
+                    }
+                    if (res.statusCode !== 200) {
+                        file.close();
+                        return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+                    }
+                    res.pipe(file);
+                    file.on('finish', () => { file.close(); resolve(); });
+                }).on('error', (err) => { file.close(); reject(err); });
+            };
+            request(url);
+        });
+    }
+
     /**
      * Check Dev Tunnels auth on startup and update the webview auth state.
      */
@@ -761,7 +838,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
                 { silent: true },
             );
-            if (session) {
+            if (session && !this.isTokenExpired(session.accessToken)) {
                 this._devTunnelAccount = session.account.label;
                 this._outputChannel.appendLine('Dev Tunnels: signed in as ' + session.account.label);
             } else {
@@ -838,17 +915,48 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Check whether a JWT access token is expired (or about to expire within 5 minutes).
+     */
+    private isTokenExpired(token: string): boolean {
+        try {
+            const parts = token.split('.');
+            if (parts.length !== 3) { return true; }
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+            const nowSec = Math.floor(Date.now() / 1000);
+            return typeof payload.exp === 'number' && payload.exp < nowSec + 300;
+        } catch {
+            return true;
+        }
+    }
+
+    /**
      * Get a Microsoft Entra ID token for the Dev Tunnels service.
      * Uses VS Code's built-in Microsoft authentication provider.
-     * The token is needed by linkspan's SDK-based tunnel management.
+     * Proactively detects expired tokens and forces re-authentication.
      */
     private async getDevTunnelAuthToken(): Promise<string> {
-        const session = await vscode.authentication.getSession(
+        // Try the cached session first
+        const existing = await vscode.authentication.getSession(
             'microsoft',
             [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
             { createIfNone: true },
         );
-        return session.accessToken;
+        if (!this.isTokenExpired(existing.accessToken)) {
+            return existing.accessToken;
+        }
+
+        // Token is expired — force a fresh login
+        this._outputChannel.appendLine('Dev Tunnels: token expired, forcing re-authentication');
+        this._devTunnelAccount = null;
+        this.postAuthState();
+        const fresh = await vscode.authentication.getSession(
+            'microsoft',
+            [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+            { forceNewSession: true },
+        );
+        this._devTunnelAccount = fresh.account.label;
+        this.postAuthState();
+        return fresh.accessToken;
     }
 
     /**
@@ -937,8 +1045,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `mkdir -p "$LOG_DIR"`,
             `exec > "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.out" 2> "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.err"`,
             ``,
+            `# --- Download linkspan if not cached ---`,
+            `LINKSPAN_VERSION="${CybershuttleViewProvider.LINKSPAN_VERSION}"`,
+            `LINKSPAN_DIR="$HOME/.cybershuttle/bin"`,
+            `LINKSPAN_BIN="$LINKSPAN_DIR/linkspan"`,
+            `if [ ! -x "$LINKSPAN_BIN" ]; then`,
+            `    ARCH=$(uname -m)`,
+            `    [ "$ARCH" = "aarch64" ] && ARCH="arm64"`,
+            `    mkdir -p "$LINKSPAN_DIR"`,
+            `    curl -sSL "${CybershuttleViewProvider.LINKSPAN_DOWNLOAD_BASE}/\${LINKSPAN_VERSION}/linkspan_Linux_\${ARCH}.tar.gz" | tar xz -C "$LINKSPAN_DIR"`,
+            `    chmod +x "$LINKSPAN_BIN"`,
+            `fi`,
+            ``,
             `# --- Run linkspan with workflow from stdin ---`,
-            `linkspan --port 0 --tunnel-auth-token '${authToken}' --workflow - <<WORKFLOW_EOF`,
+            `"$LINKSPAN_BIN" --port 0 --tunnel-auth-token '${authToken}' --workflow - <<WORKFLOW_EOF`,
             workflowYaml,
             `WORKFLOW_EOF`,
         ].join('\n');
@@ -1255,7 +1375,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._outputChannel.appendLine(`\n--- Starting local linkspan session ---`);
 
         try {
-            const proc = spawn('linkspan', ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
+            const linkspanPath = await this.ensureLocalLinkspan();
+            const proc = spawn(linkspanPath, ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
                 stdio: ['pipe', 'pipe', 'pipe'],
                 env: { ...process.env },
             });
@@ -2887,7 +3008,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         <div class="tab-header">
             <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">Local</button>
             <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
-            <button id="refresh-btn" class="refresh-btn" title="Refresh">↻</button>
+            <button id="refresh-btn" class="refresh-btn" title="Refresh"><i class="codicon codicon-refresh"></i></button>
         </div>
         <div id="ssh-hosts">
             ${hostsHtml}
@@ -2896,7 +3017,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     <div id="tab-sessions" class="tab-panel${this._activeTab === 'sessions' ? ' active' : ''}">
         <div class="tab-header">
-            <button id="refresh-sessions-btn" class="refresh-btn" title="Refresh Sessions">↻</button>
+            <button id="refresh-sessions-btn" class="refresh-btn" title="Refresh Sessions"><i class="codicon codicon-refresh"></i></button>
         </div>
         <div id="sessions">
             ${sessionsHtml}
