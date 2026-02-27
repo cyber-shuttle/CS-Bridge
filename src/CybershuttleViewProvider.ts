@@ -232,7 +232,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             const needsPoll = this._jobSessions.some(
                 s => s.slurmJobId && !s.isLocal
                     && s.status !== 'Failed' && s.status !== 'Completed'
-                    && !s.tunnelUrl
             );
             if (!needsPoll) {
                 this._stopSessionPolling();
