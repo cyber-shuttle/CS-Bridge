@@ -838,7 +838,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
                 { silent: true },
             );
-            if (session && !this.isTokenExpired(session.accessToken)) {
+            if (session) {
                 this._devTunnelAccount = session.account.label;
                 this._outputChannel.appendLine('Dev Tunnels: signed in as ' + session.account.label);
             } else {
@@ -915,48 +915,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Check whether a JWT access token is expired (or about to expire within 5 minutes).
-     */
-    private isTokenExpired(token: string): boolean {
-        try {
-            const parts = token.split('.');
-            if (parts.length !== 3) { return true; }
-            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-            const nowSec = Math.floor(Date.now() / 1000);
-            return typeof payload.exp === 'number' && payload.exp < nowSec + 300;
-        } catch {
-            return true;
-        }
-    }
-
-    /**
      * Get a Microsoft Entra ID token for the Dev Tunnels service.
-     * Uses VS Code's built-in Microsoft authentication provider.
-     * Proactively detects expired tokens and forces re-authentication.
+     * Uses VS Code's built-in Microsoft authentication provider,
+     * which handles token refresh automatically via refresh tokens.
      */
     private async getDevTunnelAuthToken(): Promise<string> {
-        // Try the cached session first
-        const existing = await vscode.authentication.getSession(
+        const session = await vscode.authentication.getSession(
             'microsoft',
             [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
             { createIfNone: true },
         );
-        if (!this.isTokenExpired(existing.accessToken)) {
-            return existing.accessToken;
-        }
-
-        // Token is expired — force a fresh login
-        this._outputChannel.appendLine('Dev Tunnels: token expired, forcing re-authentication');
-        this._devTunnelAccount = null;
+        this._devTunnelAccount = session.account.label;
         this.postAuthState();
-        const fresh = await vscode.authentication.getSession(
-            'microsoft',
-            [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
-            { forceNewSession: true },
-        );
-        this._devTunnelAccount = fresh.account.label;
-        this.postAuthState();
-        return fresh.accessToken;
+        return session.accessToken;
     }
 
     /**
