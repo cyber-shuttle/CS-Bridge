@@ -46,6 +46,8 @@ interface JobSession {
     tunnelToken?: string;
     tunnelId?: string;
     sshPort?: number;
+    connectedRemotePath?: string;
+    localWorkspaceFolder?: string;
 }
 
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
@@ -64,6 +66,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _devTunnelAccount: string | null = null;
     private _sessionPollTimer?: ReturnType<typeof setInterval>;
     private _sessionPollBusy = false;
+    private _sessionsFilePath: string;
+    private _lastWriteTime: number = 0;
+    private _isRemoteWindow: boolean;
 
     private static readonly SESSIONS_KEY = 'cybershuttle.jobSessions';
 
@@ -75,15 +80,60 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         if (!fs.existsSync(this._sshControlDir)) {
             fs.mkdirSync(this._sshControlDir, { mode: 0o700 });
         }
+        // File-based session storage for cross-window sync
+        const csDir = path.join(os.homedir(), '.cybershuttle');
+        if (!fs.existsSync(csDir)) {
+            fs.mkdirSync(csDir, { mode: 0o700 });
+        }
+        this._sessionsFilePath = path.join(csDir, 'sessions.json');
+        // Detect if this window is a Remote-SSH window
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        this._isRemoteWindow = folder?.uri.scheme === 'vscode-remote';
         this._loadSessions();
+        this._watchSessionsFile();
     }
 
     private _loadSessions() {
-        const raw = this._globalState.get<any[]>(CybershuttleViewProvider.SESSIONS_KEY, []);
+        let raw: any[] = [];
+        // Try to load from shared file first
+        try {
+            if (fs.existsSync(this._sessionsFilePath)) {
+                const content = fs.readFileSync(this._sessionsFilePath, 'utf-8');
+                raw = JSON.parse(content);
+            }
+        } catch {
+            raw = [];
+        }
+        // One-time migration from globalState if file is empty/missing
+        if (raw.length === 0) {
+            const legacy = this._globalState.get<any[]>(CybershuttleViewProvider.SESSIONS_KEY, []);
+            if (legacy.length > 0) {
+                raw = legacy;
+                // Write migrated data to file
+                try {
+                    const tmpPath = this._sessionsFilePath + '.tmp';
+                    fs.writeFileSync(tmpPath, JSON.stringify(raw, null, 2));
+                    fs.renameSync(tmpPath, this._sessionsFilePath);
+                } catch { /* best effort */ }
+                // Clear legacy storage
+                this._globalState.update(CybershuttleViewProvider.SESSIONS_KEY, undefined);
+            }
+        }
         this._jobSessions = raw.map(s => ({
             ...s,
             submittedAt: new Date(s.submittedAt),
         }));
+        // Reconcile orphaned local sessions: verify process is alive
+        for (const session of this._jobSessions) {
+            if (session.isLocal && session.status === 'Active' && session.localPid) {
+                try {
+                    process.kill(session.localPid, 0);
+                } catch {
+                    session.status = 'Failed';
+                    session.errorMessage = 'Process no longer running';
+                }
+            }
+        }
         // Resume polling if any remote sessions are still in non-terminal states
         const needsPoll = this._jobSessions.some(
             s => s.slurmJobId && !s.isLocal
@@ -96,7 +146,62 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     private _saveSessions() {
-        this._globalState.update(CybershuttleViewProvider.SESSIONS_KEY, this._jobSessions);
+        try {
+            const tmpPath = this._sessionsFilePath + '.tmp';
+            fs.writeFileSync(tmpPath, JSON.stringify(this._jobSessions, null, 2));
+            fs.renameSync(tmpPath, this._sessionsFilePath);
+            this._lastWriteTime = Date.now();
+        } catch (err: any) {
+            this._outputChannel.appendLine(`[sessions] Failed to save sessions file: ${err.message}`);
+        }
+    }
+
+    private _watchSessionsFile() {
+        fs.watchFile(this._sessionsFilePath, { interval: 1000 }, () => {
+            // Skip reload if this window was the last writer (within 2s window)
+            if (Date.now() - this._lastWriteTime < 2000) {
+                return;
+            }
+            this._outputChannel.appendLine('[sessions] Sessions file changed externally, reloading');
+            this._loadSessions();
+            this.refresh();
+        });
+    }
+
+    public dispose() {
+        fs.unwatchFile(this._sessionsFilePath);
+        this._stopSessionPolling();
+        this.disposePersistentShells();
+        this.stopAllLogStreams();
+    }
+
+    /**
+     * Detect which session (if any) is active in this VS Code window.
+     * Checks workspace folder URI for Remote-SSH patterns:
+     *   - Local sessions: ssh-remote+cs-tunnel-{id}
+     *   - Remote SLURM sessions: ssh-remote+{hostName}
+     */
+    private _detectActiveSession(): JobSession | undefined {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (!folder || folder.uri.scheme !== 'vscode-remote') {
+            return undefined;
+        }
+        const authority = folder.uri.authority;
+        // Local session: ssh-remote+cs-tunnel-{sessionId}
+        const localMatch = authority.match(/^ssh-remote\+cs-tunnel-(.+)$/);
+        if (localMatch) {
+            const sessionId = localMatch[1];
+            return this._jobSessions.find(s => s.id === sessionId);
+        }
+        // Remote SLURM session: ssh-remote+{hostName}
+        const remoteMatch = authority.match(/^ssh-remote\+(.+)$/);
+        if (remoteMatch) {
+            const hostName = remoteMatch[1];
+            // Prefer Active sessions when matching by host
+            return this._jobSessions.find(s => !s.isLocal && s.host === hostName && s.status === 'Active')
+                || this._jobSessions.find(s => !s.isLocal && s.host === hostName);
+        }
+        return undefined;
     }
 
     /**
@@ -1301,15 +1406,23 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        // Prompt for remote folder path
-        const remotePath = await vscode.window.showInputBox({
-            title: `Connect to linkspan session (localhost:${session.sshPort})`,
-            prompt: 'Enter the remote folder path',
-            placeHolder: '/home/user',
-            value: os.homedir(),
-        });
+        // Use saved remote path or prompt for one
+        let remotePath = session.connectedRemotePath;
+        if (!remotePath) {
+            remotePath = await vscode.window.showInputBox({
+                title: `Connect to linkspan session (localhost:${session.sshPort})`,
+                prompt: 'Enter the remote folder path',
+                placeHolder: '/home/user',
+                value: os.homedir(),
+            });
+        }
 
         if (remotePath) {
+            // Save workspace context before switching
+            session.localWorkspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            session.connectedRemotePath = remotePath;
+            this._saveSessions();
+
             vscode.commands.executeCommand(
                 'vscode.openFolder',
                 vscode.Uri.from({
@@ -1365,11 +1478,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     private stopLocalSession(sessionId: string) {
-        // Kill linkspan process
+        // Kill linkspan process — try local map first, fall back to PID for cross-window stop
         const proc = this._localProcesses.get(sessionId);
         if (proc) {
             proc.kill();
             this._localProcesses.delete(sessionId);
+        } else {
+            const session = this._jobSessions.find(s => s.id === sessionId);
+            if (session?.localPid) {
+                try { process.kill(session.localPid, 'SIGTERM'); } catch { /* already dead */ }
+            }
         }
 
         // Clean up the devtunnel (safety net — linkspan shutdown should do this too)
@@ -1590,19 +1708,34 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Connect to an SSH host using VS Code Remote-SSH
      */
     private async connectToSshHost(hostName: string) {
-        // Try to get the remote home directory, fall back to /
-        const homeResult = await this.runRemoteCommand(hostName, 'echo $HOME').catch(() => null);
-        const defaultPath = homeResult?.code === 0 && homeResult.stdout.trim() ? homeResult.stdout.trim() : '/';
+        // Find matching session for this host to save context
+        const matchedSession = this._jobSessions.find(
+            s => !s.isLocal && s.host === hostName && s.status === 'Active'
+        );
 
-        // Prompt for the remote path
-        const remotePath = await vscode.window.showInputBox({
-            title: `Connect to ${hostName}`,
-            prompt: 'Enter the remote folder path',
-            placeHolder: defaultPath,
-            value: defaultPath,
-        });
+        // Use saved remote path or prompt for one
+        let remotePath = matchedSession?.connectedRemotePath;
+        if (!remotePath) {
+            // Try to get the remote home directory, fall back to /
+            const homeResult = await this.runRemoteCommand(hostName, 'echo $HOME').catch(() => null);
+            const defaultPath = homeResult?.code === 0 && homeResult.stdout.trim() ? homeResult.stdout.trim() : '/';
+
+            remotePath = await vscode.window.showInputBox({
+                title: `Connect to ${hostName}`,
+                prompt: 'Enter the remote folder path',
+                placeHolder: defaultPath,
+                value: defaultPath,
+            });
+        }
 
         if (remotePath) {
+            // Save workspace context on the matched session
+            if (matchedSession) {
+                matchedSession.localWorkspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                matchedSession.connectedRemotePath = remotePath;
+                this._saveSessions();
+            }
+
             vscode.commands.executeCommand(
                 'vscode.openFolder',
                 vscode.Uri.from({
@@ -1613,6 +1746,110 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 true // Open in new window
             );
         }
+    }
+
+    /**
+     * Switch the current window to the remote session.
+     * For local sessions, connects via ssh-remote+cs-tunnel-{id}.
+     * For remote sessions, connects via ssh-remote+{host}.
+     */
+    private async switchToRemote(sessionId: string) {
+        const session = this._jobSessions.find(s => s.id === sessionId);
+        if (!session) {
+            vscode.window.showErrorMessage('Session not found.');
+            return;
+        }
+
+        // Save current local workspace folder
+        session.localWorkspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+        // Determine remote path — prompt only on first connect
+        let remotePath = session.connectedRemotePath;
+        if (!remotePath) {
+            remotePath = await vscode.window.showInputBox({
+                title: 'Remote folder path',
+                prompt: 'Enter the remote folder path to open',
+                placeHolder: '/home/user',
+                value: '/home/user',
+            });
+            if (!remotePath) { return; }
+            session.connectedRemotePath = remotePath;
+        }
+        this._saveSessions();
+
+        if (session.isLocal) {
+            // Ensure SSH config entry exists
+            const hostAlias = `cs-tunnel-${sessionId}`;
+            const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
+            try {
+                const existing = fs.readFileSync(sshConfigPath, 'utf-8');
+                if (!existing.includes(`Host ${hostAlias}`)) {
+                    const configBlock = [
+                        ``,
+                        `# CS-Bridge auto-generated for session ${sessionId}`,
+                        `Host ${hostAlias}`,
+                        `    HostName 127.0.0.1`,
+                        `    Port ${session.sshPort}`,
+                        `    User user`,
+                        `    StrictHostKeyChecking no`,
+                        `    UserKnownHostsFile /dev/null`,
+                    ].join('\n');
+                    fs.appendFileSync(sshConfigPath, configBlock + '\n');
+                }
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Failed to update SSH config: ${err.message}`);
+                return;
+            }
+
+            vscode.commands.executeCommand(
+                'vscode.openFolder',
+                vscode.Uri.from({
+                    scheme: 'vscode-remote',
+                    authority: `ssh-remote+${hostAlias}`,
+                    path: remotePath,
+                }),
+                { forceNewWindow: true }
+            );
+        } else {
+            vscode.commands.executeCommand(
+                'vscode.openFolder',
+                vscode.Uri.from({
+                    scheme: 'vscode-remote',
+                    authority: `ssh-remote+${session.host}`,
+                    path: remotePath,
+                }),
+                { forceNewWindow: true }
+            );
+        }
+    }
+
+    /**
+     * Switch back to the local workspace folder from a remote session.
+     */
+    private async switchToLocal(sessionId: string) {
+        const session = this._jobSessions.find(s => s.id === sessionId);
+        if (!session) {
+            vscode.window.showErrorMessage('Session not found.');
+            return;
+        }
+
+        let localPath = session.localWorkspaceFolder;
+        if (!localPath) {
+            const picked = await vscode.window.showOpenDialog({
+                canSelectFolders: true,
+                canSelectFiles: false,
+                canSelectMany: false,
+                title: 'Select local workspace folder',
+            });
+            if (!picked || picked.length === 0) { return; }
+            localPath = picked[0].fsPath;
+        }
+
+        vscode.commands.executeCommand(
+            'vscode.openFolder',
+            vscode.Uri.file(localPath),
+            { forceNewWindow: true }
+        );
     }
 
     /**
@@ -1877,6 +2114,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             : '<p class="empty-message">No SSH hosts found in ~/.ssh/config</p>';
 
         // Build sessions HTML
+        const activeSession = this._detectActiveSession();
         const sessionsHtml = this._jobSessions.length > 0
             ? this._jobSessions.map(session => {
                 const now = new Date();
@@ -1889,25 +2127,40 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const statusIcon = session.status === 'Active' ? '🟢' : session.status === 'Failed' ? '🔴' : session.status === 'Completed' ? '⚪' : session.status === 'Submitting' ? '🔵' : '🟡';
                 const hasLogs = !!session.slurmJobId;
                 const isLocal = !!session.isLocal;
+                const isActiveInThisWindow = activeSession?.id === session.id;
 
                 // Action buttons differ by session type and status.
-                // Show a spinner while the session is still being set up.
+                // When the session is active in this remote window, show Switch (to local) + Stop.
+                // When ready in a local window, show Switch (to remote) + Stop.
                 let actionButtons: string;
+                const switchToLocalBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(session.id)}" data-direction="local" title="Switch to local workspace"><i class="codicon codicon-arrow-swap"></i></button>`;
+                const switchToRemoteBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(session.id)}" data-direction="remote" title="Switch to remote session"><i class="codicon codicon-arrow-swap"></i></button>`;
+                const stopLocalBtn = `<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(session.id)}" title="Stop"><i class="codicon codicon-debug-stop"></i></button>`;
+                const stopRemoteBtn = `<button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(session.id)}" title="Cancel Job"><i class="codicon codicon-debug-stop"></i></button>`;
+                const spinner = `<i class="codicon codicon-loading codicon-modifier-spin session-action-spinner"></i>`;
+
                 if (session.status === 'Submitting') {
-                    actionButtons = `<i class="codicon codicon-loading codicon-modifier-spin session-action-spinner"></i>`;
+                    actionButtons = spinner;
+                } else if (isActiveInThisWindow) {
+                    // This remote window is connected to this session — offer switch back to local
+                    actionButtons = `${switchToLocalBtn}${isLocal ? stopLocalBtn : stopRemoteBtn}`;
                 } else if (isLocal) {
                     if (session.status === 'Active') {
-                        const canConnect = !!session.sshPort;
-                        actionButtons = `${canConnect ? `<button class="session-action-btn connect-local-btn" data-session-id="${escapeHtml(session.id)}" title="Connect to SSH session"><i class="codicon codicon-play"></i></button>` : ''}<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(session.id)}" title="Stop"><i class="codicon codicon-debug-stop"></i></button>`;
+                        if (session.sshPort) {
+                            actionButtons = `${switchToRemoteBtn}${stopLocalBtn}`;
+                        } else {
+                            actionButtons = `${spinner}${stopLocalBtn}`;
+                        }
                     } else {
                         actionButtons = `<button class="session-action-btn relaunch-local-btn" data-session-id="${escapeHtml(session.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
                     }
                 } else if (session.status === 'Failed' || session.status === 'Completed') {
                     actionButtons = `<button class="session-action-btn relaunch-session-btn" data-session-id="${escapeHtml(session.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
                 } else if (session.status === 'Pending' || (session.status === 'Active' && !session.tunnelUrl)) {
-                    actionButtons = `<i class="codicon codicon-loading codicon-modifier-spin session-action-spinner"></i><button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(session.id)}" title="Cancel Job"><i class="codicon codicon-debug-stop"></i></button>`;
+                    actionButtons = `${spinner}${stopRemoteBtn}`;
                 } else {
-                    actionButtons = `<button class="session-action-btn connect-session-btn" data-session-id="${escapeHtml(session.id)}" data-host="${escapeHtml(session.host)}" title="Connect"><i class="codicon codicon-play"></i></button><button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(session.id)}" title="Cancel Job"><i class="codicon codicon-debug-stop"></i></button>`;
+                    // Remote, Active, tunnelUrl ready
+                    actionButtons = `${switchToRemoteBtn}${stopRemoteBtn}`;
                 }
 
                 // Detail lines differ for local vs remote
@@ -1929,7 +2182,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
 
                 return `
-                <div class="session-entry">
+                <div class="session-entry${isActiveInThisWindow ? ' session-active' : ''}">
                     <div class="session-row${hasLogs ? ' session-row-clickable' : ''}" data-session-id="${escapeHtml(session.id)}">
                         <div class="session-info">
                             <div class="session-header">
@@ -2329,6 +2582,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             margin: 4px 0;
             background: var(--vscode-list-hoverBackground);
             border-radius: 4px;
+        }
+        .session-entry.session-active {
+            border-left: 3px solid var(--vscode-focusBorder);
+            background: var(--vscode-list-activeSelectionBackground);
         }
         .session-row {
         }
