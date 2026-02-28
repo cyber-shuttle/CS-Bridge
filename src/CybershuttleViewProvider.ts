@@ -4,7 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn, execSync, ChildProcess } from 'child_process';
-import * as https from 'https';
+
 
 interface PersistentShell {
     process: ChildProcess;
@@ -63,6 +63,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _persistentShells: Map<string, PersistentShell> = new Map();
     private _logTailProcesses: Map<string, ChildProcess> = new Map();
     private _browseRequestId: Map<string, number> = new Map();
+    private _associationsCts: Map<string, vscode.CancellationTokenSource> = new Map();
     private _localProcesses: Map<string, ChildProcess> = new Map();
     private _devTunnelAccount: string | null = null;
     private _sessionPollTimer?: ReturnType<typeof setInterval>;
@@ -579,6 +580,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.postMessage({ type: 'browseCancelled', host: data.host });
                     break;
                 }
+                case 'cancelAssociations': {
+                    const cts = this._associationsCts.get(data.host);
+                    if (cts) {
+                        cts.cancel();
+                        this._associationsCts.delete(data.host);
+                    }
+                    break;
+                }
                 case 'refresh': {
                     this.refresh();
                     break;
@@ -752,23 +761,17 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private static readonly DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
     private static readonly DEV_TUNNELS_SCOPE = `${CybershuttleViewProvider.DEV_TUNNELS_APP_ID}/.default`;
 
-    private static readonly LINKSPAN_VERSION = 'v0.4.0';
-    private static readonly LINKSPAN_DOWNLOAD_BASE = 'https://github.com/cyber-shuttle/linkspan/releases/download';
-
     /**
-     * Ensure the linkspan binary is available locally, downloading it if necessary.
-     * Returns the absolute path to the linkspan binary.
+     * Ensure the linkspan binary is available locally by downloading the latest
+     * release from GitHub if not already cached at ~/.cybershuttle/bin/linkspan.
      */
     private async ensureLocalLinkspan(): Promise<string> {
-        const version = CybershuttleViewProvider.LINKSPAN_VERSION;
         const binDir = path.join(os.homedir(), '.cybershuttle', 'bin');
         const binPath = path.join(binDir, 'linkspan');
-
         if (fs.existsSync(binPath)) {
             return binPath;
         }
 
-        // Map Node.js platform/arch to GoReleaser names
         const platformMap: Record<string, string> = { darwin: 'Darwin', linux: 'Linux', win32: 'Windows' };
         const archMap: Record<string, string> = { x64: 'x86_64', arm64: 'arm64' };
         const osName = platformMap[process.platform];
@@ -777,55 +780,27 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             throw new Error(`Unsupported platform: ${process.platform}/${process.arch}`);
         }
 
-        const url = `${CybershuttleViewProvider.LINKSPAN_DOWNLOAD_BASE}/${version}/linkspan_${osName}_${archName}.tar.gz`;
-        this._outputChannel.appendLine(`Downloading linkspan ${version} from ${url}`);
+        const assetName = `linkspan_${osName}_${archName}.tar.gz`;
+        const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/${assetName}`;
 
+        this._outputChannel.appendLine(`Downloading linkspan from ${downloadUrl}`);
         fs.mkdirSync(binDir, { recursive: true });
-        const tarPath = path.join(binDir, 'linkspan.tar.gz');
 
-        await this.downloadFile(url, tarPath);
-        execSync(`tar xzf ${JSON.stringify(tarPath)} -C ${JSON.stringify(binDir)}`);
-        fs.chmodSync(binPath, 0o755);
-        fs.unlinkSync(tarPath);
-
-        this._outputChannel.appendLine(`linkspan ${version} installed to ${binPath}`);
-        return binPath;
-    }
-
-    /**
-     * Download a file from a URL, following redirects (GitHub releases redirect to S3).
-     */
-    private downloadFile(url: string, destPath: string): Promise<void> {
-        return new Promise((resolve, reject) => {
-            const file = fs.createWriteStream(destPath);
-            const request = (targetUrl: string) => {
-                https.get(targetUrl, (res) => {
-                    if (res.statusCode === 302 || res.statusCode === 301) {
-                        file.close();
-                        fs.unlinkSync(destPath);
-                        const redirect = res.headers.location;
-                        if (!redirect) { return reject(new Error('Redirect with no location header')); }
-                        const redirectFile = fs.createWriteStream(destPath);
-                        https.get(redirect, (rRes) => {
-                            if (rRes.statusCode !== 200) {
-                                redirectFile.close();
-                                return reject(new Error(`Download failed: HTTP ${rRes.statusCode}`));
-                            }
-                            rRes.pipe(redirectFile);
-                            redirectFile.on('finish', () => { redirectFile.close(); resolve(); });
-                        }).on('error', (err) => { redirectFile.close(); reject(err); });
-                        return;
-                    }
-                    if (res.statusCode !== 200) {
-                        file.close();
-                        return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
-                    }
-                    res.pipe(file);
-                    file.on('finish', () => { file.close(); resolve(); });
-                }).on('error', (err) => { file.close(); reject(err); });
-            };
-            request(url);
+        await new Promise<void>((resolve, reject) => {
+            const proc = spawn('bash', ['-c', `curl -fsSL "${downloadUrl}" | tar -xz -C "${binDir}" linkspan && chmod +x "${binPath}"`], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let stderr = '';
+            proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+            proc.on('close', (code) => {
+                if (code === 0) { resolve(); }
+                else { reject(new Error(`Failed to download linkspan: ${stderr}`)); }
+            });
+            proc.on('error', reject);
         });
+
+        this._outputChannel.appendLine('linkspan downloaded to ' + binPath);
+        return binPath;
     }
 
     /**
@@ -1016,19 +991,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `mkdir -p "$LOG_DIR"`,
             `exec > "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.out" 2> "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.err"`,
             ``,
-            `# --- Download linkspan if not cached ---`,
-            `LINKSPAN_VERSION="${CybershuttleViewProvider.LINKSPAN_VERSION}"`,
-            `LINKSPAN_DIR="$HOME/.cybershuttle/bin"`,
-            `LINKSPAN_BIN="$LINKSPAN_DIR/linkspan"`,
-            `if [ ! -x "$LINKSPAN_BIN" ]; then`,
-            `    ARCH=$(uname -m)`,
-            `    [ "$ARCH" = "aarch64" ] && ARCH="arm64"`,
-            `    mkdir -p "$LINKSPAN_DIR"`,
-            `    curl -sSL "${CybershuttleViewProvider.LINKSPAN_DOWNLOAD_BASE}/\${LINKSPAN_VERSION}/linkspan_Linux_\${ARCH}.tar.gz" | tar xz -C "$LINKSPAN_DIR"`,
-            `    chmod +x "$LINKSPAN_BIN"`,
-            `fi`,
-            ``,
-            `# --- Run linkspan with workflow from stdin ---`,
+            `# --- Run linkspan (pre-deployed via scp) ---`,
+            `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
             `"$LINKSPAN_BIN" --port 0 --tunnel-auth-token '${authToken}' --workflow - <<WORKFLOW_EOF`,
             workflowYaml,
             `WORKFLOW_EOF`,
@@ -1055,16 +1019,21 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: `Submitting job on ${session.host}`,
-            cancellable: false,
-        }, async (progress) => {
+            cancellable: true,
+        }, async (progress, token) => {
             this._outputChannel.appendLine(`\n--- Submitting SLURM job on ${session.host} ---`);
-            progress.report({ message: 'Sending batch script...' });
 
             try {
+                // Deploy linkspan binary to the remote host
+                progress.report({ message: 'Deploying linkspan binary...' });
+                await this.deployLinkspan(session.host, token);
+
+                progress.report({ message: 'Sending batch script...' });
                 const scriptB64 = Buffer.from(session.script!).toString('base64');
                 const result = await this.runRemoteCommand(
                     session.host,
-                    `mkdir -p ~/.cybershuttle/logs && echo '${scriptB64}' | base64 -d | sbatch`
+                    `mkdir -p ~/.cybershuttle/logs && echo '${scriptB64}' | base64 -d | sbatch`,
+                    token
                 );
 
                 if (result.code === 0) {
@@ -1088,15 +1057,55 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     vscode.window.showErrorMessage(`Failed to submit job on ${session.host}: ${session.errorMessage}`);
                 }
             } catch (err: any) {
-                session.status = 'Failed';
-                session.errorMessage = err.message;
-                this._outputChannel.appendLine(`Error: ${err.message}`);
-                vscode.window.showErrorMessage(`Failed to submit job: ${err.message}`);
+                if (err.cancelled) {
+                    session.status = 'Failed';
+                    session.errorMessage = 'Cancelled by user';
+                    this._outputChannel.appendLine('Job submission cancelled by user');
+                    vscode.window.showInformationMessage(`Job submission on ${session.host} cancelled.`);
+                } else {
+                    session.status = 'Failed';
+                    session.errorMessage = err.message;
+                    this._outputChannel.appendLine(`Error: ${err.message}`);
+                    vscode.window.showErrorMessage(`Failed to submit job: ${err.message}`);
+                }
             }
 
             this._saveSessions();
             this.refresh();
         });
+    }
+
+    /**
+     * Deploy the linkspan binary to a remote host by downloading the latest
+     * release from GitHub (https://github.com/cyber-shuttle/linkspan).
+     */
+    private async deployLinkspan(hostName: string, token?: vscode.CancellationToken): Promise<void> {
+        // Check if linkspan is already deployed
+        const check = await this.runRemoteCommand(hostName, 'test -x ~/.cybershuttle/bin/linkspan && echo OK', token);
+        if (check.code === 0 && check.stdout.trim() === 'OK') {
+            this._outputChannel.appendLine('linkspan already deployed on ' + hostName);
+            return;
+        }
+
+        // Detect remote architecture
+        const archResult = await this.runRemoteCommand(hostName, 'uname -m', token);
+        if (archResult.code !== 0) {
+            throw new Error('Failed to detect remote architecture');
+        }
+        let arch = archResult.stdout.trim();
+        if (arch === 'aarch64') { arch = 'arm64'; }
+
+        // Download latest release from GitHub directly on the remote host
+        const assetName = `linkspan_Linux_${arch}.tar.gz`;
+        const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/${assetName}`;
+
+        await this.runRemoteCommand(
+            hostName,
+            `mkdir -p ~/.cybershuttle/bin && curl -fsSL "${downloadUrl}" | tar -xz -C ~/.cybershuttle/bin linkspan && chmod +x ~/.cybershuttle/bin/linkspan`,
+            token
+        );
+
+        this._outputChannel.appendLine('linkspan deployed to ' + hostName);
     }
 
     /**
@@ -1763,11 +1772,22 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * to populate the Partition and Allocation dropdowns.
      */
     private async queryAssociations(hostName: string) {
+        // Cancel any in-flight fetch for this host
+        const prev = this._associationsCts.get(hostName);
+        if (prev) { prev.cancel(); }
+
+        const cts = new vscode.CancellationTokenSource();
+        this._associationsCts.set(hostName, cts);
+
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: `Querying cluster info on ${hostName}`,
-            cancellable: false,
-        }, async (progress) => {
+            cancellable: true,
+        }, async (progress, progressToken) => {
+            // Merge: cancel if either the toast Cancel or webview Stop fires
+            const mergedDisposable = progressToken.onCancellationRequested(() => cts.cancel());
+            const token = cts.token;
+
             this._outputChannel.appendLine(`\n--- Querying SLURM partition info on ${hostName} ---`);
             progress.report({ message: 'Fetching partitions and accounts...' });
 
@@ -1779,7 +1799,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const scriptB64 = Buffer.from(infoScript).toString('base64');
                 const result = await this.runRemoteCommand(
                     hostName,
-                    `echo '${scriptB64}' | base64 -d | bash`
+                    `echo '${scriptB64}' | base64 -d | bash`,
+                    token
                 );
 
                 if (result.code === 0) {
@@ -1813,8 +1834,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
                 this._outputChannel.appendLine(`--- End of partition info ---\n`);
             } catch (err: any) {
-                this._outputChannel.appendLine(`Error: ${err.message}`);
-                this.postMessage({ type: 'associationsError', host: hostName, error: err.message });
+                if (err.cancelled) {
+                    this._outputChannel.appendLine('Partition query cancelled by user');
+                    this.postMessage({ type: 'associationsCancelled', host: hostName });
+                } else {
+                    this._outputChannel.appendLine(`Error: ${err.message}`);
+                    this.postMessage({ type: 'associationsError', host: hostName, error: err.message });
+                }
+            } finally {
+                mergedDisposable.dispose();
+                this._associationsCts.delete(hostName);
             }
         });
     }
@@ -1972,7 +2001,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Handles SSH_ASKPASS IPC for password/passphrase prompts and ControlMaster multiplexing.
      * Returns a promise that resolves with { stdout, stderr, code }.
      */
-    private runRemoteCommand(hostName: string, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+    private runRemoteCommand(hostName: string, command: string, token?: vscode.CancellationToken): Promise<{ stdout: string; stderr: string; code: number }> {
         return new Promise((resolve, reject) => {
             // Create a temp directory for askpass IPC
             const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
@@ -2001,6 +2030,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             let stdoutData = '';
             let stderrData = '';
             let disposed = false;
+            let cancelled = false;
+
+            // Cancel listener — kill SSH process when token fires
+            const cancelListener = token?.onCancellationRequested(() => {
+                cancelled = true;
+                sshProcess.kill();
+            });
             const handledPrompts = new Set<string>();
 
             sshProcess.stdout.on('data', (data: Buffer) => {
@@ -2053,12 +2089,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             const cleanup = () => {
                 disposed = true;
                 clearInterval(pollInterval);
+                cancelListener?.dispose();
                 try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
             };
 
             sshProcess.on('close', (code: number | null) => {
                 cleanup();
-                resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 });
+                if (cancelled) {
+                    const err: any = new Error('Operation cancelled');
+                    err.cancelled = true;
+                    reject(err);
+                } else {
+                    resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 });
+                }
             });
 
             sshProcess.on('error', (err: Error) => {
@@ -2208,7 +2251,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         <span class="chevron">&#x203A;</span>
                     </div>
                     <div class="job-form" id="job-form-${escapeHtml(host.name)}" style="display:none;">
-                        <div class="job-form-loading"><div class="spinner"></div>Fetching partitions...</div>
+                        <div class="job-form-loading"><div class="spinner"></div>Fetching partitions...<button class="job-form-stop-btn" data-host="${escapeHtml(host.name)}">Stop</button></div>
                         <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span><button class="job-form-retry-btn" data-host="${escapeHtml(host.name)}">Retry</button></div>
                         <div class="job-form-fields">
                             <div class="form-row">
@@ -2534,6 +2577,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             padding: 2px 8px;
             font-size: 11px;
             flex-shrink: 0;
+        }
+        .job-form-stop-btn {
+            padding: 2px 6px;
+            font-size: 10px;
+            flex-shrink: 0;
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-errorForeground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-left: auto;
+        }
+        .job-form-stop-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
         }
         .spinner {
             width: 14px;
@@ -3170,6 +3227,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
         });
 
+        document.querySelectorAll('.job-form-stop-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const host = btn.getAttribute('data-host');
+                vscode.postMessage({ type: 'cancelAssociations', host: host });
+            });
+        });
+
         // Add click handlers to submit job buttons
         document.querySelectorAll('.submit-job-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -3361,6 +3426,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         content.textContent = '[No logs available yet]';
                     }
                 }
+                return;
+            }
+
+            if (msg.type === 'associationsCancelled') {
+                const form = document.getElementById('job-form-' + msg.host);
+                if (!form) { return; }
+                form.querySelector('.job-form-loading').style.display = 'none';
+                // Reset to collapsed state — user can click to retry
                 return;
             }
 
