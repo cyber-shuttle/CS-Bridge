@@ -1,6 +1,5 @@
 #!/bin/sh
 # partition|nodes|max_cpus_per_node|max_gpus_per_node|accounts
-set -eu
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -8,6 +7,8 @@ have() { command -v "$1" >/dev/null 2>&1; }
 csv_join_sorted() { LC_ALL=C sort -u | paste -sd, -; }
 
 # --- partitions --------------------------------------------------------------
+have sinfo || exit 0
+
 parts="$(
   sinfo -h -o "%P" 2>/dev/null \
   | sed 's/\*//g; s/:.*$//; /^$/d' \
@@ -122,7 +123,6 @@ for p in $parts; do
   accts=""
   if [ "$acct_ok" -eq 1 ]; then
     accts="$(accounts_for_partition "$p" "$is_gpu")"
-    [ -n "${accts:-}" ] || continue
   fi
 
   printf "%s|%s|%s|%s|%s\n" \

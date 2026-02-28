@@ -59,11 +59,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _sshControlDir: string;
     private _jobSessions: JobSession[] = [];
     private _activeTab: string = 'servers';
+    private _expandedHost: string | null = null;
     private _globalState: vscode.Memento;
     private _persistentShells: Map<string, PersistentShell> = new Map();
     private _logTailProcesses: Map<string, ChildProcess> = new Map();
     private _browseRequestId: Map<string, number> = new Map();
     private _associationsCts: Map<string, vscode.CancellationTokenSource> = new Map();
+    private _cachedAssociations: Map<string, object> = new Map();
     private _localProcesses: Map<string, ChildProcess> = new Map();
     private _devTunnelAccount: string | null = null;
     private _sessionPollTimer?: ReturnType<typeof setInterval>;
@@ -594,6 +596,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
                 case 'switchTab': {
                     this._activeTab = data.tab;
+                    break;
+                }
+                case 'expandHost': {
+                    this._expandedHost = data.host;
                     break;
                 }
                 case 'addSshHost': {
@@ -1796,21 +1802,28 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     path.join(this._extensionUri.fsPath, 'scripts', 'info.sh'),
                     'utf-8'
                 );
-                const scriptB64 = Buffer.from(infoScript).toString('base64');
                 const result = await this.runRemoteCommand(
                     hostName,
-                    `echo '${scriptB64}' | base64 -d | bash`,
-                    token
+                    '',
+                    token,
+                    infoScript + '\nexit 0\n'
                 );
 
+                this._outputChannel.appendLine(`info.sh exit code: ${result.code}`);
+                if (result.stderr) {
+                    this._outputChannel.appendLine(`info.sh stderr: ${result.stderr}`);
+                }
+
                 if (result.code === 0) {
-                    this._outputChannel.appendLine(result.stdout);
+                    this._outputChannel.appendLine(`info.sh stdout: [${result.stdout}]`);
 
                     const lines = result.stdout.trim().split('\n');
                     const partitions: { [name: string]: { accounts: string[]; nodes: number; maxCpus: number; maxGpus: number } } = {};
 
-                    for (let i = 1; i < lines.length; i++) {
-                        const parts = lines[i].split('|');
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i].trim();
+                        if (!line || line.startsWith('partition|')) { continue; }
+                        const parts = line.split('|');
                         if (parts.length >= 5) {
                             const name = parts[0].trim();
                             const nodes = parseInt(parts[1].trim(), 10) || 0;
@@ -1823,7 +1836,38 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         }
                     }
 
+                    // Fallback: if info.sh produced no partition rows, get basic list from sinfo
+                    if (Object.keys(partitions).length === 0) {
+                        this._outputChannel.appendLine('No partitions from info.sh, falling back to sinfo');
+                        const fallback = await this.runRemoteCommand(
+                            hostName,
+                            '',
+                            token,
+                            `sinfo -h -o "%P %D %c" 2>/dev/null | sed 's/*//g'\nexit 0\n`
+                        );
+                        this._outputChannel.appendLine(`Fallback sinfo exit code: ${fallback.code}`);
+                        this._outputChannel.appendLine(`Fallback sinfo stdout: [${fallback.stdout}]`);
+                        if (fallback.stderr) {
+                            this._outputChannel.appendLine(`Fallback sinfo stderr: ${fallback.stderr}`);
+                        }
+                        if (fallback.code === 0 && fallback.stdout.trim()) {
+                            for (const line of fallback.stdout.trim().split('\n')) {
+                                const cols = line.trim().split(/\s+/);
+                                if (cols.length >= 3 && cols[0]) {
+                                    partitions[cols[0]] = {
+                                        accounts: [],
+                                        nodes: parseInt(cols[1], 10) || 0,
+                                        maxCpus: parseInt(cols[2], 10) || 0,
+                                        maxGpus: 0,
+                                    };
+                                }
+                            }
+                        }
+                        this._outputChannel.appendLine(`Fallback parsed ${Object.keys(partitions).length} partitions`);
+                    }
+
                     progress.report({ message: 'Done.' });
+                    this._cachedAssociations.set(hostName, partitions);
                     this.postMessage({ type: 'associations', host: hostName, partitions });
                 } else {
                     this._outputChannel.appendLine(`Command exited with code ${result.code}`);
@@ -2001,7 +2045,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Handles SSH_ASKPASS IPC for password/passphrase prompts and ControlMaster multiplexing.
      * Returns a promise that resolves with { stdout, stderr, code }.
      */
-    private runRemoteCommand(hostName: string, command: string, token?: vscode.CancellationToken): Promise<{ stdout: string; stderr: string; code: number }> {
+    private runRemoteCommand(hostName: string, command: string, token?: vscode.CancellationToken, stdinData?: string): Promise<{ stdout: string; stderr: string; code: number }> {
         return new Promise((resolve, reject) => {
             // Create a temp directory for askpass IPC
             const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
@@ -2010,13 +2054,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             // Path to our askpass helper script
             const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
 
-            // Detach stdin so SSH is forced to use SSH_ASKPASS
-            const sshProcess = spawn('ssh', [
+            const useStdin = stdinData !== undefined;
+            const sshArgs = [
                 ...this.getControlMasterArgs(hostName),
                 '-o', 'NumberOfPasswordPrompts=3',
                 hostName,
-                command,
-            ], {
+                ...(useStdin ? [] : [command]),
+            ];
+
+            const sshProcess = spawn('ssh', sshArgs, {
                 env: {
                     ...process.env,
                     SSH_ASKPASS: askpassScript,
@@ -2024,8 +2070,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     CS_ASKPASS_DIR: sessionDir,
                     DISPLAY: ':0',
                 },
-                stdio: ['ignore', 'pipe', 'pipe'],
+                stdio: [useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
             });
+
+            if (useStdin) {
+                sshProcess.stdin!.write(stdinData);
+                sshProcess.stdin!.end();
+            }
 
             let stdoutData = '';
             let stderrData = '';
@@ -2039,11 +2090,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
             const handledPrompts = new Set<string>();
 
-            sshProcess.stdout.on('data', (data: Buffer) => {
+            sshProcess.stdout!.on('data', (data: Buffer) => {
                 stdoutData += data.toString();
             });
 
-            sshProcess.stderr.on('data', (data: Buffer) => {
+            sshProcess.stderr!.on('data', (data: Buffer) => {
                 stderrData += data.toString();
             });
 
@@ -2172,6 +2223,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     public refresh() {
         if (this._view) {
             this._view.webview.html = this._getHtmlForWebview(this._view.webview);
+            // Re-send cached associations so expanded host keeps its partition data
+            if (this._expandedHost) {
+                const cached = this._cachedAssociations.get(this._expandedHost);
+                if (cached) {
+                    this.postMessage({ type: 'associations', host: this._expandedHost, partitions: cached });
+                }
+            }
         }
         this._updateStatusBar();
     }
@@ -2243,15 +2301,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const hostsHtml = sshHosts.length > 0
             ? sshHosts.map(host => `
                 <div class="ssh-host">
-                    <div class="ssh-host-row" data-host="${escapeHtml(host.name)}">
+                    <div class="ssh-host-row${this._expandedHost === host.name ? ' expanded' : ''}" data-host="${escapeHtml(host.name)}">
                         <div class="host-info">
                             <span class="host-name">${escapeHtml(host.name)}</span>
                             ${host.hostname ? `<span class="host-detail">${host.user ? `${escapeHtml(host.user)}@` : ''}${escapeHtml(host.hostname)}</span>` : ''}
                         </div>
                         <span class="chevron">&#x203A;</span>
                     </div>
-                    <div class="job-form" id="job-form-${escapeHtml(host.name)}" style="display:none;">
-                        <div class="job-form-loading"><div class="spinner"></div>Fetching partitions...<button class="job-form-stop-btn" data-host="${escapeHtml(host.name)}">Stop</button></div>
+                    <div class="job-form" id="job-form-${escapeHtml(host.name)}" style="display:${this._expandedHost === host.name ? 'block' : 'none'};">
+                        <div class="job-form-loading" style="display:${this._expandedHost === host.name && this._associationsCts.has(host.name) ? 'flex' : 'none'};"><div class="spinner"></div>Fetching partitions...<button class="job-form-stop-btn" data-host="${escapeHtml(host.name)}">Stop</button></div>
                         <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span><button class="job-form-retry-btn" data-host="${escapeHtml(host.name)}">Retry</button></div>
                         <div class="job-form-fields">
                             <div class="form-row">
@@ -3207,7 +3265,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         form.querySelector('.job-form-loading').style.display = 'flex';
                         form.querySelector('.job-form-fields').style.display = 'none';
                         form.querySelector('.job-form-error').style.display = 'none';
+                        vscode.postMessage({ type: 'expandHost', host: host });
                         vscode.postMessage({ type: 'queryAssociations', host: host });
+                    } else {
+                        vscode.postMessage({ type: 'expandHost', host: null });
                     }
                 }
             });
@@ -3459,41 +3520,33 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const allocSelect = form.querySelector('[data-field="allocation"]');
                 const partSelect = form.querySelector('[data-field="queue"]');
 
-                // Build account → partitions reverse mapping
-                const accountPartitions = {};
-                for (const [partName, info] of Object.entries(partitions)) {
-                    for (const acct of info.accounts) {
-                        if (!accountPartitions[acct]) { accountPartitions[acct] = []; }
-                        accountPartitions[acct].push(partName);
-                    }
+                // Collect unique accounts across all partitions
+                const allPartNames = Object.keys(partitions);
+                const accountSet = new Set();
+                for (const info of Object.values(partitions)) {
+                    for (const acct of info.accounts) { accountSet.add(acct); }
                 }
+                const accounts = Array.from(accountSet).sort();
 
-                // Populate Allocation dropdown
+                // Populate Allocation dropdown (independent of partition selection)
                 allocSelect.innerHTML = '';
-                const accounts = Object.keys(accountPartitions);
-                if (accounts.length === 0) {
-                    allocSelect.innerHTML = '<option value="">No allocations found</option>';
-                    partSelect.innerHTML = '<option value="">N/A</option>';
-                    return;
+                if (accounts.length > 0) {
+                    accounts.forEach((acct, i) => {
+                        const opt = document.createElement('option');
+                        opt.value = acct;
+                        opt.textContent = acct;
+                        if (i === 0) { opt.selected = true; }
+                        allocSelect.appendChild(opt);
+                    });
+                } else {
+                    allocSelect.innerHTML = '<option value="">N/A</option>';
+                    allocSelect.disabled = true;
                 }
-                accounts.forEach((acct, i) => {
-                    const opt = document.createElement('option');
-                    opt.value = acct;
-                    opt.textContent = acct;
-                    if (i === 0) { opt.selected = true; }
-                    allocSelect.appendChild(opt);
-                });
 
-                // Update Partition dropdown based on selected allocation
+                // Always show all partitions — no filtering by account
                 function updatePartitions() {
-                    const selectedAcct = allocSelect.value;
-                    const parts = accountPartitions[selectedAcct] || [];
                     partSelect.innerHTML = '';
-                    if (parts.length === 0) {
-                        partSelect.innerHTML = '<option value="">No partitions available</option>';
-                        return;
-                    }
-                    parts.forEach((name, i) => {
+                    allPartNames.forEach((name, i) => {
                         const info = partitions[name];
                         const label = info.maxGpus > 0
                             ? name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs, ' + info.maxGpus + ' GPUs)'
