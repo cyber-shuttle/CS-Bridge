@@ -49,6 +49,13 @@ interface JobSession {
     sshPort?: number;
     connectedRemotePath?: string;
     localWorkspaceFolder?: string;
+    // FUSE mount fields
+    localWorkdir?: string;
+    fuseMountPid?: number;
+    localMountPath?: string;
+    remoteMountPath?: string;
+    localFuseTunnelUrl?: string;
+    remoteFusePort?: number;
 }
 
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
@@ -1316,6 +1323,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    outputs:`,
             `      bind_port: "ssh_port"`,
             ``,
+            `  - action: "fuse.start_server"`,
+            `    name: "Start FUSE server"`,
+            `    outputs:`,
+            `      fuse_port: "fuse_server_port"`,
+            ``,
             `  - action: "tunnel.devtunnel_create"`,
             `    name: "Create devtunnel"`,
             `    params:`,
@@ -1324,6 +1336,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `      auth_token: "{{.TunnelAuthToken}}"`,
             `      ports:`,
             `        - "{{.ssh_port}}"`,
+            `        - "{{.fuse_server_port}}"`,
             `    outputs:`,
             `      tunnel_id: "tunnel_id"`,
             ``,
@@ -1351,6 +1364,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             script: workflowYaml,
             isLocal: true,
         };
+
+        session.localWorkdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
         this._jobSessions.push(session);
         this._activeTab = 'sessions';
@@ -1392,8 +1407,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             session.tunnelUrl = value.trim();
                         } else if (varName === 'tunnel_token') {
                             session.tunnelToken = value.trim();
+                            // Launch FUSE mount when we have tunnel info
+                            if (session.tunnelUrl && session.tunnelToken && session.remoteFusePort) {
+                                this.launchFuseMount(sessionId);
+                            }
                         } else if (varName === 'tunnel_id') {
                             session.tunnelId = value.trim();
+                        } else if (varName === 'fuse_server_port') {
+                            session.remoteFusePort = parseInt(value, 10);
                         }
                         this._saveSessions();
                         this.refresh();
@@ -1525,15 +1546,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        // Use saved remote path or prompt for one
+        // Use saved remote path or auto-detect from FUSE mount
         let remotePath = session.connectedRemotePath;
         if (!remotePath) {
-            remotePath = await vscode.window.showInputBox({
-                title: `Connect to linkspan session (localhost:${session.sshPort})`,
-                prompt: 'Enter the remote folder path',
-                placeHolder: '/home/user',
-                value: os.homedir(),
-            });
+            if (session.localWorkdir) {
+                // Local workdir is mounted at ~/sessions/<session-id>/ on remote
+                remotePath = `${os.homedir()}/sessions/${sessionId}`;
+            } else {
+                remotePath = await vscode.window.showInputBox({
+                    title: `Connect to linkspan session (localhost:${session.sshPort})`,
+                    prompt: 'Enter the remote folder path',
+                    placeHolder: '/home/user',
+                    value: os.homedir(),
+                });
+            }
         }
 
         if (remotePath) {
@@ -1552,6 +1578,76 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 true
             );
         }
+    }
+
+    /**
+     * Launch the linkspan-mount Swift helper for FUSE mounting.
+     * Starts local FUSE server + FSKit mount.
+     */
+    private async launchFuseMount(sessionId: string) {
+        const session = this._jobSessions.find(s => s.id === sessionId);
+        if (!session || !session.localWorkdir) {
+            return;
+        }
+
+        const linkspanMountPath = path.join(
+            os.homedir(), '.cybershuttle', 'bin', 'linkspan-mount'
+        );
+        if (!fs.existsSync(linkspanMountPath)) {
+            this._outputChannel.appendLine('linkspan-mount binary not found, skipping FUSE mount');
+            return;
+        }
+
+        const args = [
+            '--session-id', sessionId,
+            '--workdir', session.localWorkdir,
+        ];
+        if (session.tunnelUrl && session.remoteFusePort) {
+            args.push('--remote-host', session.tunnelUrl);
+            args.push('--remote-port', String(session.remoteFusePort));
+        }
+
+        this._outputChannel.appendLine(`\n--- Starting linkspan-mount for session ${sessionId} ---`);
+
+        const proc = spawn(linkspanMountPath, args, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        session.fuseMountPid = proc.pid;
+        this._saveSessions();
+
+        proc.stdout!.on('data', (data: Buffer) => {
+            const text = data.toString();
+            this._outputChannel.appendLine(`[linkspan-mount] ${text.trimEnd()}`);
+
+            for (const line of text.split('\n')) {
+                const localPort = line.match(/FUSE_LOCAL_PORT=(\d+)/);
+                if (localPort) {
+                    session.localFuseTunnelUrl = `127.0.0.1:${localPort[1]}`;
+                    this._saveSessions();
+                }
+                const mountPath = line.match(/MOUNT_PATH=(.+)/);
+                if (mountPath) {
+                    session.localMountPath = mountPath[1].trim();
+                    this._saveSessions();
+                    this.refresh();
+                }
+            }
+        });
+
+        proc.stderr!.on('data', (data: Buffer) => {
+            this._outputChannel.appendLine(`[linkspan-mount/err] ${data.toString().trimEnd()}`);
+        });
+
+        proc.on('close', () => {
+            const s = this._jobSessions.find(s => s.id === sessionId);
+            if (s) {
+                s.fuseMountPid = undefined;
+                s.localMountPath = undefined;
+                this._saveSessions();
+                this.refresh();
+            }
+        });
     }
 
     /**
@@ -1605,6 +1701,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     private stopLocalSession(sessionId: string) {
+        // Kill linkspan-mount FUSE helper if running
+        const fuseSession = this._jobSessions.find(s => s.id === sessionId);
+        if (fuseSession?.fuseMountPid) {
+            try {
+                process.kill(fuseSession.fuseMountPid);
+            } catch { /* already dead */ }
+            fuseSession.fuseMountPid = undefined;
+            fuseSession.localMountPath = undefined;
+        }
+
         // Kill linkspan process — try local map first, fall back to PID for cross-window stop
         const proc = this._localProcesses.get(sessionId);
         if (proc) {
@@ -1641,6 +1747,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             session.tunnelToken = undefined;
             session.tunnelId = undefined;
             session.sshPort = undefined;
+            session.localWorkdir = undefined;
+            session.localFuseTunnelUrl = undefined;
+            session.remoteFusePort = undefined;
+            session.remoteMountPath = undefined;
             this._saveSessions();
             this.refresh();
         }
