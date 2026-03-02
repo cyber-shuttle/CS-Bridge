@@ -22,34 +22,31 @@
 
 ### Steps
 
-1. Clone the repository and install dependencies:
+1. Clone the repository:
 
    ```sh
    git clone https://github.com/cyber-shuttle/CS-Bridge.git
    cd CS-Bridge
-   npm install
    ```
 
-2. Package and install the `.vsix` extension:
+2. Build and install in one step:
 
    ```sh
-   npx @vscode/vsce package
-   # This installs the extension globally so it appears in all VS Code windows, including Remote-SSH sessions.
-   code --install-extension *.vsix --force
+   npm run dev
    ```
 
-3. Reload VS Code. The CyberShuttle icon will appear in your Activity Bar.
+   This installs dependencies, compiles TypeScript, packages the `.vsix`, and installs it into VS Code.
+
+3. The CyberShuttle icon will appear in your Activity Bar. If it doesn't, reload VS Code (`Cmd+Shift+P` → "Developer: Reload Window").
 
 ### Updating
 
-To update to the latest version, simply pull the latest changes and repackage:
+To update to the latest version:
 
 ```sh
 cd CS-Bridge
 git pull
-npm install
-npx @vscode/vsce package
-code --install-extension *.vsix --force
+npm run dev
 ```
 
 ## ⚙️ Configuration
@@ -68,14 +65,9 @@ Host delta
 
 ### `linkspan` on Remote Hosts
 
-The `linkspan` binary (Linux AMD64) must be installed and available in your `$PATH` on each remote host to bridge the compute node and the tunneling service.
+The `linkspan` binary is **automatically downloaded and deployed** by CS-Bridge. Before submitting a SLURM job, the extension SSHs into the remote host, detects its architecture, and downloads the latest release from [GitHub](https://github.com/cyber-shuttle/linkspan/releases) directly on the remote machine. The binary is cached at `~/.cybershuttle/bin/linkspan`.
 
-```sh
-scp path/to/linkspan-linux-amd64 <host>:~/bin/linkspan
-ssh <host> 'chmod +x ~/bin/linkspan'
-```
-
-*Ensure the binary location (e.g., `~/bin`) is in your `$PATH` (e.g., add `export PATH="$HOME/bin:$PATH"` to your remote `~/.bashrc`).*
+No manual installation is required. The remote host just needs internet access to `github.com`.
 
 ### SSH ControlMaster
 
@@ -134,7 +126,7 @@ resources/
 
 | Dependency | Purpose |
 |---|---|
-| [linkspan](../linkspan) | Custom agent managing the VS Code Server + Dev Tunnel start on the compute node. Must be in `$PATH` remotely. |
+| [linkspan](https://github.com/cyber-shuttle/linkspan) | Custom agent managing the VS Code Server + Dev Tunnel on the compute node. Auto-deployed by CS-Bridge to `~/.cybershuttle/bin/linkspan`. |
 | [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) | VS Code extension utilized to natively attach the remote session. |
 | Microsoft Dev Tunnels | Port-forwarding service. Requires Microsoft account sign-in from the sidebar. |
 | OpenSSH (`~/.ssh/config`) | System SSH properties fetched to build the host directory in the UI. |

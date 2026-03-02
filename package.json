@@ -53,7 +53,10 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "package": "npx @vscode/vsce package --allow-star-activation",
+    "install-ext": "code --install-extension cybershuttle-0.0.1.vsix --force",
+    "dev": "npm install && npm run compile && npm run package && npm run install-ext"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
