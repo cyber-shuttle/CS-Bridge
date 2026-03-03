@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -56,6 +57,8 @@ interface JobSession {
     remoteMountPath?: string;
     localFuseTunnelUrl?: string;
     remoteFusePort?: number;
+    computeNode?: string;
+    fuseTunnelPid?: number;
 }
 
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
@@ -82,6 +85,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _isRemoteWindow: boolean;
     private _statusBarItem: vscode.StatusBarItem;
     private _countdownTimer?: ReturnType<typeof setInterval>;
+    private _disposing = false;
 
     private static readonly SESSIONS_KEY = 'cybershuttle.jobSessions';
 
@@ -139,14 +143,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             ...s,
             submittedAt: new Date(s.submittedAt),
         }));
-        // Reconcile orphaned local sessions: verify process is alive
+        // Reconcile orphaned local sessions: if the process died (e.g. VS Code
+        // was closed), re-launch it so the session survives across restarts.
         for (const session of this._jobSessions) {
             if (session.isLocal && session.status === 'Active' && session.localPid) {
                 try {
                     process.kill(session.localPid, 0);
                 } catch {
-                    session.status = 'Failed';
-                    session.errorMessage = 'Process no longer running';
+                    this._resumeLocalSession(session);
                 }
             }
         }
@@ -154,7 +158,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const needsPoll = this._jobSessions.some(
             s => s.slurmJobId && !s.isLocal
                 && s.status !== 'Failed' && s.status !== 'Completed'
-                && !s.tunnelUrl
         );
         if (needsPoll) {
             this._startSessionPolling();
@@ -185,10 +188,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     public dispose() {
+        this._disposing = true;
         fs.unwatchFile(this._sessionsFilePath);
         this._stopSessionPolling();
         this.disposePersistentShells();
         this.stopAllLogStreams();
+        for (const session of this._jobSessions) {
+            this.cleanupFuseMount(session);
+        }
+        this.stopAllLocalProcesses();
     }
 
     /**
@@ -559,7 +567,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         webviewView.onDidDispose(() => {
             this.disposePersistentShells();
             this.stopAllLogStreams();
-            this.stopAllLocalProcesses();
         });
 
         // Handle messages from the webview
@@ -968,6 +975,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    outputs:`,
             `      bind_port: "ssh_port"`,
             ``,
+            `  - action: "fuse.start_server"`,
+            `    name: "Start FUSE server"`,
+            `    outputs:`,
+            `      fuse_port: "fuse_server_port"`,
+            ``,
             `  - action: "tunnel.devtunnel_create"`,
             `    name: "Create devtunnel"`,
             `    params:`,
@@ -976,6 +988,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `      auth_token: "{{.TunnelAuthToken}}"`,
             `      ports:`,
             `        - "{{.ssh_port}}"`,
+            `        - "{{.fuse_server_port}}"`,
             `    outputs:`,
             `      tunnel_id: "tunnel_id"`,
             ``,
@@ -1376,120 +1389,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._outputChannel.appendLine(`\n--- Starting local linkspan session ---`);
 
         try {
-            const linkspanPath = await this.ensureLocalLinkspan();
-            const proc = spawn(linkspanPath, ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
-                stdio: ['pipe', 'pipe', 'pipe'],
-                env: { ...process.env },
-            });
-
-            this._localProcesses.set(sessionId, proc);
-            session.localPid = proc.pid;
-            session.status = 'Active';
-            this._saveSessions();
-            this.refresh();
-
-            proc.stdin!.write(workflowYaml);
-            proc.stdin!.end();
-
-            // Parse linkspan workflow output for captured variables and errors.
-            // The workflow engine logs:
-            //   "workflow: captured <var> = <value>"  — variable captures
-            //   "workflow: workflow step N (...): Error: ..."  — step failures
-            const parseOutput = (text: string) => {
-                for (const line of text.split('\n')) {
-                    // Capture workflow variables
-                    const cap = line.match(/workflow: captured (\S+) = (.+)/);
-                    if (cap) {
-                        const [, varName, value] = cap;
-                        if (varName === 'ssh_port') {
-                            session.sshPort = parseInt(value, 10);
-                        } else if (varName === 'tunnel_url') {
-                            session.tunnelUrl = value.trim();
-                        } else if (varName === 'tunnel_token') {
-                            session.tunnelToken = value.trim();
-                            // Launch FUSE mount when we have tunnel info
-                            if (session.tunnelUrl && session.tunnelToken && session.remoteFusePort) {
-                                this.launchFuseMount(sessionId);
-                            }
-                        } else if (varName === 'tunnel_id') {
-                            session.tunnelId = value.trim();
-                        } else if (varName === 'fuse_server_port') {
-                            session.remoteFusePort = parseInt(value, 10);
-                        }
-                        this._saveSessions();
-                        this.refresh();
-                        continue;
-                    }
-
-                    // Detect workflow step errors
-                    const errMatch = line.match(/workflow: workflow step \d+ \(([^)]+)\): (.+)/);
-                    if (errMatch) {
-                        const [, stepName, errMsg] = errMatch;
-                        session.status = 'Failed';
-                        session.errorMessage = `${stepName}: ${errMsg.trim()}`;
-                        this._saveSessions();
-                        this.refresh();
-                        vscode.window.showErrorMessage(`Linkspan workflow failed — ${stepName}: ${errMsg.trim()}`);
-                        continue;
-                    }
-
-                    // Detect fatal errors (e.g. "failed to listen", panic, etc.)
-                    const fatal = line.match(/(?:fatal|FATAL|panic): (.+)/);
-                    if (fatal) {
-                        session.status = 'Failed';
-                        session.errorMessage = fatal[1].trim();
-                        this._saveSessions();
-                        this.refresh();
-                        vscode.window.showErrorMessage(`Linkspan error: ${fatal[1].trim()}`);
-                    }
-                }
-            };
-
-            proc.stdout!.on('data', (data: Buffer) => {
-                const text = data.toString();
-                this._outputChannel.appendLine(text.trimEnd());
-                parseOutput(text);
-            });
-
-            proc.stderr!.on('data', (data: Buffer) => {
-                const text = data.toString();
-                this._outputChannel.appendLine(text.trimEnd());
-                parseOutput(text);
-            });
-
-            proc.on('close', (code) => {
-                this._localProcesses.delete(sessionId);
-                const s = this._jobSessions.find(s => s.id === sessionId);
-                if (s) {
-                    // Only update status if not already marked as Failed by error parsing
-                    if (s.status !== 'Failed') {
-                        s.status = code === 0 ? 'Completed' : 'Failed';
-                        if (code !== 0 && code !== null) {
-                            s.errorMessage = `linkspan exited with code ${code}`;
-                            vscode.window.showErrorMessage(`Linkspan exited with code ${code}. Check output for details.`);
-                        }
-                    }
-                    s.localPid = undefined;
-                    this._saveSessions();
-                    this.refresh();
-                }
-                this._outputChannel.appendLine(`\n--- Local linkspan session ended (exit code ${code}) ---`);
-            });
-
-            proc.on('error', (err) => {
-                this._localProcesses.delete(sessionId);
-                const s = this._jobSessions.find(s => s.id === sessionId);
-                if (s) {
-                    s.status = 'Failed';
-                    s.errorMessage = err.message;
-                    s.localPid = undefined;
-                    this._saveSessions();
-                    this.refresh();
-                }
-                this._outputChannel.appendLine(`Error: ${err.message}`);
-                vscode.window.showErrorMessage(`Local linkspan failed: ${err.message}`);
-            });
-
+            await this._launchLinkspanProcess(session, authToken);
             vscode.window.showInformationMessage('Local linkspan session started');
         } catch (err: any) {
             session.status = 'Failed';
@@ -1498,6 +1398,176 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             this.refresh();
             vscode.window.showErrorMessage(`Failed to start linkspan: ${err.message}`);
         }
+    }
+
+    /**
+     * Re-launch a local linkspan session whose process died (e.g. after VS Code restart).
+     * Clears stale runtime state, cleans up the old devtunnel, and re-runs the saved workflow.
+     */
+    private async _resumeLocalSession(session: JobSession) {
+        this._outputChannel.appendLine(`\n--- Resuming local session ${session.id} ---`);
+
+        // Kill stale FUSE mount / SSH tunnel if still alive
+        this.cleanupFuseMount(session);
+
+        // Clear stale runtime state but preserve tunnel info (tunnelUrl,
+        // tunnelToken, tunnelId) — if the devtunnel is still live the user
+        // can reconnect immediately.  The linkspan workflow will overwrite
+        // these values once it re-captures them.
+        session.localPid = undefined;
+        session.sshPort = undefined;
+        session.remoteFusePort = undefined;
+        session.localMountPath = undefined;
+        session.localFuseTunnelUrl = undefined;
+        session.remoteMountPath = undefined;
+        session.status = 'Submitting';
+        this._saveSessions();
+        this.refresh();
+
+        let authToken: string;
+        try {
+            authToken = await this.getDevTunnelAuthToken();
+        } catch (err: any) {
+            session.status = 'Failed';
+            session.errorMessage = `Resume failed: ${err.message}`;
+            this._saveSessions();
+            this.refresh();
+            return;
+        }
+
+        try {
+            await this._launchLinkspanProcess(session, authToken);
+            this._outputChannel.appendLine(`Local session ${session.id} resumed`);
+        } catch (err: any) {
+            session.status = 'Failed';
+            session.errorMessage = `Resume failed: ${err.message}`;
+            this._saveSessions();
+            this.refresh();
+        }
+    }
+
+    /**
+     * Spawn a linkspan process for a local session, wire up output parsing and lifecycle handlers.
+     * Used by both testLocal() (new sessions) and _resumeLocalSession() (restarted sessions).
+     */
+    private async _launchLinkspanProcess(session: JobSession, authToken: string) {
+        const linkspanPath = await this.ensureLocalLinkspan();
+        const proc = spawn(linkspanPath, ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env },
+        });
+
+        this._localProcesses.set(session.id, proc);
+        session.localPid = proc.pid;
+        session.status = 'Active';
+        this._saveSessions();
+        this.refresh();
+
+        proc.stdin!.write(session.script);
+        proc.stdin!.end();
+
+        // Parse linkspan workflow output for captured variables and errors.
+        // The workflow engine logs:
+        //   "workflow: captured <var> = <value>"  — variable captures
+        //   "workflow: workflow step N (...): Error: ..."  — step failures
+        const parseOutput = (text: string) => {
+            for (const line of text.split('\n')) {
+                // Capture workflow variables
+                const cap = line.match(/workflow: captured (\S+) = (.+)/);
+                if (cap) {
+                    const [, varName, value] = cap;
+                    if (varName === 'ssh_port') {
+                        session.sshPort = parseInt(value, 10);
+                    } else if (varName === 'tunnel_url') {
+                        session.tunnelUrl = value.trim();
+                    } else if (varName === 'tunnel_token') {
+                        session.tunnelToken = value.trim();
+                    } else if (varName === 'tunnel_id') {
+                        session.tunnelId = value.trim();
+                    } else if (varName === 'fuse_server_port') {
+                        session.remoteFusePort = parseInt(value, 10);
+                        // Launch NFS mount for local sessions once we have the FUSE port
+                        if (session.isLocal && !session.fuseMountPid) {
+                            this.launchFuseMount(session.id);
+                        }
+                    }
+                    this._saveSessions();
+                    this.refresh();
+                    continue;
+                }
+
+                // Detect workflow step errors
+                const errMatch = line.match(/workflow: workflow step \d+ \(([^)]+)\): (.+)/);
+                if (errMatch) {
+                    const [, stepName, errMsg] = errMatch;
+                    session.status = 'Failed';
+                    session.errorMessage = `${stepName}: ${errMsg.trim()}`;
+                    this._saveSessions();
+                    this.refresh();
+                    vscode.window.showErrorMessage(`Linkspan workflow failed — ${stepName}: ${errMsg.trim()}`);
+                    continue;
+                }
+
+                // Detect fatal errors (e.g. "failed to listen", panic, etc.)
+                const fatal = line.match(/(?:fatal|FATAL|panic): (.+)/);
+                if (fatal) {
+                    session.status = 'Failed';
+                    session.errorMessage = fatal[1].trim();
+                    this._saveSessions();
+                    this.refresh();
+                    vscode.window.showErrorMessage(`Linkspan error: ${fatal[1].trim()}`);
+                }
+            }
+        };
+
+        proc.stdout!.on('data', (data: Buffer) => {
+            const text = data.toString();
+            this._outputChannel.appendLine(text.trimEnd());
+            parseOutput(text);
+        });
+
+        proc.stderr!.on('data', (data: Buffer) => {
+            const text = data.toString();
+            this._outputChannel.appendLine(text.trimEnd());
+            parseOutput(text);
+        });
+
+        proc.on('close', (code) => {
+            this._localProcesses.delete(session.id);
+            // During extension disposal, don't update session state — we want
+            // sessions to remain Active so they're resumed on next startup.
+            if (this._disposing) { return; }
+            const s = this._jobSessions.find(s => s.id === session.id);
+            if (s) {
+                // Only update status if not already marked as Failed by error parsing
+                if (s.status !== 'Failed') {
+                    s.status = code === 0 ? 'Completed' : 'Failed';
+                    if (code !== 0 && code !== null) {
+                        s.errorMessage = `linkspan exited with code ${code}`;
+                        vscode.window.showErrorMessage(`Linkspan exited with code ${code}. Check output for details.`);
+                    }
+                }
+                s.localPid = undefined;
+                this._saveSessions();
+                this.refresh();
+            }
+            this._outputChannel.appendLine(`\n--- Local linkspan session ended (exit code ${code}) ---`);
+        });
+
+        proc.on('error', (err) => {
+            this._localProcesses.delete(session.id);
+            if (this._disposing) { return; }
+            const s = this._jobSessions.find(s => s.id === session.id);
+            if (s) {
+                s.status = 'Failed';
+                s.errorMessage = err.message;
+                s.localPid = undefined;
+                this._saveSessions();
+                this.refresh();
+            }
+            this._outputChannel.appendLine(`Error: ${err.message}`);
+            vscode.window.showErrorMessage(`Local linkspan failed: ${err.message}`);
+        });
     }
 
     /**
@@ -1581,35 +1651,80 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Launch the linkspan-mount Swift helper for FUSE mounting.
-     * Starts local FUSE server + FSKit mount.
+     * Mount a remote FUSE filesystem locally via NFS using the linkspan binary.
+     *
+     * For local sessions: connects directly to 127.0.0.1:<fusePort>.
+     * For remote SLURM sessions: sets up SSH port forwarding through the login
+     * node to the compute node's FUSE port, then mounts via NFS.
      */
     private async launchFuseMount(sessionId: string) {
         const session = this._jobSessions.find(s => s.id === sessionId);
-        if (!session || !session.localWorkdir) {
+        if (!session || !session.remoteFusePort) {
             return;
         }
 
-        const linkspanMountPath = path.join(
-            os.homedir(), '.cybershuttle', 'bin', 'linkspan-mount'
-        );
-        if (!fs.existsSync(linkspanMountPath)) {
-            this._outputChannel.appendLine('linkspan-mount binary not found, skipping FUSE mount');
+        let linkspanPath: string;
+        try {
+            linkspanPath = await this.ensureLocalLinkspan();
+        } catch (err: any) {
+            this._outputChannel.appendLine(`[fuse-mount] Failed to get linkspan binary: ${err.message}`);
             return;
         }
 
-        const args = [
+        let fuseAddr: string;
+
+        if (session.isLocal) {
+            // Local session: FUSE server is on this machine
+            fuseAddr = `127.0.0.1:${session.remoteFusePort}`;
+        } else if (session.computeNode && session.host) {
+            // Remote SLURM session: SSH-forward the compute node's FUSE port locally
+            const localPort = await this.findFreePort();
+            if (!localPort) {
+                this._outputChannel.appendLine('[fuse-mount] Could not find a free local port for SSH tunnel');
+                return;
+            }
+
+            this._outputChannel.appendLine(
+                `[fuse-mount] Setting up SSH tunnel: localhost:${localPort} → ${session.computeNode}:${session.remoteFusePort} via ${session.host}`
+            );
+
+            const tunnelProc = spawn('ssh', [
+                '-N',
+                '-L', `${localPort}:${session.computeNode}:${session.remoteFusePort}`,
+                session.host,
+            ], {
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            session.fuseTunnelPid = tunnelProc.pid;
+
+            tunnelProc.stderr!.on('data', (data: Buffer) => {
+                this._outputChannel.appendLine(`[fuse-tunnel/err] ${data.toString().trimEnd()}`);
+            });
+
+            tunnelProc.on('close', (code) => {
+                this._outputChannel.appendLine(`[fuse-tunnel] SSH tunnel exited (code ${code})`);
+                const s = this._jobSessions.find(s => s.id === sessionId);
+                if (s) {
+                    s.fuseTunnelPid = undefined;
+                }
+            });
+
+            // Give the SSH tunnel a moment to establish
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            fuseAddr = `127.0.0.1:${localPort}`;
+        } else {
+            this._outputChannel.appendLine('[fuse-mount] Missing compute node or host info, skipping FUSE mount');
+            return;
+        }
+
+        this._outputChannel.appendLine(`\n--- Starting NFS mount for session ${sessionId} (${fuseAddr}) ---`);
+
+        const proc = spawn(linkspanPath, [
+            '--mount-remote',
             '--session-id', sessionId,
-            '--workdir', session.localWorkdir,
-        ];
-        if (session.tunnelUrl && session.remoteFusePort) {
-            args.push('--remote-host', session.tunnelUrl);
-            args.push('--remote-port', String(session.remoteFusePort));
-        }
-
-        this._outputChannel.appendLine(`\n--- Starting linkspan-mount for session ${sessionId} ---`);
-
-        const proc = spawn(linkspanMountPath, args, {
+            '--server-addr', fuseAddr,
+        ], {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
 
@@ -1618,14 +1733,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         proc.stdout!.on('data', (data: Buffer) => {
             const text = data.toString();
-            this._outputChannel.appendLine(`[linkspan-mount] ${text.trimEnd()}`);
+            this._outputChannel.appendLine(`[fuse-mount] ${text.trimEnd()}`);
 
             for (const line of text.split('\n')) {
-                const localPort = line.match(/FUSE_LOCAL_PORT=(\d+)/);
-                if (localPort) {
-                    session.localFuseTunnelUrl = `127.0.0.1:${localPort[1]}`;
-                    this._saveSessions();
-                }
                 const mountPath = line.match(/MOUNT_PATH=(.+)/);
                 if (mountPath) {
                     session.localMountPath = mountPath[1].trim();
@@ -1636,7 +1746,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         });
 
         proc.stderr!.on('data', (data: Buffer) => {
-            this._outputChannel.appendLine(`[linkspan-mount/err] ${data.toString().trimEnd()}`);
+            this._outputChannel.appendLine(`[fuse-mount/err] ${data.toString().trimEnd()}`);
         });
 
         proc.on('close', () => {
@@ -1651,8 +1761,35 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Stop a locally running linkspan session and clean up SSH config entry.
+     * Find a free TCP port by binding to port 0 and reading the assigned port.
      */
+    private findFreePort(): Promise<number | null> {
+        return new Promise((resolve) => {
+            const srv = net.createServer();
+            srv.listen(0, '127.0.0.1', () => {
+                const addr = srv.address();
+                const port = addr && typeof addr === 'object' ? addr.port : null;
+                srv.close(() => resolve(port));
+            });
+            srv.on('error', () => resolve(null));
+        });
+    }
+
+    /**
+     * Kill FUSE mount process and SSH tunnel for a session.
+     */
+    private cleanupFuseMount(session: JobSession) {
+        if (session.fuseMountPid) {
+            try { process.kill(session.fuseMountPid); } catch { /* already dead */ }
+            session.fuseMountPid = undefined;
+            session.localMountPath = undefined;
+        }
+        if (session.fuseTunnelPid) {
+            try { process.kill(session.fuseTunnelPid); } catch { /* already dead */ }
+            session.fuseTunnelPid = undefined;
+        }
+    }
+
     /**
      * Stop a remote SLURM session by cancelling the job via scancel.
      */
@@ -1688,11 +1825,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 this._outputChannel.appendLine(`Error cancelling job: ${err.message}`);
             }
 
+            // Clean up local FUSE mount if active
+            this.cleanupFuseMount(session);
+
             // Clear ephemeral tunnel/connection properties
             session.tunnelUrl = undefined;
             session.tunnelToken = undefined;
             session.tunnelId = undefined;
             session.sshPort = undefined;
+            session.remoteFusePort = undefined;
+            session.computeNode = undefined;
 
             this.stopSessionLogStream(sessionId);
             this._saveSessions();
@@ -1701,14 +1843,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     private stopLocalSession(sessionId: string) {
-        // Kill linkspan-mount FUSE helper if running
+        // Kill FUSE mount helper and SSH tunnel if running
         const fuseSession = this._jobSessions.find(s => s.id === sessionId);
-        if (fuseSession?.fuseMountPid) {
-            try {
-                process.kill(fuseSession.fuseMountPid);
-            } catch { /* already dead */ }
-            fuseSession.fuseMountPid = undefined;
-            fuseSession.localMountPath = undefined;
+        if (fuseSession) {
+            this.cleanupFuseMount(fuseSession);
         }
 
         // Kill linkspan process — try local map first, fall back to PID for cross-window stop
@@ -1774,14 +1912,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             try {
                 const result = await this.runRemoteCommand(
                     session.host,
-                    `squeue -j ${session.slurmJobId} -h -o "%T"`
+                    `squeue -j ${session.slurmJobId} -h -o "%T %N"`
                 );
 
-                const state = result.stdout.trim();
+                const parts0 = result.stdout.trim().split(/\s+/);
+                const state = parts0[0] || '';
+                const nodeName = parts0[1] || '';
                 if (result.code === 0 && state) {
                     if (state === 'RUNNING') {
                         session.status = 'Active';
                         session.errorMessage = undefined;
+                        if (nodeName && !session.computeNode) {
+                            session.computeNode = nodeName;
+                        }
                     } else if (state === 'PENDING' || state === 'CONFIGURING') {
                         session.status = 'Pending';
                         session.errorMessage = undefined;
@@ -1818,10 +1961,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
                 // Clear ephemeral tunnel/connection properties for terminal sessions
                 if (session.status === 'Failed' || session.status === 'Completed') {
+                    this.cleanupFuseMount(session);
                     session.tunnelUrl = undefined;
                     session.tunnelToken = undefined;
                     session.tunnelId = undefined;
                     session.sshPort = undefined;
+                    session.remoteFusePort = undefined;
+                    session.computeNode = undefined;
                 }
 
                 // Always parse linkspan logs to capture workflow variables
@@ -1838,13 +1984,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     /**
      * Fetch the linkspan stderr log for a SLURM session and parse workflow
-     * variable captures (ssh_port, tunnel_url, tunnel_token, tunnel_id) and
-     * workflow step errors.  Called during refreshSessions when a job is RUNNING.
+     * variable captures (ssh_port, tunnel_url, tunnel_token, tunnel_id,
+     * fuse_server_port) and workflow step errors.
+     * Called during refreshSessions when a job is RUNNING.
      */
     private async parseSlurmSessionLogs(session: JobSession) {
         if (!session.slurmJobId) { return; }
         // Skip if we already captured all workflow variables
-        if (session.tunnelUrl && session.tunnelToken && session.sshPort) { return; }
+        if (session.tunnelUrl && session.tunnelToken && session.sshPort && session.remoteFusePort) { return; }
 
         // Use $HOME instead of ~ for reliable expansion in all shell contexts.
         const logFile = `$HOME/.cybershuttle/logs/linkspan-session-${session.slurmJobId}.err`;
@@ -1867,6 +2014,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         session.tunnelToken = value.trim();
                     } else if (varName === 'tunnel_id') {
                         session.tunnelId = value.trim();
+                    } else if (varName === 'fuse_server_port') {
+                        session.remoteFusePort = parseInt(value, 10);
                     }
                     continue;
                 }
@@ -1876,6 +2025,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     session.status = 'Failed';
                     session.errorMessage = `${errMatch[1]}: ${errMatch[2].trim()}`;
                 }
+            }
+
+            // Trigger local NFS mount when we have the remote FUSE port and compute node
+            if (session.remoteFusePort && session.computeNode && !session.fuseMountPid) {
+                this.launchFuseMount(session.id);
             }
         } catch {
             // SSH error — skip log parsing this cycle
