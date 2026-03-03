@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="${cssUri}">
+    <title>Session Metrics</title>
+</head>
+<body>
+    <div class="header-bar">
+        <h1>Session Metrics</h1>
+        <button class="refresh-btn" id="refresh-btn">Refresh</button>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+        <div class="filter-group">
+            <label for="filter-type">Type:</label>
+            <select id="filter-type">
+                <option value="">All</option>
+                <option value="job_submit">Job Submit</option>
+                <option value="job_status_change">Job Status Change</option>
+                <option value="ssh_connect">SSH Connect</option>
+                <option value="tunnel_create">Tunnel Create</option>
+                <option value="linkspan_deploy">Linkspan Deploy</option>
+                <option value="auth_flow">Auth Flow</option>
+                <option value="session_reconnect">Session Reconnect</option>
+                <option value="sinfo_fetch">Sinfo Fetch</option>
+                <option value="extension_activate">Extension Activate</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="filter-status">Status:</label>
+            <select id="filter-status">
+                <option value="">All</option>
+                <option value="success">Success</option>
+                <option value="failure">Failure</option>
+                <option value="in_progress">In Progress</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="filter-range">Range:</label>
+            <select id="filter-range">
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="summary-cards">
+        <div class="summary-card">
+            <div class="card-label">Total Events</div>
+            <div class="card-value" id="card-total">--</div>
+        </div>
+        <div class="summary-card">
+            <div class="card-label">Success Rate</div>
+            <div class="card-value success" id="card-success-rate">--</div>
+        </div>
+        <div class="summary-card">
+            <div class="card-label">Failed Events</div>
+            <div class="card-value failure" id="card-failed">--</div>
+        </div>
+        <div class="summary-card">
+            <div class="card-label">Avg Duration</div>
+            <div class="card-value duration" id="card-avg-duration">--</div>
+        </div>
+    </div>
+
+    <!-- Event table -->
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th data-sort="timestamp">Timestamp <span class="sort-arrow"></span></th>
+                    <th data-sort="event_type">Type <span class="sort-arrow"></span></th>
+                    <th data-sort="status">Status <span class="sort-arrow"></span></th>
+                    <th data-sort="duration_ms">Duration <span class="sort-arrow"></span></th>
+                    <th>Error</th>
+                    <th>Metadata</th>
+                </tr>
+            </thead>
+            <tbody id="event-table-body">
+                <tr><td colspan="6" class="loading">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script nonce="${nonce}" src="${jsUri}"></script>
+</body>
+</html>

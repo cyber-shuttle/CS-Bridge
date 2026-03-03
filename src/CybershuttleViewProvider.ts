@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn, execSync, ChildProcess } from 'child_process';
+import { MetricsCollector } from './instrumentation/index.js';
 
 
 interface PersistentShell {
@@ -86,10 +87,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _statusBarItem: vscode.StatusBarItem;
     private _countdownTimer?: ReturnType<typeof setInterval>;
     private _disposing = false;
+    private _metrics: MetricsCollector;
 
     private static readonly SESSIONS_KEY = 'cybershuttle.jobSessions';
 
-    constructor(private readonly _extensionUri: vscode.Uri, globalState: vscode.Memento) {
+    constructor(private readonly _extensionUri: vscode.Uri, globalState: vscode.Memento, metrics: MetricsCollector) {
+        this._metrics = metrics;
         this._globalState = globalState;
         this._outputChannel = vscode.window.createOutputChannel('CyberShuttle');
         // Short path to stay under macOS 104-byte Unix socket limit
@@ -280,6 +283,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return existing;
         }
 
+        const shellConnectStart = Date.now();
+        this._metrics.record('ssh_connect', 'in_progress', { target_host: hostName });
         const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
         const cancelFile = path.join(sessionDir, 'cancel');
         const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
@@ -325,6 +330,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 // Consume trailing newline
                 if (buffer.startsWith('\n')) { buffer = buffer.slice(1); }
                 resolveReady!();
+                this._metrics.record('ssh_connect', 'success', { target_host: hostName }, Date.now() - shellConnectStart);
             }
 
             // Process pending command response
@@ -409,6 +415,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             clearInterval(pollInterval);
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
             this._persistentShells.delete(hostName);
+            if (!isReady) {
+                this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, Date.now() - shellConnectStart, 'SSH connection closed before ready');
+            }
             if (shell.pending) {
                 shell.pending.reject(new Error('SSH connection closed'));
                 shell.pending = undefined;
@@ -420,6 +429,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             clearInterval(pollInterval);
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
             this._persistentShells.delete(hostName);
+            if (!isReady) {
+                this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, Date.now() - shellConnectStart, err.message);
+            }
             if (shell.pending) {
                 shell.pending.reject(err);
                 shell.pending = undefined;
@@ -698,6 +710,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.switchToLocal(data.sessionId);
                     break;
                 }
+                case 'openMetrics': {
+                    vscode.commands.executeCommand('cybershuttle.openMetrics');
+                    break;
+                }
             }
         });
     }
@@ -792,12 +808,17 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return binPath;
         }
 
+        const deployStart = Date.now();
+        this._metrics.record('linkspan_deploy', 'in_progress', { deploy_type: 'local' });
+
         const platformMap: Record<string, string> = { darwin: 'Darwin', linux: 'Linux', win32: 'Windows' };
         const archMap: Record<string, string> = { x64: 'x86_64', arm64: 'arm64' };
         const osName = platformMap[process.platform];
         const archName = archMap[process.arch];
         if (!osName || !archName) {
-            throw new Error(`Unsupported platform: ${process.platform}/${process.arch}`);
+            const errMsg = `Unsupported platform: ${process.platform}/${process.arch}`;
+            this._metrics.record('linkspan_deploy', 'failure', { deploy_type: 'local' }, Date.now() - deployStart, errMsg);
+            throw new Error(errMsg);
         }
 
         const assetName = `linkspan_${osName}_${archName}.tar.gz`;
@@ -806,21 +827,27 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._outputChannel.appendLine(`Downloading linkspan from ${downloadUrl}`);
         fs.mkdirSync(binDir, { recursive: true });
 
-        await new Promise<void>((resolve, reject) => {
-            const proc = spawn('bash', ['-c', `curl -fsSL "${downloadUrl}" | tar -xz -C "${binDir}" linkspan && chmod +x "${binPath}"`], {
-                stdio: ['ignore', 'pipe', 'pipe'],
+        try {
+            await new Promise<void>((resolve, reject) => {
+                const proc = spawn('bash', ['-c', `curl -fsSL "${downloadUrl}" | tar -xz -C "${binDir}" linkspan && chmod +x "${binPath}"`], {
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                });
+                let stderr = '';
+                proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+                proc.on('close', (code) => {
+                    if (code === 0) { resolve(); }
+                    else { reject(new Error(`Failed to download linkspan: ${stderr}`)); }
+                });
+                proc.on('error', reject);
             });
-            let stderr = '';
-            proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-            proc.on('close', (code) => {
-                if (code === 0) { resolve(); }
-                else { reject(new Error(`Failed to download linkspan: ${stderr}`)); }
-            });
-            proc.on('error', reject);
-        });
 
-        this._outputChannel.appendLine('linkspan downloaded to ' + binPath);
-        return binPath;
+            this._outputChannel.appendLine('linkspan downloaded to ' + binPath);
+            this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'local' }, Date.now() - deployStart);
+            return binPath;
+        } catch (err: any) {
+            this._metrics.record('linkspan_deploy', 'failure', { deploy_type: 'local' }, Date.now() - deployStart, err.message);
+            throw err;
+        }
     }
 
     /**
@@ -915,14 +942,21 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * which handles token refresh automatically via refresh tokens.
      */
     private async getDevTunnelAuthToken(): Promise<string> {
-        const session = await vscode.authentication.getSession(
-            'microsoft',
-            [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
-            { createIfNone: true },
-        );
-        this._devTunnelAccount = session.account.label;
-        this.postAuthState();
-        return session.accessToken;
+        const authStart = Date.now();
+        try {
+            const session = await vscode.authentication.getSession(
+                'microsoft',
+                [CybershuttleViewProvider.DEV_TUNNELS_SCOPE],
+                { createIfNone: true },
+            );
+            this._devTunnelAccount = session.account.label;
+            this.postAuthState();
+            this._metrics.record('auth_flow', 'success', { stage: 'token_exchange' }, Date.now() - authStart);
+            return session.accessToken;
+        } catch (err: any) {
+            this._metrics.record('auth_flow', 'failure', { stage: 'token_exchange' }, Date.now() - authStart, err.message);
+            throw err;
+        }
     }
 
     /**
@@ -1042,6 +1076,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._saveSessions();
         this.refresh();
 
+        const submitStart = Date.now();
+        this._metrics.record('job_submit', 'in_progress', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime });
+
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: `Submitting job on ${session.host}`,
@@ -1070,6 +1107,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._outputChannel.appendLine(result.stdout);
                     progress.report({ message: `Job ${session.slurmJobId || ''} submitted — waiting for node allocation...` });
                     this._startSessionPolling();
+                    this._metrics.record('job_submit', 'success', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime, job_id_slurm: session.slurmJobId }, Date.now() - submitStart);
                 } else {
                     session.status = 'Failed';
                     const errLines = (result.stderr || '').split('\n')
@@ -1081,6 +1119,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         this._outputChannel.appendLine(result.stderr);
                     }
                     vscode.window.showErrorMessage(`Failed to submit job on ${session.host}: ${session.errorMessage}`);
+                    this._metrics.record('job_submit', 'failure', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime }, Date.now() - submitStart, session.errorMessage);
                 }
             } catch (err: any) {
                 if (err.cancelled) {
@@ -1094,6 +1133,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._outputChannel.appendLine(`Error: ${err.message}`);
                     vscode.window.showErrorMessage(`Failed to submit job: ${err.message}`);
                 }
+                this._metrics.record('job_submit', 'failure', { cluster: session.host }, Date.now() - submitStart, session.errorMessage);
             }
 
             this._saveSessions();
@@ -1106,6 +1146,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * release from GitHub (https://github.com/cyber-shuttle/linkspan).
      */
     private async deployLinkspan(hostName: string, token?: vscode.CancellationToken): Promise<void> {
+        const deployStart = Date.now();
         // Check if linkspan is already deployed
         const check = await this.runRemoteCommand(hostName, 'test -x ~/.cybershuttle/bin/linkspan && echo OK', token);
         if (check.code === 0 && check.stdout.trim() === 'OK') {
@@ -1113,25 +1154,33 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        // Detect remote architecture
-        const archResult = await this.runRemoteCommand(hostName, 'uname -m', token);
-        if (archResult.code !== 0) {
-            throw new Error('Failed to detect remote architecture');
+        this._metrics.record('linkspan_deploy', 'in_progress', { deploy_type: 'remote', target_host: hostName });
+
+        try {
+            // Detect remote architecture
+            const archResult = await this.runRemoteCommand(hostName, 'uname -m', token);
+            if (archResult.code !== 0) {
+                throw new Error('Failed to detect remote architecture');
+            }
+            let arch = archResult.stdout.trim();
+            if (arch === 'aarch64') { arch = 'arm64'; }
+
+            // Download latest release from GitHub directly on the remote host
+            const assetName = `linkspan_Linux_${arch}.tar.gz`;
+            const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/${assetName}`;
+
+            await this.runRemoteCommand(
+                hostName,
+                `mkdir -p ~/.cybershuttle/bin && curl -fsSL "${downloadUrl}" | tar -xz -C ~/.cybershuttle/bin linkspan && chmod +x ~/.cybershuttle/bin/linkspan`,
+                token
+            );
+
+            this._outputChannel.appendLine('linkspan deployed to ' + hostName);
+            this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'remote', target_host: hostName }, Date.now() - deployStart);
+        } catch (err: any) {
+            this._metrics.record('linkspan_deploy', 'failure', { deploy_type: 'remote', target_host: hostName }, Date.now() - deployStart, err.message);
+            throw err;
         }
-        let arch = archResult.stdout.trim();
-        if (arch === 'aarch64') { arch = 'arm64'; }
-
-        // Download latest release from GitHub directly on the remote host
-        const assetName = `linkspan_Linux_${arch}.tar.gz`;
-        const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/${assetName}`;
-
-        await this.runRemoteCommand(
-            hostName,
-            `mkdir -p ~/.cybershuttle/bin && curl -fsSL "${downloadUrl}" | tar -xz -C ~/.cybershuttle/bin linkspan && chmod +x ~/.cybershuttle/bin/linkspan`,
-            token
-        );
-
-        this._outputChannel.appendLine('linkspan deployed to ' + hostName);
     }
 
     /**
@@ -1481,6 +1530,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         session.sshPort = parseInt(value, 10);
                     } else if (varName === 'tunnel_url') {
                         session.tunnelUrl = value.trim();
+                        this._metrics.record('tunnel_create', 'success', { tunnel_type: 'devtunnel', target_host: session.host });
                     } else if (varName === 'tunnel_token') {
                         session.tunnelToken = value.trim();
                     } else if (varName === 'tunnel_id') {
@@ -1506,6 +1556,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._saveSessions();
                     this.refresh();
                     vscode.window.showErrorMessage(`Linkspan workflow failed — ${stepName}: ${errMsg.trim()}`);
+                    this._metrics.record('tunnel_create', 'failure', { tunnel_type: 'devtunnel', target_host: session.host }, undefined, session.errorMessage);
                     continue;
                 }
 
@@ -1911,10 +1962,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         for (const session of sessionsToCheck) {
             try {
+                const oldStatus = session.status;
+                const squeueStart = Date.now();
                 const result = await this.runRemoteCommand(
                     session.host,
                     `squeue -j ${session.slurmJobId} -h -o "%T %N"`
                 );
+                this._metrics.record('sinfo_fetch', 'success', { cluster: session.host, raw_output_truncated: result.stdout.slice(0, 200) }, Date.now() - squeueStart);
 
                 const parts0 = result.stdout.trim().split(/\s+/);
                 const state = parts0[0] || '';
@@ -1969,6 +2023,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     session.sshPort = undefined;
                     session.remoteFusePort = undefined;
                     session.computeNode = undefined;
+                }
+
+                // Record status transitions
+                if (session.status !== oldStatus) {
+                    this._metrics.record('job_status_change', session.status === 'Failed' ? 'failure' : 'success', {
+                        job_id_slurm: session.slurmJobId!,
+                        old_status: oldStatus,
+                        new_status: session.status,
+                        cluster: session.host,
+                    });
                 }
 
                 // Always parse linkspan logs to capture workflow variables
@@ -2316,6 +2380,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Returns a promise that resolves with { stdout, stderr, code }.
      */
     private runRemoteCommand(hostName: string, command: string, token?: vscode.CancellationToken, stdinData?: string): Promise<{ stdout: string; stderr: string; code: number }> {
+        const cmdStart = Date.now();
         return new Promise((resolve, reject) => {
             // Create a temp directory for askpass IPC
             const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
@@ -2416,17 +2481,21 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
             sshProcess.on('close', (code: number | null) => {
                 cleanup();
+                const duration = Date.now() - cmdStart;
                 if (cancelled) {
                     const err: any = new Error('Operation cancelled');
                     err.cancelled = true;
+                    this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, duration, 'Cancelled');
                     reject(err);
                 } else {
+                    this._metrics.record('ssh_connect', (code ?? 1) === 0 ? 'success' : 'failure', { target_host: hostName }, duration, code !== 0 ? `exit code ${code}` : undefined);
                     resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 });
                 }
             });
 
             sshProcess.on('error', (err: Error) => {
                 cleanup();
+                this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, Date.now() - cmdStart, err.message);
                 reject(err);
             });
         });
@@ -3354,6 +3423,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     <p class="description">Connect to remote HPC workspaces</p>
 
+    <button id="open-metrics-btn" class="full-width" style="margin-bottom:8px;">Session Metrics</button>
+
     <div class="tab-row">
         <button class="tab-btn${this._activeTab === 'servers' ? ' active' : ''}" data-tab="servers">Servers</button>
         <button class="tab-btn${this._activeTab === 'sessions' ? ' active' : ''}" data-tab="sessions">Sessions</button>
@@ -3422,6 +3493,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         document.getElementById('test-local-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'testLocal' });
+        });
+
+        document.getElementById('open-metrics-btn').addEventListener('click', () => {
+            vscode.postMessage({ type: 'openMetrics' });
         });
 
         // Auth bar buttons
