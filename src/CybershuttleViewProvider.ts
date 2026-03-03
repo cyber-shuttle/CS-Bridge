@@ -1379,6 +1379,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         };
 
         session.localWorkdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        session.connectedRemotePath = `${os.homedir()}/sessions/${sessionId}`;
 
         this._jobSessions.push(session);
         this._activeTab = 'sessions';
@@ -2223,15 +2224,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 session.localWorkspaceFolder = folder.uri.fsPath;
             }
 
-            // Resolve remote home directory automatically
+            // Resolve remote workspace path — prefer the FUSE workspace path
             let remotePath = session.connectedRemotePath;
             if (!remotePath) {
-                progress.report({ message: 'Resolving remote home directory...' });
-                try {
-                    const result = await this.runRemoteCommand(session.host, 'echo $HOME');
-                    remotePath = result.stdout.trim() || '/home';
-                } catch {
-                    remotePath = '/home';
+                if (session.isLocal && session.localWorkdir) {
+                    // Local session: workspace is at ~/sessions/<id> on the remote side
+                    remotePath = `${os.homedir()}/sessions/${sessionId}`;
+                } else {
+                    progress.report({ message: 'Resolving remote home directory...' });
+                    try {
+                        const result = await this.runRemoteCommand(session.host, 'echo $HOME');
+                        remotePath = result.stdout.trim() || '/home';
+                    } catch {
+                        remotePath = '/home';
+                    }
                 }
                 session.connectedRemotePath = remotePath;
             }
@@ -2295,7 +2301,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const localPath = session.localWorkspaceFolder || os.homedir();
+        const localPath = session.localMountPath || session.localWorkspaceFolder || os.homedir();
 
         vscode.commands.executeCommand(
             'vscode.openFolder',
