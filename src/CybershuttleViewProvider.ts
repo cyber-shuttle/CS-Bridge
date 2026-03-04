@@ -130,7 +130,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             ws = {
                 id: crypto.randomBytes(4).toString('hex'),
                 directoryPath: dirPath,
-                directoryName: path.basename(dirPath) || dirPath,
+                directoryName: dirPath === 'unknown' ? 'No Folder' : (path.basename(dirPath) || dirPath),
                 runtimes: [],
             };
             this._workspaces.push(ws);
@@ -171,6 +171,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // Heartbeat every 30s to keep this window's session alive
         this._heartbeatTimer = setInterval(() => this._heartbeat(), 30_000);
+
+        // When workspace folder changes, re-register to fix 'unknown' workspace names
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            this._registerWindow();
+            this.refresh();
+        });
     }
 
     private _loadSessions() {
@@ -207,6 +213,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             // New Workspace[] format
             this._workspaces = rawData.map((ws: any) => ({
                 ...ws,
+                directoryName: ws.directoryPath === 'unknown' ? 'No Folder' : (ws.directoryName || path.basename(ws.directoryPath) || ws.directoryPath),
                 runtimes: (ws.runtimes || []).map((r: any) => ({
                     ...r,
                     submittedAt: new Date(r.submittedAt),
@@ -233,7 +240,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 this._workspaces.push({
                     id: crypto.randomBytes(4).toString('hex'),
                     directoryPath: dirPath,
-                    directoryName: path.basename(dirPath) || dirPath,
+                    directoryName: dirPath === 'unknown' ? 'No Folder' : (path.basename(dirPath) || dirPath),
                     runtimes,
                 });
             }
@@ -302,8 +309,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (existing) {
-            // Update heartbeat only (workspace info lives on Workspace now)
             existing.runtime.heartbeat = Date.now();
+            // If workspace was 'unknown' and we now have a real folder, move the runtime
+            if (existing.workspace.directoryPath === 'unknown' && dirPath !== 'unknown') {
+                existing.workspace.runtimes = existing.workspace.runtimes.filter(r => r.windowId !== this._windowId);
+                if (existing.workspace.runtimes.length === 0) {
+                    this._workspaces = this._workspaces.filter(w => w.id !== existing!.workspace.id);
+                }
+                const ws = this._getOrCreateWorkspace(dirPath);
+                ws.runtimes.push(existing.runtime);
+            }
             this._saveSessions();
             return;
         }
@@ -784,7 +799,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri],
         };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        try {
+            webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        } catch (err: any) {
+            this._outputChannel.appendLine(`[webview] Failed to render: ${err.message}\n${err.stack}`);
+            webviewView.webview.html = `<html><body><p>Failed to load CyberShuttle panel: ${err.message}</p></body></html>`;
+        }
 
         // Check Dev Tunnels auth on startup
         this.checkDevTunnelAuth();
@@ -2238,8 +2258,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
             });
 
-            // Give the SSH tunnel a moment to establish
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Wait for the FUSE tunnel port to become reachable
+            const reachable = await this._waitForPort(localPort);
+            if (!reachable) {
+                this._outputChannel.appendLine('[fuse-mount] FUSE tunnel port did not become reachable, skipping mount');
+                return;
+            }
             fuseAddr = `127.0.0.1:${localPort}`;
         } else {
             this._outputChannel.appendLine('[fuse-mount] Missing compute node or host info, skipping FUSE mount');
@@ -2301,6 +2325,34 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
             srv.on('error', () => resolve(null));
         });
+    }
+
+    /**
+     * Wait for a TCP port on 127.0.0.1 to accept connections, retrying with
+     * exponential backoff.  Returns true if the port became reachable within
+     * the retry budget, false otherwise.
+     */
+    private async _waitForPort(port: number, maxRetries = 5, initialDelayMs = 2000): Promise<boolean> {
+        let delay = initialDelayMs;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const reachable = await new Promise<boolean>((resolve) => {
+                const sock = net.createConnection({ host: '127.0.0.1', port }, () => {
+                    sock.destroy();
+                    resolve(true);
+                });
+                sock.setTimeout(3000);
+                sock.on('timeout', () => { sock.destroy(); resolve(false); });
+                sock.on('error', () => { sock.destroy(); resolve(false); });
+            });
+            if (reachable) {
+                this._outputChannel.appendLine(`[tunnel] Port ${port} reachable (attempt ${attempt}/${maxRetries})`);
+                return true;
+            }
+            this._outputChannel.appendLine(`[tunnel] Port ${port} not reachable, retrying in ${delay / 1000}s (attempt ${attempt}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay = Math.min(delay * 2, 16000);
+        }
+        return false;
     }
 
     /**
@@ -2889,8 +2941,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         }
                     });
 
-                    // Give the SSH tunnel a moment to establish
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    // Wait for the tunnel port to become reachable (compute node may take time)
+                    progress.report({ message: 'Waiting for compute node to become reachable...' });
+                    const reachable = await this._waitForPort(localPort);
+                    if (!reachable) {
+                        vscode.window.showErrorMessage('SSH tunnel to compute node did not become reachable. The compute node may still be starting up — try again in a moment.');
+                        return;
+                    }
                     this._saveSessions();
                 }
 
@@ -3227,8 +3284,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Use a nonce to only allow a specific script to run
         const nonce = getNonce();
 
-        const codiconsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css'));
-        const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.ttf'));
+        const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'codicons', 'codicon.ttf'));
 
         // Get SSH hosts from config
         const sshHosts = this.getSshHosts();
@@ -3330,16 +3386,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             const isLocal = !!rt.isLocal;
             const isActiveInThisWindow = activeSession?.id === rt.id;
 
-            const switchToLocalBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local" title="Switch to local workspace"><i class="codicon codicon-arrow-swap"></i></button>`;
-            const switchToRemoteBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="remote" title="Switch to remote session"><i class="codicon codicon-arrow-swap"></i></button>`;
-            const stopLocalBtn = `<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Stop"><i class="codicon codicon-debug-stop"></i></button>`;
-            const stopRemoteBtn = `<button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Cancel Job"><i class="codicon codicon-debug-stop"></i></button>`;
-            const spinner = `<i class="codicon codicon-loading codicon-modifier-spin session-action-spinner"></i>`;
+            const switchToLocalBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local" title="Switch to local workspace">&#x21C4;</button>`;
+            const switchToRemoteBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="remote" title="Switch to remote session">&#x21C4;</button>`;
+            const stopLocalBtn = `<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Stop">&#x25A0;</button>`;
+            const stopRemoteBtn = `<button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Cancel Job">&#x25A0;</button>`;
+            const spinner = `<span class="session-action-spinner">&#x23F3;</span>`;
 
             if (rt.status === 'Local') {
                 const isThisWindow = rt.windowId === this._windowId;
-                const switchWindowBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local-window" title="Switch to this window"><i class="codicon codicon-arrow-swap"></i></button>`;
-                const goRemoteBtn = `<button class="session-action-btn go-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Go Remote"><i class="codicon codicon-remote"></i></button>`;
+                const switchWindowBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local-window" title="Switch to this window">&#x21C4;</button>`;
+                const goRemoteBtn = `<button class="session-action-btn go-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Go Remote">&#x2601;</button>`;
                 const headerRight = isThisWindow ? goRemoteBtn : `${switchWindowBtn}${goRemoteBtn}`;
                 return `
                 <div class="runtime-entry runtime-local" data-session-id="${escapeHtml(rt.id)}">
@@ -3361,10 +3417,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 if (rt.status === 'Active') {
                     actionButtons = rt.sshPort ? `${switchToRemoteBtn}${stopLocalBtn}` : `${spinner}${stopLocalBtn}`;
                 } else {
-                    actionButtons = `<button class="session-action-btn relaunch-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
+                    actionButtons = `<button class="session-action-btn relaunch-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch">&#x21BB;</button>`;
                 }
             } else if (rt.status === 'Failed' || rt.status === 'Completed') {
-                actionButtons = `<button class="session-action-btn relaunch-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
+                actionButtons = `<button class="session-action-btn relaunch-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch">&#x21BB;</button>`;
             } else if (rt.status === 'Pending' || (rt.status === 'Active' && !rt.tunnelUrl)) {
                 actionButtons = `${spinner}${stopRemoteBtn}`;
             } else {
@@ -3374,18 +3430,18 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             let detailHtml: string;
             if (isLocal) {
                 const tunnelInfo = rt.tunnelUrl
-                    ? `<span class="session-detail"><i class="codicon codicon-globe"></i> ${escapeHtml(rt.tunnelUrl)}</span>`
-                    : (rt.status === 'Active' ? `<span class="session-detail"><i class="codicon codicon-loading codicon-modifier-spin"></i> setting up tunnel...</span>` : '');
-                detailHtml = `<span class="session-detail"><i class="codicon codicon-terminal"></i> local linkspan${rt.localPid ? ` (pid ${rt.localPid})` : ''}${rt.sshPort ? ` <i class="codicon codicon-plug"></i> ssh :${rt.sshPort}` : ''}</span>${tunnelInfo}`;
+                    ? `<span class="session-detail">&#x1F310; ${escapeHtml(rt.tunnelUrl)}</span>`
+                    : (rt.status === 'Active' ? `<span class="session-detail">&#x23F3; setting up tunnel...</span>` : '');
+                detailHtml = `<span class="session-detail">&#x2756; local linkspan${rt.localPid ? ` (pid ${rt.localPid})` : ''}${rt.sshPort ? ` &#x1F50C; ssh :${rt.sshPort}` : ''}</span>${tunnelInfo}`;
             } else {
                 const wtParts = rt.wallTime.split(':').map(Number);
                 const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
                 const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
                 const tunnelInfo = rt.tunnelUrl
-                    ? `<span class="session-detail"><i class="codicon codicon-globe"></i> ${escapeHtml(rt.tunnelUrl)}</span>`
-                    : (rt.status === 'Active' ? `<span class="session-detail"><i class="codicon codicon-loading codicon-modifier-spin"></i> setting up tunnel...</span>` : '');
-                detailHtml = `<span class="session-detail"><i class="codicon codicon-server-process"></i>${escapeHtml(rt.cpus)} <i class="codicon codicon-circuit-board"></i>${escapeHtml(rt.memory)} ${rt.gpu !== 'None' ? `<i class="codicon codicon-dashboard"></i>${escapeHtml(rt.gpu)} ` : ''}<i class="codicon codicon-clock"></i>${wallTimeShort}</span>
-                            <span class="session-detail"><i class="codicon codicon-layers"></i>${escapeHtml(rt.queue)} <i class="codicon codicon-key"></i>${escapeHtml(rt.allocation)}</span>${tunnelInfo}`;
+                    ? `<span class="session-detail">&#x1F310; ${escapeHtml(rt.tunnelUrl)}</span>`
+                    : (rt.status === 'Active' ? `<span class="session-detail">&#x23F3; setting up tunnel...</span>` : '');
+                detailHtml = `<span class="session-detail">&#x1F5A5;${escapeHtml(rt.cpus)} &#x1F4BE;${escapeHtml(rt.memory)} ${rt.gpu !== 'None' ? `&#x1F3AE;${escapeHtml(rt.gpu)} ` : ''}&#x23F1;${wallTimeShort}</span>
+                            <span class="session-detail">&#x2630;${escapeHtml(rt.queue)} &#x1F511;${escapeHtml(rt.allocation)}</span>${tunnelInfo}`;
             }
 
             const jobIdSpan = rt.slurmJobId ? ` <span class="session-job-id">#${escapeHtml(rt.slurmJobId)}</span>` : '';
@@ -3415,7 +3471,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return sshHosts.map(host => `
                 <div class="host-picker-item">
                     <div class="host-picker-row" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">
-                        <i class="codicon codicon-chevron-right host-picker-chevron"></i>
+                        <span class="host-picker-chevron">&#x203A;</span>
                         <span class="host-picker-name">${escapeHtml(host.name)}</span>
                         ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
                     </div>
@@ -3473,10 +3529,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 return `
                 <div class="workspace-card" data-workspace-id="${escapeHtml(ws.id)}">
                     <div class="workspace-header">
-                        <span class="workspace-name"><i class="codicon codicon-folder"></i> ${escapeHtml(ws.directoryName)}</span>
+                        <span class="workspace-name">&#x1F4C1; ${escapeHtml(ws.directoryName)}</span>
                         <div class="workspace-header-right">
                             <button class="workspace-add-remote-btn" data-workspace-id="${escapeHtml(ws.id)}" title="Add Remote">
-                                <i class="codicon codicon-add"></i>
+                                +
                             </button>
                         </div>
                     </div>
@@ -3519,9 +3575,21 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="${codiconsCssUri}">
     <title>CyberShuttle</title>
     <style>
+        @font-face {
+            font-family: "codicon";
+            font-display: block;
+            src: url("${codiconsFontUri}") format("truetype");
+        }
+        .codicon {
+            font: normal normal normal 16px/1 codicon;
+            display: inline-block;
+            text-decoration: none;
+            text-rendering: auto;
+            text-align: center;
+            user-select: none;
+        }
         body {
             padding: 10px;
             color: var(--vscode-foreground);
@@ -3900,9 +3968,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             transform: rotate(90deg);
         }
         .servers-panel-actions {
-            margin-left: auto;
             display: flex;
             gap: 4px;
+            margin-bottom: 6px;
         }
         .servers-panel-content {
             display: none;
@@ -4237,7 +4305,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 <body>
     <div id="auth-bar" class="auth-bar ${this._devTunnelAccount ? 'signed-in' : 'signed-out'}">
         <div class="auth-bar-info">
-            <i class="codicon ${this._devTunnelAccount ? 'codicon-verified-filled' : 'codicon-warning'}"></i>
+            ${this._devTunnelAccount ? '&#x2705;' : '&#x26A0;'}
             <span id="auth-bar-label" class="auth-bar-label">${this._devTunnelAccount ? escapeHtml(this._devTunnelAccount) : 'Not signed in to Dev Tunnels'}</span>
         </div>
         ${this._devTunnelAccount
@@ -4245,9 +4313,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             : '<button id="auth-bar-sign-in-btn" class="auth-bar-btn">Sign In</button>'}
     </div>
 
-    <p class="description">Connect to remote HPC workspaces</p>
-
-    <button id="open-metrics-btn" class="full-width" style="margin-bottom:8px;">Session Metrics</button>
+    <p class="description">Take your workspace into any runtime</p>
 
     <div class="tab-row">
         <button class="tab-btn${this._activeTab === 'sessions' ? ' active' : ''}" data-tab="sessions">Sessions</button>
@@ -4255,6 +4321,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <div id="tab-sessions" class="tab-panel${this._activeTab === 'sessions' ? ' active' : ''}">
+        <div class="tab-header">
+            <button id="refresh-sessions-btn" class="refresh-btn" title="Refresh Sessions">&#x21BB;</button>
+        </div>
         <div id="sessions">
             ${sessionsHtml}
         </div>
@@ -4268,15 +4337,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     <div class="servers-panel">
         <button class="servers-panel-toggle" id="servers-panel-toggle">
-            <i class="codicon codicon-chevron-right servers-panel-chevron"></i>
+            <span class="servers-panel-chevron">&#x203A;</span>
             Servers
-            <span class="servers-panel-actions">
-                <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">Local</button>
-                <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
-                <button id="refresh-btn" class="refresh-btn" title="Refresh"><i class="codicon codicon-refresh"></i></button>
-            </span>
         </button>
         <div class="servers-panel-content" id="servers-panel-content">
+            <div class="servers-panel-actions">
+                <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">&#x2756; Local</button>
+                <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
+                <button id="refresh-servers-btn" class="refresh-btn" title="Refresh Servers">&#x21BB;</button>
+            </div>
             <div id="ssh-hosts">
                 ${hostsHtml}
             </div>
@@ -4297,6 +4366,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
 
+        try {
         // Tab switching
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -4313,8 +4383,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const serversToggle = document.getElementById('servers-panel-toggle');
         const serversContent = document.getElementById('servers-panel-content');
         if (serversToggle && serversContent) {
-            serversToggle.addEventListener('click', (e) => {
-                if (e.target.closest('.refresh-btn')) { return; }
+            serversToggle.addEventListener('click', () => {
                 const chevron = serversToggle.querySelector('.servers-panel-chevron');
                 const isExpanded = serversContent.classList.toggle('expanded');
                 if (chevron) {
@@ -4323,21 +4392,22 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
         }
 
-        document.getElementById('refresh-btn').addEventListener('click', () => {
+        document.getElementById('refresh-sessions-btn')?.addEventListener('click', () => {
             vscode.postMessage({ type: 'refresh' });
         });
 
-        document.getElementById('add-ssh-btn').addEventListener('click', () => {
+        document.getElementById('refresh-servers-btn')?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'refresh' });
+        });
+
+        document.getElementById('add-ssh-btn')?.addEventListener('click', () => {
             vscode.postMessage({ type: 'addSshHost' });
         });
 
-        document.getElementById('test-local-btn').addEventListener('click', () => {
+        document.getElementById('test-local-btn')?.addEventListener('click', () => {
             vscode.postMessage({ type: 'testLocal' });
         });
 
-        document.getElementById('open-metrics-btn').addEventListener('click', () => {
-            vscode.postMessage({ type: 'openMetrics' });
-        });
 
         // Auth bar buttons
         function bindAuthBarButtons() {
@@ -4656,19 +4726,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Script preview state
         let previewSessionId = null;
 
-        document.getElementById('confirm-preview-btn').addEventListener('click', () => {
+        document.getElementById('confirm-preview-btn')?.addEventListener('click', () => {
             if (previewSessionId) {
                 vscode.postMessage({ type: 'confirmJob', sessionId: previewSessionId });
-                document.getElementById('script-preview-overlay').classList.remove('visible');
+                document.getElementById('script-preview-overlay')?.classList.remove('visible');
                 previewSessionId = null;
             }
         });
 
-        document.getElementById('cancel-preview-btn').addEventListener('click', () => {
+        document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
             if (previewSessionId) {
                 vscode.postMessage({ type: 'cancelJob', sessionId: previewSessionId });
             }
-            document.getElementById('script-preview-overlay').classList.remove('visible');
+            document.getElementById('script-preview-overlay')?.classList.remove('visible');
             previewSessionId = null;
         });
 
@@ -4680,10 +4750,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const bar = document.getElementById('auth-bar');
                 if (msg.account) {
                     bar.className = 'auth-bar signed-in';
-                    bar.innerHTML = '<div class="auth-bar-info"><i class="codicon codicon-verified-filled"></i><span id="auth-bar-label" class="auth-bar-label">' + msg.account + '</span></div><button id="auth-bar-switch-btn" class="auth-bar-btn">Switch</button>';
+                    bar.innerHTML = '<div class="auth-bar-info">&#x2705;<span id="auth-bar-label" class="auth-bar-label">' + msg.account + '</span></div><button id="auth-bar-switch-btn" class="auth-bar-btn">Switch</button>';
                 } else {
                     bar.className = 'auth-bar signed-out';
-                    bar.innerHTML = '<div class="auth-bar-info"><i class="codicon codicon-warning"></i><span id="auth-bar-label" class="auth-bar-label">Not signed in to Dev Tunnels</span></div><button id="auth-bar-sign-in-btn" class="auth-bar-btn">Sign In</button>';
+                    bar.innerHTML = '<div class="auth-bar-info">&#x26A0;<span id="auth-bar-label" class="auth-bar-label">Not signed in to Dev Tunnels</span></div><button id="auth-bar-sign-in-btn" class="auth-bar-btn">Sign In</button>';
                 }
                 bindAuthBarButtons();
                 return;
@@ -4915,6 +4985,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 });
             }
         });
+        } catch (err) { console.error('[cybershuttle] Webview init error:', err); }
     </script>
 </body>
 </html>`;

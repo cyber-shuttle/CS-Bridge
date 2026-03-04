@@ -29,9 +29,19 @@
       },
       {
         "command": "cybershuttle.openMetrics",
-        "title": "CyberShuttle: Session Metrics"
+        "title": "Session Metrics",
+        "icon": "$(graph)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cybershuttle.openMetrics",
+          "when": "view == cybershuttle.sidebarView",
+          "group": "navigation"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {

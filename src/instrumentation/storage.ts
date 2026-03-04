@@ -1,6 +1,8 @@
-import initSqlJs, { Database } from 'sql.js';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// sql.js is loaded dynamically to avoid crashing the extension when packaged without node_modules
+type Database = import('sql.js').Database;
 
 import { MetricEvent, EventType, EventStatus } from './types';
 
@@ -22,6 +24,8 @@ export interface Summary {
  * Creates the `events` table and indexes if they don't exist.
  */
 export async function initDatabase(dbPath: string): Promise<Database> {
+    const sqljs = await import('sql.js');
+    const initSqlJs = sqljs.default;
     const wasmPath = path.join(
         path.dirname(require.resolve('sql.js')),
         'sql-wasm.wasm'
