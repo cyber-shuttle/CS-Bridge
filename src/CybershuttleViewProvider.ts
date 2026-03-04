@@ -2225,6 +2225,24 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Remove any CS-Bridge SSH config entry for the given session/host alias.
+     */
+    private _removeSshConfigEntry(sessionId: string, hostAlias: string): void {
+        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
+        try {
+            const content = fs.readFileSync(sshConfigPath, 'utf-8');
+            const re = new RegExp(
+                `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`,
+                'gm'
+            );
+            const cleaned = content.replace(re, '');
+            if (cleaned !== content) {
+                fs.writeFileSync(sshConfigPath, cleaned);
+            }
+        } catch { /* ignore if file doesn't exist */ }
+    }
+
+    /**
      * Remove any existing CS-Bridge SSH config entry for the session and write a
      * fresh one. Returns true on success, false if the append failed (an error
      * message is shown to the user in that case).
@@ -2236,18 +2254,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         port: number,
         user: string,
     ): boolean {
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
-
         // Remove any existing entry for this session
-        try {
-            const existing = fs.readFileSync(sshConfigPath, 'utf-8');
-            const re = new RegExp(
-                `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`,
-                'gm'
-            );
-            fs.writeFileSync(sshConfigPath, existing.replace(re, ''));
-        } catch { /* ignore if file doesn't exist yet */ }
+        this._removeSshConfigEntry(sessionId, hostAlias);
 
+        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
         const configBlock = [
             ``,
             `# CS-Bridge auto-generated for session ${sessionId}`,
@@ -2501,6 +2511,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             this.cleanupFuseMount(session);
             this.cleanupLocalFuseServer(session);
 
+            // Remove auto-generated SSH config entry for remote session
+            this._removeSshConfigEntry(sessionId, `cs-session-${sessionId}`);
+
             // Clear ephemeral tunnel/connection properties
             session.tunnelUrl = undefined;
             session.tunnelToken = undefined;
@@ -2540,16 +2553,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         spawn('devtunnel', ['delete', tunnelName, '-f'], { stdio: 'ignore', detached: true }).unref();
 
         // Remove auto-generated SSH config entry
-        const hostAlias = `cs-tunnel-${sessionId}`;
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
-        try {
-            const content = fs.readFileSync(sshConfigPath, 'utf-8');
-            const re = new RegExp(`(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`, 'gm');
-            const cleaned = content.replace(re, '');
-            if (cleaned !== content) {
-                fs.writeFileSync(sshConfigPath, cleaned);
-            }
-        } catch { /* ignore cleanup errors */ }
+        this._removeSshConfigEntry(sessionId, `cs-tunnel-${sessionId}`);
 
         const session = this._findRuntime(sessionId)?.runtime;
         if (session) {
@@ -3087,6 +3091,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             s.sshTunnelPid = undefined;
                             s.sshTunnelLocalPort = undefined;
                         }
+                        // Remove stale SSH config entry so VS Code doesn't retry a dead port
+                        this._removeSshConfigEntry(sessionId, `cs-session-${sessionId}`);
                     });
 
                     // Wait for the tunnel port to become reachable (compute node may take time)
