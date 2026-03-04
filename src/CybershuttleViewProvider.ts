@@ -976,8 +976,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         queue: string;
         allocation: string;
         authToken: string;
+        // Optional: local FUSE devtunnel info for mounting Mac's workdir on HPC
+        localFuseTunnelId?: string;
+        localFuseConnectToken?: string;
+        localFusePort?: number;
+        sessionId?: string;
     }): string {
-        const { cpus, memory, gpu, wallTime, queue, allocation, authToken } = params;
+        const { cpus, memory, gpu, wallTime, queue, allocation, authToken, localFuseTunnelId, localFuseConnectToken, localFusePort, sessionId } = params;
 
         // Parse memory value (e.g. "8 GB" → "8G")
         const memSlurm = memory.replace(/\s+/g, '');
@@ -1004,7 +1009,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // Build the workflow YAML that will be passed to linkspan via stdin.
         // Use $SLURM_JOB_ID in the tunnel name so each job gets a unique tunnel.
-        const workflowYaml = [
+        const workflowSteps = [
             `name: "cs-bridge-hpc-setup"`,
             ``,
             `steps:`,
@@ -1040,7 +1045,27 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `    outputs:`,
             `      connection_url: "tunnel_url"`,
             `      token: "tunnel_token"`,
-        ].join('\n');
+        ];
+
+        // If local FUSE devtunnel info is provided, add steps to connect and mount
+        if (localFuseTunnelId && localFuseConnectToken && localFusePort && sessionId) {
+            workflowSteps.push(
+                ``,
+                `  - action: "tunnel.devtunnel_connect"`,
+                `    name: "Connect to local FUSE devtunnel"`,
+                `    params:`,
+                `      tunnel_id: "${localFuseTunnelId}"`,
+                `      access_token: "${localFuseConnectToken}"`,
+                ``,
+                `  - action: "fuse.mount_remote"`,
+                `    name: "Mount local workdir"`,
+                `    params:`,
+                `      session_id: "${sessionId}"`,
+                `      server_addr: "127.0.0.1:${localFusePort}"`,
+            );
+        }
+
+        const workflowYaml = workflowSteps.join('\n');
 
         // Use an unquoted heredoc (<<WORKFLOW_EOF) so bash expands $SLURM_JOB_ID
         // in the tunnel name. The Go template variables ({{.…}}) pass through
@@ -1093,6 +1118,37 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             this._outputChannel.appendLine(`\n--- Submitting SLURM job on ${session.host} ---`);
 
             try {
+                // If we have a local workspace, start FUSE server for Mac→HPC mount
+                if (!this._isRemoteWindow && vscode.workspace.workspaceFolders?.[0]) {
+                    try {
+                        progress.report({ message: 'Starting local FUSE server...' });
+                        const authToken = await this.getDevTunnelAuthToken();
+                        await this.startLocalFuseServer(session, authToken);
+
+                        // Regenerate the SLURM script with FUSE mount steps
+                        if (session.localFuseTunnelId && session.localFuseConnectToken && session.localFusePort) {
+                            session.script = this.generateSlurmScript({
+                                cpus: session.cpus,
+                                memory: session.memory,
+                                gpu: session.gpu,
+                                wallTime: session.wallTime,
+                                queue: session.queue,
+                                allocation: session.allocation,
+                                authToken,
+                                localFuseTunnelId: session.localFuseTunnelId,
+                                localFuseConnectToken: session.localFuseConnectToken,
+                                localFusePort: session.localFusePort,
+                                sessionId: session.id,
+                            });
+                            session.connectedRemotePath = `~/sessions/${session.id}`;
+                            this._saveSessions();
+                        }
+                    } catch (err: any) {
+                        this._outputChannel.appendLine(`[submit] Warning: Failed to start local FUSE server: ${err.message}`);
+                        // Continue without FUSE — the job will still work, just without workdir mount
+                    }
+                }
+
                 // Deploy linkspan binary to the remote host
                 progress.report({ message: 'Deploying linkspan binary...' });
                 await this.deployLinkspan(session.host, token);
