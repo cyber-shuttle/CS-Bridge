@@ -202,10 +202,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this.stopAllLogStreams();
         for (const session of this._jobSessions) {
             this.cleanupFuseMount(session);
-            // Clean up local FUSE servers (Mac→HPC mount)
-            if (session.localFuseServerPid) {
-                try { process.kill(session.localFuseServerPid); } catch { /* already dead */ }
-            }
+            this.cleanupLocalFuseServer(session);
         }
         this.stopAllLocalProcesses();
     }
@@ -661,12 +658,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     if (removing?.isLocal) {
                         this.stopLocalSession(data.sessionId);
                     }
-                    // Clean up local FUSE server if running (Mac→HPC mount)
-                    if (removing?.localFuseServerPid) {
-                        try { process.kill(removing.localFuseServerPid); } catch { /* already dead */ }
-                    }
-                    if (removing?.localFuseTunnelId) {
-                        spawn('devtunnel', ['delete', `ls-fuse-${data.sessionId}`, '-f'], { stdio: 'ignore', detached: true }).unref();
+                    if (removing) {
+                        this.cleanupLocalFuseServer(removing);
                     }
                     this._jobSessions = this._jobSessions.filter(s => s.id !== data.sessionId);
                     this._saveSessions();
@@ -1207,6 +1200,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     vscode.window.showErrorMessage(`Failed to submit job: ${err.message}`);
                 }
                 this._metrics.record('job_submit', 'failure', { cluster: session.host }, Date.now() - submitStart, session.errorMessage);
+            }
+
+            // If submission failed, clean up the local FUSE server (no point keeping it running)
+            if (session.status === 'Failed') {
+                this.cleanupLocalFuseServer(session);
             }
 
             this._saveSessions();
@@ -2053,6 +2051,22 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Kill local FUSE server process and delete its devtunnel (Mac→HPC mount).
+     */
+    private cleanupLocalFuseServer(session: JobSession) {
+        if (session.localFuseServerPid) {
+            try { process.kill(session.localFuseServerPid); } catch { /* already dead */ }
+            session.localFuseServerPid = undefined;
+        }
+        if (session.localFuseTunnelId) {
+            spawn('devtunnel', ['delete', `ls-fuse-${session.id}`, '-f'], { stdio: 'ignore', detached: true }).unref();
+            session.localFuseTunnelId = undefined;
+            session.localFuseConnectToken = undefined;
+            session.localFusePort = undefined;
+        }
+    }
+
+    /**
      * Stop a remote SLURM session by cancelling the job via scancel.
      */
     private async stopRemoteSession(sessionId: string) {
@@ -2089,18 +2103,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
             // Clean up local FUSE mount if active
             this.cleanupFuseMount(session);
-
-            // Kill local FUSE server if running (used for Mac→HPC mount)
-            if (session.localFuseServerPid) {
-                try { process.kill(session.localFuseServerPid); } catch { /* already dead */ }
-                session.localFuseServerPid = undefined;
-            }
-            if (session.localFuseTunnelId) {
-                spawn('devtunnel', ['delete', `ls-fuse-${sessionId}`, '-f'], { stdio: 'ignore', detached: true }).unref();
-                session.localFuseTunnelId = undefined;
-                session.localFuseConnectToken = undefined;
-                session.localFusePort = undefined;
-            }
+            this.cleanupLocalFuseServer(session);
 
             // Clear ephemeral tunnel/connection properties
             session.tunnelUrl = undefined;
@@ -2121,18 +2124,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const fuseSession = this._jobSessions.find(s => s.id === sessionId);
         if (fuseSession) {
             this.cleanupFuseMount(fuseSession);
-
-            // Kill local FUSE server if running (used for Mac→HPC mount)
-            if (fuseSession.localFuseServerPid) {
-                try { process.kill(fuseSession.localFuseServerPid); } catch { /* already dead */ }
-                fuseSession.localFuseServerPid = undefined;
-            }
-            if (fuseSession.localFuseTunnelId) {
-                spawn('devtunnel', ['delete', `ls-fuse-${sessionId}`, '-f'], { stdio: 'ignore', detached: true }).unref();
-                fuseSession.localFuseTunnelId = undefined;
-                fuseSession.localFuseConnectToken = undefined;
-                fuseSession.localFusePort = undefined;
-            }
+            this.cleanupLocalFuseServer(fuseSession);
         }
 
         // Kill linkspan process — try local map first, fall back to PID for cross-window stop
