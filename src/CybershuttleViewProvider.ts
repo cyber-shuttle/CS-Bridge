@@ -202,6 +202,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this.stopAllLogStreams();
         for (const session of this._jobSessions) {
             this.cleanupFuseMount(session);
+            // Clean up local FUSE servers (Mac→HPC mount)
+            if (session.localFuseServerPid) {
+                try { process.kill(session.localFuseServerPid); } catch { /* already dead */ }
+            }
         }
         this.stopAllLocalProcesses();
     }
@@ -656,6 +660,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     const removing = this._jobSessions.find(s => s.id === data.sessionId);
                     if (removing?.isLocal) {
                         this.stopLocalSession(data.sessionId);
+                    }
+                    // Clean up local FUSE server if running (Mac→HPC mount)
+                    if (removing?.localFuseServerPid) {
+                        try { process.kill(removing.localFuseServerPid); } catch { /* already dead */ }
+                    }
+                    if (removing?.localFuseTunnelId) {
+                        spawn('devtunnel', ['delete', `ls-fuse-${data.sessionId}`, '-f'], { stdio: 'ignore', detached: true }).unref();
                     }
                     this._jobSessions = this._jobSessions.filter(s => s.id !== data.sessionId);
                     this._saveSessions();
