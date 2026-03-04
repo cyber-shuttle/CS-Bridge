@@ -60,6 +60,10 @@ interface JobSession {
     remoteFusePort?: number;
     computeNode?: string;
     fuseTunnelPid?: number;
+    localFuseServerPid?: number;
+    localFuseTunnelId?: string;
+    localFuseConnectToken?: string;
+    localFusePort?: number;
 }
 
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
@@ -1011,6 +1015,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             ``,
             `  - action: "fuse.start_server"`,
             `    name: "Start FUSE server"`,
+            `    params:`,
+            `      root: "$HOME"`,
             `    outputs:`,
             `      fuse_port: "fuse_server_port"`,
             ``,
@@ -1376,6 +1382,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         const tunnelName = `ls-${sessionId}`;
+        const localWorkdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
         const workflowYaml = [
             `name: "cs-bridge-hpc-setup"`,
             ``,
@@ -1387,6 +1394,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             ``,
             `  - action: "fuse.start_server"`,
             `    name: "Start FUSE server"`,
+            `    params:`,
+            `      root: "${localWorkdir}"`,
             `    outputs:`,
             `      fuse_port: "fuse_server_port"`,
             ``,
@@ -1427,7 +1436,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             isLocal: true,
         };
 
-        session.localWorkdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        session.localWorkdir = localWorkdir;
         session.connectedRemotePath = `${os.homedir()}/sessions/${sessionId}`;
 
         this._jobSessions.push(session);
@@ -1619,6 +1628,140 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
             this._outputChannel.appendLine(`Error: ${err.message}`);
             vscode.window.showErrorMessage(`Local linkspan failed: ${err.message}`);
+        });
+    }
+
+    /**
+     * Start a background linkspan process serving the local workdir over FUSE
+     * with a devtunnel, so a remote session can mount it.
+     */
+    private async startLocalFuseServer(session: JobSession, authToken: string): Promise<void> {
+        const workdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!workdir) {
+            this._outputChannel.appendLine('[fuse-server] No workspace folder open, skipping local FUSE server');
+            return;
+        }
+
+        session.localWorkdir = workdir;
+
+        const linkspanPath = await this.ensureLocalLinkspan();
+        const tunnelName = `ls-fuse-${session.id}`;
+
+        const workflowYaml = [
+            `name: "cs-bridge-fuse-server"`,
+            ``,
+            `steps:`,
+            `  - action: "fuse.start_server"`,
+            `    name: "Start FUSE server"`,
+            `    params:`,
+            `      root: "${workdir.replace(/"/g, '\\"')}"`,
+            `    outputs:`,
+            `      fuse_port: "fuse_server_port"`,
+            ``,
+            `  - action: "tunnel.devtunnel_create"`,
+            `    name: "Create FUSE devtunnel"`,
+            `    params:`,
+            `      tunnel_name: "${tunnelName}"`,
+            `      expiration: "1d"`,
+            `      auth_token: "{{.TunnelAuthToken}}"`,
+            `      ports:`,
+            `        - "{{.fuse_server_port}}"`,
+            `    outputs:`,
+            `      tunnel_id: "fuse_tunnel_id"`,
+            ``,
+            `  - action: "tunnel.devtunnel_host"`,
+            `    name: "Host FUSE devtunnel"`,
+            `    params:`,
+            `      tunnel_name: "${tunnelName}"`,
+            `      auth_token: "{{.TunnelAuthToken}}"`,
+            `    outputs:`,
+            `      token: "fuse_connect_token"`,
+        ].join('\n');
+
+        const proc = spawn(linkspanPath, ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env },
+        });
+
+        session.localFuseServerPid = proc.pid;
+
+        proc.stdin!.write(workflowYaml);
+        proc.stdin!.end();
+
+        return new Promise<void>((resolve, reject) => {
+            let resolved = false;
+            const timeout = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    reject(new Error('Timed out waiting for FUSE server + devtunnel'));
+                }
+            }, 120_000);
+
+            const parseOutput = (text: string) => {
+                for (const line of text.split('\n')) {
+                    const cap = line.match(/workflow: captured (\S+) = (.+)/);
+                    if (cap) {
+                        const [, varName, value] = cap;
+                        if (varName === 'fuse_server_port') {
+                            session.localFusePort = parseInt(value, 10);
+                        } else if (varName === 'fuse_tunnel_id') {
+                            session.localFuseTunnelId = value.trim();
+                        } else if (varName === 'fuse_connect_token') {
+                            session.localFuseConnectToken = value.trim();
+                        }
+                        this._saveSessions();
+                        this.refresh();
+                    }
+
+                    // Check if all FUSE info is captured
+                    if (session.localFusePort && session.localFuseTunnelId && session.localFuseConnectToken && !resolved) {
+                        resolved = true;
+                        clearTimeout(timeout);
+                        this._outputChannel.appendLine(
+                            `[fuse-server] Local FUSE server ready: port=${session.localFusePort} tunnel=${session.localFuseTunnelId}`
+                        );
+                        resolve();
+                    }
+
+                    // Detect workflow errors
+                    const errMatch = line.match(/workflow: workflow step \d+ \(([^)]+)\): (.+)/);
+                    if (errMatch && !resolved) {
+                        resolved = true;
+                        clearTimeout(timeout);
+                        reject(new Error(`FUSE server workflow failed: ${errMatch[1]}: ${errMatch[2].trim()}`));
+                    }
+                }
+            };
+
+            proc.stdout!.on('data', (data: Buffer) => {
+                const text = data.toString();
+                this._outputChannel.appendLine(`[fuse-server] ${text.trimEnd()}`);
+                parseOutput(text);
+            });
+
+            proc.stderr!.on('data', (data: Buffer) => {
+                const text = data.toString();
+                this._outputChannel.appendLine(`[fuse-server] ${text.trimEnd()}`);
+                parseOutput(text);
+            });
+
+            proc.on('close', (code) => {
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeout);
+                    reject(new Error(`FUSE server process exited with code ${code}`));
+                }
+                session.localFuseServerPid = undefined;
+                this._saveSessions();
+            });
+
+            proc.on('error', (err) => {
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeout);
+                    reject(err);
+                }
+            });
         });
     }
 
@@ -1880,6 +2023,18 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             // Clean up local FUSE mount if active
             this.cleanupFuseMount(session);
 
+            // Kill local FUSE server if running (used for Mac→HPC mount)
+            if (session.localFuseServerPid) {
+                try { process.kill(session.localFuseServerPid); } catch { /* already dead */ }
+                session.localFuseServerPid = undefined;
+            }
+            if (session.localFuseTunnelId) {
+                spawn('devtunnel', ['delete', `ls-fuse-${sessionId}`, '-f'], { stdio: 'ignore', detached: true }).unref();
+                session.localFuseTunnelId = undefined;
+                session.localFuseConnectToken = undefined;
+                session.localFusePort = undefined;
+            }
+
             // Clear ephemeral tunnel/connection properties
             session.tunnelUrl = undefined;
             session.tunnelToken = undefined;
@@ -1899,6 +2054,18 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const fuseSession = this._jobSessions.find(s => s.id === sessionId);
         if (fuseSession) {
             this.cleanupFuseMount(fuseSession);
+
+            // Kill local FUSE server if running (used for Mac→HPC mount)
+            if (fuseSession.localFuseServerPid) {
+                try { process.kill(fuseSession.localFuseServerPid); } catch { /* already dead */ }
+                fuseSession.localFuseServerPid = undefined;
+            }
+            if (fuseSession.localFuseTunnelId) {
+                spawn('devtunnel', ['delete', `ls-fuse-${sessionId}`, '-f'], { stdio: 'ignore', detached: true }).unref();
+                fuseSession.localFuseTunnelId = undefined;
+                fuseSession.localFuseConnectToken = undefined;
+                fuseSession.localFusePort = undefined;
+            }
         }
 
         // Kill linkspan process — try local map first, fall back to PID for cross-window stop
@@ -1941,6 +2108,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             session.localFuseTunnelUrl = undefined;
             session.remoteFusePort = undefined;
             session.remoteMountPath = undefined;
+            session.localFuseServerPid = undefined;
+            session.localFuseTunnelId = undefined;
+            session.localFuseConnectToken = undefined;
+            session.localFusePort = undefined;
             this._saveSessions();
             this.refresh();
         }
