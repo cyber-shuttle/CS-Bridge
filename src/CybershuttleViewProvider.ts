@@ -69,6 +69,9 @@ interface Runtime {
     localFuseTunnelId?: string;
     localFuseConnectToken?: string;
     localFusePort?: number;
+    // Shared Dev Tunnel connect process (forwards both SSH + FUSE ports from compute node)
+    devtunnelConnectPid?: number;
+    _devtunnelPortMap?: Map<number, number>; // transient: remotePort → localPort
     // SSH tunnel to compute node (for remote switch)
     sshTunnelPid?: number;
     sshTunnelLocalPort?: number;
@@ -2305,47 +2308,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         if (session.isLocal) {
             // Local session: FUSE server is on this machine
             fuseAddr = `127.0.0.1:${session.remoteFusePort}`;
-        } else if (session.computeNode && session.host) {
-            // Remote SLURM session: SSH-forward the compute node's FUSE port locally
-            const localPort = await this.findFreePort();
-            if (!localPort) {
-                this._outputChannel.appendLine('[fuse-mount] Could not find a free local port for SSH tunnel');
+        } else if (session.tunnelId && session.tunnelToken && session.remoteFusePort) {
+            // Remote SLURM session: forward FUSE port via shared Dev Tunnel connect
+            const portMap = await this._ensureDevTunnelConnected(sessionId, session);
+            if (!portMap) {
+                this._outputChannel.appendLine('[fuse-mount] Dev Tunnel not available, skipping mount');
                 return;
             }
 
-            this._outputChannel.appendLine(
-                `[fuse-mount] Setting up SSH tunnel: localhost:${localPort} → ${session.computeNode}:${session.remoteFusePort} via ${session.host}`
-            );
-
-            const tunnelProc = spawn('ssh', [
-                '-N',
-                '-L', `${localPort}:${session.computeNode}:${session.remoteFusePort}`,
-                session.host,
-            ], {
-                stdio: ['ignore', 'pipe', 'pipe'],
-            });
-
-            session.fuseTunnelPid = tunnelProc.pid;
-
-            tunnelProc.stderr!.on('data', (data: Buffer) => {
-                this._outputChannel.appendLine(`[fuse-tunnel/err] ${data.toString().trimEnd()}`);
-            });
-
-            tunnelProc.on('close', (code) => {
-                this._outputChannel.appendLine(`[fuse-tunnel] SSH tunnel exited (code ${code})`);
-                const s = this._findRuntime(sessionId)?.runtime;
-                if (s) {
-                    s.fuseTunnelPid = undefined;
-                }
-            });
-
-            // Wait for the FUSE tunnel port to become reachable
-            const reachable = await this._waitForPort(localPort);
-            if (!reachable) {
-                this._outputChannel.appendLine('[fuse-mount] FUSE tunnel port did not become reachable, skipping mount');
+            const localFusePort = portMap.get(session.remoteFusePort);
+            if (!localFusePort) {
+                this._outputChannel.appendLine(`[fuse-mount] FUSE port ${session.remoteFusePort} was not forwarded by Dev Tunnel`);
                 return;
             }
-            fuseAddr = `127.0.0.1:${localPort}`;
+            fuseAddr = `127.0.0.1:${localFusePort}`;
         } else {
             this._outputChannel.appendLine('[fuse-mount] Missing compute node or host info, skipping FUSE mount');
             return;
@@ -2437,13 +2413,171 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Kill FUSE mount process and SSH tunnel for a session.
+     * Resolve the devtunnel CLI binary path.  Checks common locations since the
+     * VS Code extension host PATH may not include /opt/homebrew/bin or ~/.linkspan/bin.
+     */
+    private _resolveDevTunnelBin(): string | undefined {
+        const candidates = [
+            path.join(os.homedir(), '.linkspan', 'bin', 'devtunnel'),
+            '/opt/homebrew/bin/devtunnel',
+            '/usr/local/bin/devtunnel',
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) { return p; }
+        }
+        return undefined;
+    }
+
+    /**
+     * Ensure the shared Dev Tunnel connect process is running for a remote session.
+     * This forwards all tunnel ports (SSH + FUSE) from the compute node to localhost.
+     * Waits for the connection to establish and parses port mappings from the CLI output.
+     *
+     * devtunnel connect output format:
+     *   SSH: Forwarding from 127.0.0.1:<localPort> to host port <remotePort>.
+     *
+     * Returns a map of remotePort → localPort, or undefined on failure.
+     */
+    private async _ensureDevTunnelConnected(sessionId: string, session: Runtime): Promise<Map<number, number> | undefined> {
+        if (!session.tunnelId || !session.tunnelToken) {
+            this._outputChannel.appendLine('[devtunnel] Missing tunnelId or tunnelToken');
+            return undefined;
+        }
+
+        // Already connected — return cached port map
+        if (session.devtunnelConnectPid && session._devtunnelPortMap) {
+            return session._devtunnelPortMap;
+        }
+
+        const devtunnelBin = this._resolveDevTunnelBin();
+        if (!devtunnelBin) {
+            this._outputChannel.appendLine('[devtunnel] ERROR: devtunnel binary not found');
+            return undefined;
+        }
+
+        this._outputChannel.appendLine(
+            `[devtunnel] Connecting to tunnel ${session.tunnelId} (binary: ${devtunnelBin})`
+        );
+
+        // Count expected ports so we know when all are forwarded
+        const expectedPorts = new Set<number>();
+        if (session.sshPort) { expectedPorts.add(session.sshPort); }
+        if (session.remoteFusePort) { expectedPorts.add(session.remoteFusePort); }
+
+        return new Promise<Map<number, number> | undefined>((resolve) => {
+            let resolved = false;
+            const portMap = new Map<number, number>();
+
+            const timeout = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    if (portMap.size > 0) {
+                        // Got some ports, resolve with what we have
+                        this._outputChannel.appendLine(`[devtunnel] Timeout but got ${portMap.size} port(s), proceeding`);
+                        session._devtunnelPortMap = portMap;
+                        resolve(portMap);
+                    } else {
+                        this._outputChannel.appendLine('[devtunnel] Timed out waiting for port forwarding');
+                        resolve(undefined);
+                    }
+                }
+            }, 60_000);
+
+            const tunnelProc = spawn(devtunnelBin, [
+                'connect', session.tunnelId!,
+                '--access-token', session.tunnelToken!,
+            ], {
+                stdio: ['ignore', 'pipe', 'pipe'] as const,
+            });
+
+            tunnelProc.on('error', (err: Error) => {
+                this._outputChannel.appendLine(`[devtunnel] ERROR: spawn failed: ${err.message}`);
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeout);
+                    resolve(undefined);
+                }
+            });
+
+            if (!tunnelProc.pid) {
+                this._outputChannel.appendLine('[devtunnel] ERROR: process did not start (no PID)');
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeout);
+                    resolve(undefined);
+                }
+                return;
+            }
+
+            session.devtunnelConnectPid = tunnelProc.pid;
+            this._saveSessions();
+
+            // Parse: "SSH: Forwarding from 127.0.0.1:<local> to host port <remote>."
+            const forwardingRe = /Forwarding from 127\.0\.0\.1:(\d+) to host port (\d+)/;
+
+            const checkOutput = (text: string) => {
+                for (const line of text.split('\n')) {
+                    const m = line.match(forwardingRe);
+                    if (m) {
+                        const localPort = parseInt(m[1], 10);
+                        const remotePort = parseInt(m[2], 10);
+                        portMap.set(remotePort, localPort);
+                        this._outputChannel.appendLine(`[devtunnel] Port mapped: remote ${remotePort} → local ${localPort}`);
+                    }
+                }
+                // Resolve once we've seen forwarding lines for all expected ports
+                if (!resolved && portMap.size > 0 && (expectedPorts.size === 0 || [...expectedPorts].every(p => portMap.has(p)))) {
+                    resolved = true;
+                    clearTimeout(timeout);
+                    session._devtunnelPortMap = portMap;
+                    this._outputChannel.appendLine('[devtunnel] All expected ports forwarded');
+                    resolve(portMap);
+                }
+            };
+
+            tunnelProc.stdout.on('data', (data: Buffer) => {
+                const text = data.toString();
+                this._outputChannel.appendLine(`[devtunnel] ${text.trimEnd()}`);
+                checkOutput(text);
+            });
+
+            tunnelProc.stderr.on('data', (data: Buffer) => {
+                const text = data.toString();
+                this._outputChannel.appendLine(`[devtunnel/err] ${text.trimEnd()}`);
+                checkOutput(text);
+            });
+
+            tunnelProc.on('close', (code: number | null) => {
+                this._outputChannel.appendLine(`[devtunnel] connect exited (code ${code})`);
+                const s = this._findRuntime(sessionId)?.runtime;
+                if (s) {
+                    s.devtunnelConnectPid = undefined;
+                    s.sshTunnelLocalPort = undefined;
+                    s._devtunnelPortMap = undefined;
+                }
+                this._removeSshConfigEntry(sessionId, `cs-session-${sessionId}`);
+                this._saveSessions();
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeout);
+                    resolve(undefined);
+                }
+            });
+        });
+    }
+
+    /**
+     * Kill FUSE mount process, Dev Tunnel connect, and SSH tunnel for a session.
      */
     private cleanupFuseMount(session: Runtime) {
         if (session.fuseMountPid) {
             try { process.kill(session.fuseMountPid); } catch { /* already dead */ }
             session.fuseMountPid = undefined;
             session.localMountPath = undefined;
+        }
+        if (session.devtunnelConnectPid) {
+            try { process.kill(session.devtunnelConnectPid); } catch { /* already dead */ }
+            session.devtunnelConnectPid = undefined;
         }
         if (session.fuseTunnelPid) {
             try { process.kill(session.fuseTunnelPid); } catch { /* already dead */ }
@@ -2465,7 +2599,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             session.localFuseServerPid = undefined;
         }
         if (session.localFuseTunnelId) {
-            spawn('devtunnel', ['delete', `ls-fuse-${session.id}`, '-f'], { stdio: 'ignore', detached: true }).unref();
+            const dtBin = this._resolveDevTunnelBin();
+            if (dtBin) { spawn(dtBin, ['delete', `ls-fuse-${session.id}`, '-f'], { stdio: 'ignore', detached: true }).unref(); }
             session.localFuseTunnelId = undefined;
             session.localFuseConnectToken = undefined;
             session.localFusePort = undefined;
@@ -2550,7 +2685,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // Clean up the devtunnel (safety net — linkspan shutdown should do this too)
         const tunnelName = `ls-${sessionId}`;
-        spawn('devtunnel', ['delete', tunnelName, '-f'], { stdio: 'ignore', detached: true }).unref();
+        const dtBin2 = this._resolveDevTunnelBin();
+        if (dtBin2) { spawn(dtBin2, ['delete', tunnelName, '-f'], { stdio: 'ignore', detached: true }).unref(); }
 
         // Remove auto-generated SSH config entry
         this._removeSshConfigEntry(sessionId, `cs-tunnel-${sessionId}`);
@@ -3052,60 +3188,30 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     }),
                     { forceNewWindow: false }
                 );
-            } else if (session.sshPort && session.computeNode) {
-                // Remote sessions with compute node SSH: forward through login node
+            } else if (session.sshPort && session.tunnelId && session.tunnelToken) {
+                // Remote sessions: forward SSH port via Dev Tunnel (bypasses compute node firewall)
                 const hostAlias = `cs-session-${sessionId}`;
 
-                // Set up SSH port forwarding if not already active
-                if (!session.sshTunnelPid || !session.sshTunnelLocalPort) {
-                    progress.report({ message: 'Setting up SSH tunnel to compute node...' });
-                    const localPort = await this.findFreePort();
-                    if (!localPort) {
-                        vscode.window.showErrorMessage('Could not find a free local port for SSH tunnel.');
+                // Ensure shared devtunnel connect is running
+                if (!session.sshTunnelLocalPort) {
+                    progress.report({ message: 'Connecting to Dev Tunnel...' });
+                    const portMap = await this._ensureDevTunnelConnected(sessionId, session);
+                    if (!portMap) {
+                        vscode.window.showErrorMessage('Failed to connect to Dev Tunnel. Check the Cybershuttle output channel for details.');
                         return;
                     }
 
-                    this._outputChannel.appendLine(
-                        `[switch] SSH tunnel: localhost:${localPort} → ${session.computeNode}:${session.sshPort} via ${session.host}`
-                    );
-
-                    const tunnelProc = spawn('ssh', [
-                        '-N',
-                        '-L', `${localPort}:${session.computeNode}:${session.sshPort}`,
-                        session.host,
-                    ], {
-                        stdio: ['ignore', 'pipe', 'pipe'],
-                    });
-
-                    session.sshTunnelPid = tunnelProc.pid;
-                    session.sshTunnelLocalPort = localPort;
-
-                    tunnelProc.stderr!.on('data', (data: Buffer) => {
-                        this._outputChannel.appendLine(`[ssh-tunnel/err] ${data.toString().trimEnd()}`);
-                    });
-
-                    tunnelProc.on('close', (code) => {
-                        this._outputChannel.appendLine(`[ssh-tunnel] SSH tunnel exited (code ${code})`);
-                        const s = this._findRuntime(sessionId)?.runtime;
-                        if (s) {
-                            s.sshTunnelPid = undefined;
-                            s.sshTunnelLocalPort = undefined;
-                        }
-                        // Remove stale SSH config entry so VS Code doesn't retry a dead port
-                        this._removeSshConfigEntry(sessionId, `cs-session-${sessionId}`);
-                    });
-
-                    // Wait for the tunnel port to become reachable (compute node may take time)
-                    progress.report({ message: 'Waiting for compute node to become reachable...' });
-                    const reachable = await this._waitForPort(localPort);
-                    if (!reachable) {
-                        vscode.window.showErrorMessage('SSH tunnel to compute node did not become reachable. The compute node may still be starting up — try again in a moment.');
+                    const localSshPort = portMap.get(session.sshPort);
+                    if (!localSshPort) {
+                        vscode.window.showErrorMessage(`Dev Tunnel connected but SSH port ${session.sshPort} was not forwarded.`);
                         return;
                     }
+
+                    session.sshTunnelLocalPort = localSshPort;
                     this._saveSessions();
                 }
 
-                // Create/update SSH config entry for the compute node
+                // Create/update SSH config entry pointing to the Dev Tunnel local port
                 if (!this._writeSshConfigEntry(sessionId, hostAlias, '127.0.0.1', session.sshTunnelLocalPort!, 'user')) {
                     return;
                 }
