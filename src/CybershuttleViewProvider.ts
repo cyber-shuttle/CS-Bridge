@@ -38,7 +38,8 @@ interface Runtime {
     wallTime: string;
     queue: string;
     allocation: string;
-    status: 'Local' | 'Pending' | 'Active' | 'Submitting' | 'Failed' | 'Completed';
+    status: 'Local' | 'Pending' | 'Active' | 'Submitting' | 'Failed' | 'Completed' | 'Idle';
+    switchOnReady?: boolean;
     submittedAt: Date;
     type: 'local' | 'remote';
     // Window registration fields
@@ -82,15 +83,16 @@ interface Workspace {
 
 
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'cybershuttle.sidebarView';
+    public static readonly workspacesViewType = 'cybershuttle.workspacesView';
+    public static readonly serversViewType = 'cybershuttle.serversView';
 
-    private _view?: vscode.WebviewView;
+    private _workspacesView?: vscode.WebviewView;
+    private _serversView?: vscode.WebviewView;
     private _outputChannel: vscode.OutputChannel;
     private _sshControlDir: string;
     private _workspaces: Workspace[] = [];
-    private _activeTab: string = 'sessions';
     private _expandedHost: string | null = null;
-    private _globalState: vscode.Memento;
+    private _workspaceState: vscode.Memento;
     private _persistentShells: Map<string, PersistentShell> = new Map();
     private _logTailProcesses: Map<string, ChildProcess> = new Map();
     private _browseRequestId: Map<string, number> = new Map();
@@ -138,9 +140,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         return ws;
     }
 
-    constructor(private readonly _extensionUri: vscode.Uri, globalState: vscode.Memento, metrics: MetricsCollector) {
+    constructor(private readonly _extensionUri: vscode.Uri, workspaceState: vscode.Memento, metrics: MetricsCollector) {
         this._metrics = metrics;
-        this._globalState = globalState;
+        this._workspaceState = workspaceState;
         this._outputChannel = vscode.window.createOutputChannel('CyberShuttle');
         // Short path to stay under macOS 104-byte Unix socket limit
         this._sshControlDir = path.join(os.homedir(), '.cs-ssh');
@@ -163,8 +165,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._updateStatusBar();
 
         // Generate or retrieve a stable window ID for this VS Code window
-        this._windowId = this._globalState.get<string>('cybershuttle.windowId') || crypto.randomBytes(8).toString('hex');
-        this._globalState.update('cybershuttle.windowId', this._windowId);
+        this._windowId = this._workspaceState.get<string>('cybershuttle.windowId') || crypto.randomBytes(8).toString('hex');
+        this._workspaceState.update('cybershuttle.windowId', this._windowId);
 
         // Auto-register this window as a Local session
         this._registerWindow();
@@ -193,7 +195,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // One-time migration from globalState if file is empty/missing
         if (!rawData || (Array.isArray(rawData) && rawData.length === 0)) {
-            const legacy = this._globalState.get<any[]>(CybershuttleViewProvider.SESSIONS_KEY, []);
+            const legacy = this._workspaceState.get<any[]>(CybershuttleViewProvider.SESSIONS_KEY, []);
             if (legacy.length > 0) {
                 rawData = legacy;
                 // Write migrated data to file
@@ -203,7 +205,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     fs.renameSync(tmpPath, this._sessionsFilePath);
                 } catch { /* best effort */ }
                 // Clear legacy storage
-                this._globalState.update(CybershuttleViewProvider.SESSIONS_KEY, undefined);
+                this._workspaceState.update(CybershuttleViewProvider.SESSIONS_KEY, undefined);
             }
         }
 
@@ -310,8 +312,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         if (existing) {
             existing.runtime.heartbeat = Date.now();
-            // If workspace was 'unknown' and we now have a real folder, move the runtime
-            if (existing.workspace.directoryPath === 'unknown' && dirPath !== 'unknown') {
+            // If workspace path has changed (or was 'unknown'), move the runtime to the correct workspace
+            if (existing.workspace.directoryPath !== dirPath && dirPath !== 'unknown') {
                 existing.workspace.runtimes = existing.workspace.runtimes.filter(r => r.windowId !== this._windowId);
                 if (existing.workspace.runtimes.length === 0) {
                     this._workspaces = this._workspaces.filter(w => w.id !== existing!.workspace.id);
@@ -360,30 +362,24 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Remove runtimes whose heartbeat is older than 60s (stale windows).
-     * Does NOT prune the current window's own runtime or runtimes that
-     * have been promoted to remote (have a slurmJobId).
-     * Also removes workspaces that become empty after pruning.
+     * Detach runtimes from closed windows (stale heartbeat) by clearing their windowId.
+     * Does NOT remove runtimes or workspaces — workspace cards persist until explicitly removed.
+     * Promoted sessions (slurmJobId or non-Local status) are never detached.
      */
     private _pruneStaleWindows() {
         const cutoff = Date.now() - 60_000;
         let pruned = false;
         for (const ws of this._workspaces) {
-            const before = ws.runtimes.length;
-            ws.runtimes = ws.runtimes.filter(s => {
-                if (!s.windowId) { return true; }
-                if (s.windowId === this._windowId) { return true; }
-                if (s.slurmJobId) { return true; }
-                if (s.status !== 'Local') { return true; } // Promoted sessions survive
-                if (s.heartbeat && s.heartbeat > cutoff) { return true; }
-                return false;
-            });
-            if (ws.runtimes.length < before) { pruned = true; }
+            for (const s of ws.runtimes) {
+                // Mark stale Local runtimes as inactive (closed window)
+                if (s.windowId && s.windowId !== this._windowId && s.status === 'Local' && !s.slurmJobId) {
+                    if (!s.heartbeat || s.heartbeat <= cutoff) {
+                        s.windowId = undefined; // Detach from closed window
+                        pruned = true;
+                    }
+                }
+            }
         }
-        // Remove empty workspaces
-        const wsBefore = this._workspaces.length;
-        this._workspaces = this._workspaces.filter(ws => ws.runtimes.length > 0);
-        if (this._workspaces.length < wsBefore) { pruned = true; }
         // Save only if something was actually pruned
         if (pruned) {
             this._saveSessions();
@@ -792,7 +788,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         _context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken
     ) {
-        this._view = webviewView;
+        const isWorkspaces = webviewView.viewType === CybershuttleViewProvider.workspacesViewType;
+
+        if (isWorkspaces) {
+            this._workspacesView = webviewView;
+        } else {
+            this._serversView = webviewView;
+        }
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -800,163 +802,232 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         };
 
         try {
-            webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+            if (isWorkspaces) {
+                webviewView.webview.html = this._getWorkspacesHtml(webviewView.webview);
+            } else {
+                webviewView.webview.html = this._getServersHtml(webviewView.webview);
+            }
         } catch (err: any) {
             this._outputChannel.appendLine(`[webview] Failed to render: ${err.message}\n${err.stack}`);
             webviewView.webview.html = `<html><body><p>Failed to load CyberShuttle panel: ${err.message}</p></body></html>`;
         }
 
-        // Check Dev Tunnels auth on startup
-        this.checkDevTunnelAuth();
+        // Check Dev Tunnels auth on startup (only once, from the workspaces view)
+        if (isWorkspaces) {
+            this.checkDevTunnelAuth();
+        }
 
         webviewView.onDidDispose(() => {
-            this.disposePersistentShells();
-            this.stopAllLogStreams();
-        });
-
-        // Handle messages from the webview
-        webviewView.webview.onDidReceiveMessage((data) => {
-            switch (data.type) {
-                case 'auth': {
-                    vscode.commands.executeCommand('cybershuttle.auth');
-                    break;
-                }
-                case 'connectSsh': {
-                    this.connectToSshHost(data.host);
-                    break;
-                }
-                case 'browseDir': {
-                    this.browseRemoteDir(data.host, data.path);
-                    break;
-                }
-                case 'cancelBrowse': {
-                    // Increment request ID so in-flight results are discarded
-                    this._browseRequestId.set(data.host, (this._browseRequestId.get(data.host) ?? 0) + 1);
-                    // Kill the stuck persistent shell so the next browse gets a fresh connection
-                    const stuckShell = this._persistentShells.get(data.host);
-                    if (stuckShell) {
-                        stuckShell.process.kill();
-                        this._persistentShells.delete(data.host);
-                    }
-                    this.postMessage({ type: 'browseCancelled', host: data.host });
-                    break;
-                }
-                case 'cancelAssociations': {
-                    const cts = this._associationsCts.get(data.host);
-                    if (cts) {
-                        cts.cancel();
-                        this._associationsCts.delete(data.host);
-                    }
-                    break;
-                }
-                case 'refresh': {
-                    this.refresh();
-                    break;
-                }
-                case 'switchToWindow': {
-                    this.switchToWindow(data.sessionId);
-                    break;
-                }
-                case 'switchTab': {
-                    this._activeTab = data.tab;
-                    break;
-                }
-                case 'expandHost': {
-                    this._expandedHost = data.host;
-                    break;
-                }
-                case 'addSshHost': {
-                    this.addSshHost();
-                    break;
-                }
-                case 'createJob': {
-                    this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime, data.queue, data.allocation, data.workspaceId);
-                    break;
-                }
-                case 'queryAssociations': {
-                    this.queryAssociations(data.host);
-                    break;
-                }
-                case 'refreshSessions': {
-                    this.refreshSessions();
-                    break;
-                }
-                case 'relaunchSession': {
-                    this.relaunchSession(data.sessionId);
-                    break;
-                }
-                case 'removeSession': {
-                    const found = this._findRuntime(data.sessionId);
-                    if (found) {
-                        if (found.runtime.isLocal) { this.stopLocalSession(data.sessionId); }
-                        this.cleanupLocalFuseServer(found.runtime);
-                        found.workspace.runtimes = found.workspace.runtimes.filter(r => r.id !== data.sessionId);
-                        if (found.workspace.runtimes.length === 0) {
-                            this._workspaces = this._workspaces.filter(w => w.id !== found.workspace.id);
-                        }
-                    }
-                    this._saveSessions();
-                    this.refresh();
-                    break;
-                }
-                case 'confirmJob': {
-                    this.submitJob(data.sessionId);
-                    break;
-                }
-                case 'cancelJob': {
-                    this.cancelJobPreview(data.sessionId);
-                    break;
-                }
-                case 'testLocal': {
-                    this.testLocal();
-                    break;
-                }
-                case 'devTunnelSignIn': {
-                    this.signInDevTunnel();
-                    break;
-                }
-                case 'devTunnelSwitch': {
-                    this.switchDevTunnelAccount();
-                    break;
-                }
-                case 'stopLocal': {
-                    this.stopLocalSession(data.sessionId);
-                    break;
-                }
-                case 'connectLocal': {
-                    this.connectLocalSession(data.sessionId);
-                    break;
-                }
-                case 'viewLogs': {
-                    this.viewSessionLogs(data.sessionId);
-                    break;
-                }
-                case 'toggleSessionLogs': {
-                    this.toggleSessionLogStream(data.sessionId);
-                    break;
-                }
-                case 'stopSessionLogs': {
-                    this.stopSessionLogStream(data.sessionId);
-                    break;
-                }
-                case 'stopRemote': {
-                    this.stopRemoteSession(data.sessionId);
-                    break;
-                }
-                case 'switchToRemote': {
-                    this.switchToRemote(data.sessionId);
-                    break;
-                }
-                case 'switchToLocal': {
-                    this.switchToLocal(data.sessionId);
-                    break;
-                }
-                case 'openMetrics': {
-                    vscode.commands.executeCommand('cybershuttle.openMetrics');
-                    break;
-                }
+            if (isWorkspaces) {
+                this._workspacesView = undefined;
+                this.disposePersistentShells();
+                this.stopAllLogStreams();
+            } else {
+                this._serversView = undefined;
             }
         });
+
+        // Route messages from both views into the same handler
+        webviewView.webview.onDidReceiveMessage((data) => this._onMessage(data));
+    }
+
+    /**
+     * Central message handler — receives messages from both the Workspaces and Servers webviews.
+     */
+    private _onMessage(data: any) {
+        switch (data.type) {
+            case 'auth': {
+                vscode.commands.executeCommand('cybershuttle.auth');
+                break;
+            }
+            case 'connectSsh': {
+                this.connectToSshHost(data.host);
+                break;
+            }
+            case 'browseDir': {
+                this.browseRemoteDir(data.host, data.path);
+                break;
+            }
+            case 'cancelBrowse': {
+                // Increment request ID so in-flight results are discarded
+                this._browseRequestId.set(data.host, (this._browseRequestId.get(data.host) ?? 0) + 1);
+                // Kill the stuck persistent shell so the next browse gets a fresh connection
+                const stuckShell = this._persistentShells.get(data.host);
+                if (stuckShell) {
+                    stuckShell.process.kill();
+                    this._persistentShells.delete(data.host);
+                }
+                this._postWorkspacesMessage({ type: 'browseCancelled', host: data.host });
+                break;
+            }
+            case 'cancelAssociations': {
+                const cts = this._associationsCts.get(data.host);
+                if (cts) {
+                    cts.cancel();
+                    this._associationsCts.delete(data.host);
+                }
+                break;
+            }
+            case 'refresh': {
+                this.refresh();
+                break;
+            }
+            case 'switchToWindow': {
+                this.switchToWindow(data.sessionId);
+                break;
+            }
+            case 'expandHost': {
+                this._expandedHost = data.host;
+                break;
+            }
+            case 'addSshHost': {
+                this.addSshHost();
+                break;
+            }
+            case 'createJob': {
+                this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime, data.queue, data.allocation, data.workspaceId);
+                break;
+            }
+            case 'addRuntime': {
+                const { host, cpus, memory, gpu, wallTime, queue, allocation, workspaceId } = data;
+                const sessionId = crypto.randomBytes(4).toString('hex');
+                let ws = workspaceId ? this._workspaces.find(w => w.id === workspaceId) : undefined;
+                if (!ws) {
+                    const folder = vscode.workspace.workspaceFolders?.[0];
+                    const dirPath = folder
+                        ? (folder.uri.scheme === 'file' ? folder.uri.fsPath : folder.uri.toString())
+                        : 'unknown';
+                    ws = this._getOrCreateWorkspace(dirPath);
+                }
+                const newRuntime: Runtime = {
+                    id: sessionId,
+                    host,
+                    cpus,
+                    memory,
+                    gpu,
+                    wallTime,
+                    queue,
+                    allocation,
+                    status: 'Idle',
+                    submittedAt: new Date(),
+                    type: 'remote',
+                };
+                ws.runtimes.push(newRuntime);
+                this._saveSessions();
+                this.refreshWorkspaces();
+                break;
+            }
+            case 'queryAssociations': {
+                this.queryAssociations(data.host);
+                break;
+            }
+            case 'refreshSessions': {
+                this.refreshSessions();
+                break;
+            }
+            case 'relaunchSession': {
+                this.relaunchSession(data.sessionId);
+                break;
+            }
+            case 'removeSession': {
+                const found = this._findRuntime(data.sessionId);
+                if (found) {
+                    const rt = found.runtime;
+                    // Cancel SLURM job if it has one and is in a non-terminal state
+                    if (rt.slurmJobId && rt.status !== 'Failed' && rt.status !== 'Completed') {
+                        this.runRemoteCommand(rt.host, `scancel ${rt.slurmJobId}`).catch(() => {});
+                    }
+                    if (rt.isLocal) { this.stopLocalSession(data.sessionId); }
+                    this.cleanupFuseMount(rt);
+                    this.cleanupLocalFuseServer(rt);
+                    found.workspace.runtimes = found.workspace.runtimes.filter(r => r.id !== data.sessionId);
+                    if (found.workspace.runtimes.length === 0) {
+                        this._workspaces = this._workspaces.filter(w => w.id !== found.workspace.id);
+                    }
+                }
+                this._saveSessions();
+                this.refreshWorkspaces();
+                break;
+            }
+            case 'removeWorkspace': {
+                const ws = this._workspaces.find(w => w.id === data.workspaceId);
+                if (ws) {
+                    // Block deletion if any runtime has an active window
+                    if (ws.runtimes.some(r => r.windowId && r.status === 'Local')) {
+                        break;
+                    }
+                    // Cancel all active SLURM jobs in this workspace
+                    for (const rt of ws.runtimes) {
+                        if (rt.slurmJobId && rt.status !== 'Failed' && rt.status !== 'Completed') {
+                            this.runRemoteCommand(rt.host, `scancel ${rt.slurmJobId}`).catch(() => {});
+                        }
+                        if (rt.isLocal) { this.stopLocalSession(rt.id); }
+                        this.cleanupFuseMount(rt);
+                        this.cleanupLocalFuseServer(rt);
+                    }
+                    this._workspaces = this._workspaces.filter(w => w.id !== data.workspaceId);
+                }
+                this._saveSessions();
+                this.refreshWorkspaces();
+                break;
+            }
+            case 'confirmJob': {
+                this.submitJob(data.sessionId);
+                break;
+            }
+            case 'cancelJob': {
+                this.cancelJobPreview(data.sessionId);
+                break;
+            }
+            case 'testLocal': {
+                this.testLocal();
+                break;
+            }
+            case 'devTunnelSignIn': {
+                this.signInDevTunnel();
+                break;
+            }
+            case 'devTunnelSwitch': {
+                this.switchDevTunnelAccount();
+                break;
+            }
+            case 'stopLocal': {
+                this.stopLocalSession(data.sessionId);
+                break;
+            }
+            case 'connectLocal': {
+                this.connectLocalSession(data.sessionId);
+                break;
+            }
+            case 'viewLogs': {
+                this.viewSessionLogs(data.sessionId);
+                break;
+            }
+            case 'toggleSessionLogs': {
+                this.toggleSessionLogStream(data.sessionId);
+                break;
+            }
+            case 'stopSessionLogs': {
+                this.stopSessionLogStream(data.sessionId);
+                break;
+            }
+            case 'stopRemote': {
+                this.stopRemoteSession(data.sessionId);
+                break;
+            }
+            case 'switchToRemote': {
+                this.switchToRemote(data.sessionId);
+                break;
+            }
+            case 'switchToLocal': {
+                this.switchToLocal(data.sessionId);
+                break;
+            }
+            case 'openMetrics': {
+                vscode.commands.executeCommand('cybershuttle.openMetrics');
+                break;
+            }
+        }
     }
 
     /**
@@ -1037,9 +1108,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         };
         ws.runtimes.push(session);
 
-        // Store the session (not yet submitted) and send preview to webview
+        // Store the session (not yet submitted) and send preview to the Workspaces webview
         this._saveSessions();
-        this.postMessage({ type: 'scriptPreview', sessionId: session.id, host: hostName, script });
+        this._postWorkspacesMessage({ type: 'scriptPreview', sessionId: session.id, host: hostName, script });
     }
 
     /** Patterns that match remote shell initialization noise (module system, MOTD, etc.) */
@@ -1190,10 +1261,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Send current auth state to the webview.
+     * Send current auth state to the Workspaces webview.
      */
     private postAuthState() {
-        this.postMessage({ type: 'authState', account: this._devTunnelAccount });
+        this._postWorkspacesMessage({ type: 'authState', account: this._devTunnelAccount });
     }
 
     /**
@@ -1359,9 +1430,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         session.status = 'Submitting';
-        this._activeTab = 'sessions';
         this._saveSessions();
-        this.refresh();
+        this._sendRuntimeUpdates();
+        this._updateStatusBar();
 
         const submitStart = Date.now();
         this._metrics.record('job_submit', 'in_progress', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime });
@@ -1460,7 +1531,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
 
             this._saveSessions();
-            this.refresh();
+            this._sendRuntimeUpdates();
+            this._updateStatusBar();
         });
     }
 
@@ -1595,10 +1667,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._logTailProcesses.set(sessionId, proc);
 
         // Tell webview the stream is open
-        this.postMessage({ type: 'sessionLogStarted', sessionId });
+        this._postWorkspacesMessage({ type: 'sessionLogStarted', sessionId });
 
         proc.stdout!.on('data', (data: Buffer) => {
-            this.postMessage({
+            this._postWorkspacesMessage({
                 type: 'sessionLogData',
                 sessionId,
                 text: data.toString(),
@@ -1613,7 +1685,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 .filter(l => !CybershuttleViewProvider.isShellNoise(l))
                 .join('\n');
             if (filtered.trim() && !text.includes('password') && !text.includes('Permission')) {
-                this.postMessage({
+                this._postWorkspacesMessage({
                     type: 'sessionLogData',
                     sessionId,
                     text: filtered,
@@ -1624,13 +1696,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         proc.on('close', () => {
             this._logTailProcesses.delete(sessionId);
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-            this.postMessage({ type: 'sessionLogStopped', sessionId });
+            this._postWorkspacesMessage({ type: 'sessionLogStopped', sessionId });
         });
 
         proc.on('error', () => {
             this._logTailProcesses.delete(sessionId);
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-            this.postMessage({ type: 'sessionLogStopped', sessionId });
+            this._postWorkspacesMessage({ type: 'sessionLogStopped', sessionId });
         });
     }
 
@@ -1640,7 +1712,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             proc.kill();
             this._logTailProcesses.delete(sessionId);
         }
-        this.postMessage({ type: 'sessionLogStopped', sessionId });
+        this._postWorkspacesMessage({ type: 'sessionLogStopped', sessionId });
     }
 
     private stopAllLogStreams() {
@@ -1685,7 +1757,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
         }
         this._saveSessions();
-        this.postMessage({ type: 'scriptPreviewDismissed' });
+        this._postWorkspacesMessage({ type: 'scriptPreviewDismissed' });
     }
 
     /**
@@ -1769,7 +1841,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         };
 
         ws.runtimes.push(session);
-        this._activeTab = 'sessions';
         this._saveSessions();
         this.refresh();
 
@@ -2511,7 +2582,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             s => s.slurmJobId && s.status !== 'Failed' && s.status !== 'Completed'
         );
         if (sessionsToCheck.length === 0) {
-            this.refresh();
+            this._sendRuntimeUpdates();
+            this._updateStatusBar();
             return;
         }
 
@@ -2599,7 +2671,18 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         this._saveSessions();
-        this.refresh();
+        this._sendRuntimeUpdates();
+        this._updateStatusBar();
+
+        // Auto-switch if runtime just became active and has switchOnReady
+        for (const session of this._allRuntimes()) {
+            if (session.switchOnReady && session.status === 'Active' && session.tunnelUrl) {
+                session.switchOnReady = false;
+                this._saveSessions();
+                await this.switchToRemote(session.id);
+                break; // Only switch to one at a time
+            }
+        }
     }
 
     /**
@@ -2831,6 +2914,71 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const session = this._findRuntime(sessionId)?.runtime;
         if (!session) {
             vscode.window.showErrorMessage('Session not found.');
+            return;
+        }
+
+        // If runtime is idle (not yet launched), launch it first then auto-switch when ready
+        if (!session.slurmJobId && session.status === 'Idle') {
+            session.switchOnReady = true;
+            session.status = 'Submitting';
+            this._saveSessions();
+            this._sendRuntimeUpdates();
+            try {
+                const authToken = await this.getDevTunnelAuthToken();
+                const script = this.generateSlurmScript({
+                    cpus: session.cpus,
+                    memory: session.memory,
+                    gpu: session.gpu,
+                    wallTime: session.wallTime,
+                    queue: session.queue,
+                    allocation: session.allocation,
+                    authToken,
+                });
+                session.script = script;
+                await this.submitJob(session.id);
+            } catch (err: any) {
+                session.status = 'Failed';
+                session.errorMessage = err.message;
+                session.switchOnReady = false;
+                this._saveSessions();
+                this._sendRuntimeUpdates();
+            }
+            return;
+        }
+
+        // If runtime previously ran and is now terminated, re-launch it
+        if (session.slurmJobId && (session.status === 'Failed' || session.status === 'Completed')) {
+            // Clear old job state
+            session.slurmJobId = undefined;
+            session.tunnelUrl = undefined;
+            session.tunnelToken = undefined;
+            session.tunnelId = undefined;
+            session.sshPort = undefined;
+            session.remoteFusePort = undefined;
+            session.computeNode = undefined;
+            session.errorMessage = undefined;
+            session.script = undefined;
+            // Now treat it like an Idle runtime
+            session.switchOnReady = true;
+            session.status = 'Submitting';
+            this._saveSessions();
+            this._sendRuntimeUpdates();
+            try {
+                const authToken = await this.getDevTunnelAuthToken();
+                const script = this.generateSlurmScript({
+                    cpus: session.cpus, memory: session.memory, gpu: session.gpu,
+                    wallTime: session.wallTime, queue: session.queue, allocation: session.allocation,
+                    authToken,
+                });
+                session.script = script;
+                await this.submitJob(session.id);
+            } catch (err: any) {
+                session.status = 'Failed';
+                session.errorMessage = err.message;
+                session.switchOnReady = false;
+                this._saveSessions();
+                this._sendRuntimeUpdates();
+            }
             return;
         }
 
@@ -3160,7 +3308,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const reqId = (this._browseRequestId.get(hostName) ?? 0) + 1;
         this._browseRequestId.set(hostName, reqId);
 
-        this.postMessage({ type: 'fileListing', host: hostName, path: remotePath, loading: true, entries: [] });
+        this._postWorkspacesMessage({ type: 'fileListing', host: hostName, path: remotePath, loading: true, entries: [] });
 
         try {
             // Use persistent shell for fast sequential browsing
@@ -3197,38 +3345,117 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     return a.name.localeCompare(b.name);
                 });
 
-                this.postMessage({ type: 'fileListing', host: hostName, path: resolvedPath, loading: false, entries });
+                this._postWorkspacesMessage({ type: 'fileListing', host: hostName, path: resolvedPath, loading: false, entries });
             } else {
-                this.postMessage({ type: 'fileListing', host: hostName, path: remotePath, loading: false, entries: [], error: `exit code ${result.code}` });
+                this._postWorkspacesMessage({ type: 'fileListing', host: hostName, path: remotePath, loading: false, entries: [], error: `exit code ${result.code}` });
             }
         } catch (err: any) {
             if (this._browseRequestId.get(hostName) !== reqId) { return; }
-            this.postMessage({ type: 'fileListing', host: hostName, path: remotePath, loading: false, entries: [], error: err.message });
+            this._postWorkspacesMessage({ type: 'fileListing', host: hostName, path: remotePath, loading: false, entries: [], error: err.message });
         }
     }
 
     /**
-     * Refresh the webview content
+     * Refresh the Workspaces webview content.
+     */
+    public refreshWorkspaces() {
+        if (this._workspacesView) {
+            try {
+                this._workspacesView.webview.html = this._getWorkspacesHtml(this._workspacesView.webview);
+            } catch (err: any) {
+                this._outputChannel.appendLine(`[webview] Failed to render workspaces: ${err.message}`);
+            }
+        }
+    }
+
+    /**
+     * Send incremental runtime status updates to the workspaces webview
+     * without replacing the entire HTML. Preserves host picker state,
+     * form values, and scroll position.
+     */
+    private _sendRuntimeUpdates() {
+        const activeSession = this._detectActiveSession();
+        const updates = this._workspaces.map(ws => ({
+            workspaceId: ws.id,
+            runtimes: ws.runtimes.map(rt => ({
+                id: rt.id,
+                status: rt.status,
+                host: rt.host,
+                isLocal: !!rt.isLocal,
+                windowId: rt.windowId,
+                isActiveInThisWindow: activeSession?.id === rt.id,
+                isThisWindow: rt.status === 'Local' && rt.windowId === this._windowId,
+                cpus: rt.cpus,
+                memory: rt.memory,
+                gpu: rt.gpu,
+                wallTime: rt.wallTime,
+                queue: rt.queue,
+                allocation: rt.allocation,
+                tunnelUrl: rt.tunnelUrl,
+                slurmJobId: rt.slurmJobId,
+                errorMessage: rt.errorMessage,
+                submittedAt: rt.submittedAt,
+            })),
+        }));
+        this._postWorkspacesMessage({ type: 'updateRuntimes', updates });
+    }
+
+    /**
+     * Refresh the Servers webview content.
+     */
+    public refreshServers() {
+        if (this._serversView) {
+            try {
+                this._serversView.webview.html = this._getServersHtml(this._serversView.webview);
+                // Re-send cached associations so expanded host keeps its partition data
+                if (this._expandedHost) {
+                    const cached = this._cachedAssociations.get(this._expandedHost);
+                    if (cached) {
+                        this._postServersMessage({ type: 'associations', host: this._expandedHost, partitions: cached });
+                        // Also send to workspaces for host picker forms
+                        this._postWorkspacesMessage({ type: 'associations', host: this._expandedHost, partitions: cached });
+                    }
+                }
+            } catch (err: any) {
+                this._outputChannel.appendLine(`[webview] Failed to render servers: ${err.message}`);
+            }
+        }
+    }
+
+    /**
+     * Refresh both webviews.
      */
     public refresh() {
         this._pruneStaleWindows();
-        if (this._view) {
-            this._view.webview.html = this._getHtmlForWebview(this._view.webview);
-            // Re-send cached associations so expanded host keeps its partition data
-            if (this._expandedHost) {
-                const cached = this._cachedAssociations.get(this._expandedHost);
-                if (cached) {
-                    this.postMessage({ type: 'associations', host: this._expandedHost, partitions: cached });
-                }
-            }
-        }
+        this.refreshWorkspaces();
+        this.refreshServers();
         this._updateStatusBar();
     }
 
-    public postMessage(message: unknown) {
-        if (this._view) {
-            this._view.webview.postMessage(message);
+    /**
+     * Send a message to the Workspaces webview.
+     */
+    public _postWorkspacesMessage(message: unknown) {
+        if (this._workspacesView) {
+            this._workspacesView.webview.postMessage(message);
         }
+    }
+
+    /**
+     * Send a message to the Servers webview.
+     */
+    public _postServersMessage(message: unknown) {
+        if (this._serversView) {
+            this._serversView.webview.postMessage(message);
+        }
+    }
+
+    /**
+     * Legacy helper: send a message to both webviews (used for shared state like associations).
+     */
+    public postMessage(message: unknown) {
+        this._postWorkspacesMessage(message);
+        this._postServersMessage(message);
     }
 
     private _updateStatusBar() {
@@ -3280,303 +3507,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._countdownTimer = setInterval(updateText, 1000);
     }
 
-    private _getHtmlForWebview(webview: vscode.Webview): string {
-        // Use a nonce to only allow a specific script to run
-        const nonce = getNonce();
-
-        const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'codicons', 'codicon.ttf'));
-
-        // Get SSH hosts from config
-        const sshHosts = this.getSshHosts();
-        const hostsHtml = sshHosts.length > 0
-            ? sshHosts.map(host => `
-                <div class="ssh-host">
-                    <div class="ssh-host-row${this._expandedHost === host.name ? ' expanded' : ''}" data-host="${escapeHtml(host.name)}">
-                        <div class="host-info">
-                            <span class="host-name">${escapeHtml(host.name)}</span>
-                            ${host.hostname ? `<span class="host-detail">${host.user ? `${escapeHtml(host.user)}@` : ''}${escapeHtml(host.hostname)}</span>` : ''}
-                        </div>
-                        <span class="chevron">&#x203A;</span>
-                    </div>
-                    <div class="job-form" id="job-form-${escapeHtml(host.name)}" style="display:${this._expandedHost === host.name ? 'block' : 'none'};">
-                        <div class="job-form-loading" style="display:${this._expandedHost === host.name && this._associationsCts.has(host.name) ? 'flex' : 'none'};"><div class="spinner"></div>Fetching partitions...<button class="job-form-stop-btn" data-host="${escapeHtml(host.name)}">Stop</button></div>
-                        <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span><button class="job-form-retry-btn" data-host="${escapeHtml(host.name)}">Retry</button></div>
-                        <div class="job-form-fields">
-                            <div class="form-row">
-                                <label>CPUs</label>
-                                <select class="form-select" data-field="cpus">
-                                    <option value="1">1</option>
-                                    <option value="2">2</option>
-                                    <option value="4">4</option>
-                                    <option value="8">8</option>
-                                    <option value="16">16</option>
-                                    <option value="32">32</option>
-                                    <option value="64">64</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <label>Memory</label>
-                                <select class="form-select" data-field="memory">
-                                    <option value="1 GB">1 GB</option>
-                                    <option value="2 GB">2 GB</option>
-                                    <option value="4 GB">4 GB</option>
-                                    <option value="8 GB">8 GB</option>
-                                    <option value="16 GB">16 GB</option>
-                                    <option value="32 GB">32 GB</option>
-                                    <option value="64 GB">64 GB</option>
-                                    <option value="128 GB">128 GB</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <label>GPU</label>
-                                <select class="form-select" data-field="gpu">
-                                    <option value="None">None</option>
-                                    <option value="NVIDIA A100">NVIDIA A100</option>
-                                    <option value="NVIDIA V100">NVIDIA V100</option>
-                                    <option value="NVIDIA T4">NVIDIA T4</option>
-                                    <option value="NVIDIA A40">NVIDIA A40</option>
-                                    <option value="NVIDIA H100">NVIDIA H100</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <label>Wall Time</label>
-                                <select class="form-select" data-field="wallTime">
-                                    <option value="00:30:00">30 min</option>
-                                    <option value="01:00:00">1 hour</option>
-                                    <option value="02:00:00">2 hours</option>
-                                    <option value="04:00:00">4 hours</option>
-                                    <option value="08:00:00">8 hours</option>
-                                    <option value="12:00:00">12 hours</option>
-                                    <option value="24:00:00">24 hours</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <label>Allocation</label>
-                                <select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
-                                    <option value="">Loading...</option>
-                                </select>
-                            </div>
-                            <div class="form-row">
-                                <label>Partition</label>
-                                <select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
-                                    <option value="">Select allocation first</option>
-                                </select>
-                            </div>
-                            <button class="submit-job-btn" data-host="${escapeHtml(host.name)}">Launch</button>
-                        </div>
-                    </div>
-                </div>
-            `).join('')
-            : '<p class="empty-message">No SSH hosts found in ~/.ssh/config</p>';
-
-        // Build sessions HTML — workspace-grouped cards
-        const activeSession = this._detectActiveSession();
-
-        // Helper: build runtime row HTML for one Runtime
-        const buildRuntimeRow = (rt: Runtime): string => {
-            const now = new Date();
-            const sub = rt.submittedAt;
-            const diffMs = now.getTime() - sub.getTime();
-            const diffMin = Math.floor(diffMs / 60000);
-            const diffHr = Math.floor(diffMin / 60);
-            const diffDay = Math.floor(diffHr / 24);
-            const timeAgo = diffDay > 0 ? `${diffDay}d ago` : diffHr > 0 ? `${diffHr}h ago` : diffMin > 0 ? `${diffMin}m ago` : 'just now';
-            const statusIcon = rt.status === 'Local' ? '🟣' : rt.status === 'Active' ? '🟢' : rt.status === 'Failed' ? '🔴' : rt.status === 'Completed' ? '⚪' : rt.status === 'Submitting' ? '🔵' : '🟡';
-            const hasLogs = !!rt.slurmJobId;
-            const isLocal = !!rt.isLocal;
-            const isActiveInThisWindow = activeSession?.id === rt.id;
-
-            const switchToLocalBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local" title="Switch to local workspace">&#x21C4;</button>`;
-            const switchToRemoteBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="remote" title="Switch to remote session">&#x21C4;</button>`;
-            const stopLocalBtn = `<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Stop">&#x25A0;</button>`;
-            const stopRemoteBtn = `<button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Cancel Job">&#x25A0;</button>`;
-            const spinner = `<span class="session-action-spinner">&#x23F3;</span>`;
-
-            if (rt.status === 'Local') {
-                const isThisWindow = rt.windowId === this._windowId;
-                const switchWindowBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local-window" title="Switch to this window">&#x21C4;</button>`;
-                const goRemoteBtn = `<button class="session-action-btn go-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Go Remote">&#x2601;</button>`;
-                const headerRight = isThisWindow ? goRemoteBtn : `${switchWindowBtn}${goRemoteBtn}`;
-                return `
-                <div class="runtime-entry runtime-local" data-session-id="${escapeHtml(rt.id)}">
-                    <div class="runtime-header">
-                        <span class="runtime-name">🟣 Local${isThisWindow ? ' <span class="session-badge">This Window</span>' : ''}</span>
-                        <div class="runtime-header-right">
-                            ${headerRight}
-                        </div>
-                    </div>
-                </div>`;
-            }
-
-            let actionButtons: string;
-            if (rt.status === 'Submitting') {
-                actionButtons = spinner;
-            } else if (isActiveInThisWindow) {
-                actionButtons = `${switchToLocalBtn}${isLocal ? stopLocalBtn : stopRemoteBtn}`;
-            } else if (isLocal) {
-                if (rt.status === 'Active') {
-                    actionButtons = rt.sshPort ? `${switchToRemoteBtn}${stopLocalBtn}` : `${spinner}${stopLocalBtn}`;
-                } else {
-                    actionButtons = `<button class="session-action-btn relaunch-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch">&#x21BB;</button>`;
-                }
-            } else if (rt.status === 'Failed' || rt.status === 'Completed') {
-                actionButtons = `<button class="session-action-btn relaunch-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch">&#x21BB;</button>`;
-            } else if (rt.status === 'Pending' || (rt.status === 'Active' && !rt.tunnelUrl)) {
-                actionButtons = `${spinner}${stopRemoteBtn}`;
-            } else {
-                actionButtons = `${switchToRemoteBtn}${stopRemoteBtn}`;
-            }
-
-            let detailHtml: string;
-            if (isLocal) {
-                const tunnelInfo = rt.tunnelUrl
-                    ? `<span class="session-detail">&#x1F310; ${escapeHtml(rt.tunnelUrl)}</span>`
-                    : (rt.status === 'Active' ? `<span class="session-detail">&#x23F3; setting up tunnel...</span>` : '');
-                detailHtml = `<span class="session-detail">&#x2756; local linkspan${rt.localPid ? ` (pid ${rt.localPid})` : ''}${rt.sshPort ? ` &#x1F50C; ssh :${rt.sshPort}` : ''}</span>${tunnelInfo}`;
-            } else {
-                const wtParts = rt.wallTime.split(':').map(Number);
-                const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
-                const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
-                const tunnelInfo = rt.tunnelUrl
-                    ? `<span class="session-detail">&#x1F310; ${escapeHtml(rt.tunnelUrl)}</span>`
-                    : (rt.status === 'Active' ? `<span class="session-detail">&#x23F3; setting up tunnel...</span>` : '');
-                detailHtml = `<span class="session-detail">&#x1F5A5;${escapeHtml(rt.cpus)} &#x1F4BE;${escapeHtml(rt.memory)} ${rt.gpu !== 'None' ? `&#x1F3AE;${escapeHtml(rt.gpu)} ` : ''}&#x23F1;${wallTimeShort}</span>
-                            <span class="session-detail">&#x2630;${escapeHtml(rt.queue)} &#x1F511;${escapeHtml(rt.allocation)}</span>${tunnelInfo}`;
-            }
-
-            const jobIdSpan = rt.slurmJobId ? ` <span class="session-job-id">#${escapeHtml(rt.slurmJobId)}</span>` : '';
-            return `
-                <div class="runtime-entry runtime-remote${isActiveInThisWindow ? ' runtime-active' : ''}" data-session-id="${escapeHtml(rt.id)}">
-                    <div class="runtime-header">
-                        <span class="runtime-name">${statusIcon} ${escapeHtml(rt.host)}${jobIdSpan}</span>
-                        <div class="runtime-header-right">
-                            <span class="session-time-ago">${timeAgo}</span>
-                            ${actionButtons}
-                            <button class="remove-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Remove">✕</button>
-                        </div>
-                    </div>
-                    <div class="${hasLogs ? 'session-log-toggle' : ''}" ${hasLogs ? `data-session-id="${escapeHtml(rt.id)}"` : ''}>
-                        ${detailHtml}
-                        ${rt.status === 'Failed' && rt.errorMessage ? `<span class="session-error">${escapeHtml(rt.errorMessage)}</span>` : ''}
-                    </div>
-                    ${hasLogs ? `<div class="session-log-panel" id="session-log-${escapeHtml(rt.id)}" style="display:none;"><pre class="session-log-content"></pre></div>` : ''}
-                </div>`;
-        };
-
-        // Helper: build the host picker HTML for a workspace
-        const buildHostPickerHtml = (ws: Workspace): string => {
-            if (sshHosts.length === 0) {
-                return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
-            }
-            return sshHosts.map(host => `
-                <div class="host-picker-item">
-                    <div class="host-picker-row" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">
-                        <span class="host-picker-chevron">&#x203A;</span>
-                        <span class="host-picker-name">${escapeHtml(host.name)}</span>
-                        ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
-                    </div>
-                    <div class="host-picker-form" id="host-form-${escapeHtml(ws.id)}-${escapeHtml(host.name)}" style="display:none;">
-                        <div class="job-form-loading" style="display:none;"><div class="spinner"></div>Fetching partitions...</div>
-                        <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
-                        <div class="job-form-fields" style="display:none;">
-                            <div class="form-row"><label>CPUs</label><select class="form-select" data-field="cpus">
-                                <option value="1">1</option><option value="2">2</option><option value="4">4</option>
-                                <option value="8">8</option><option value="16">16</option><option value="32">32</option><option value="64">64</option>
-                            </select></div>
-                            <div class="form-row"><label>Memory</label><select class="form-select" data-field="memory">
-                                <option value="1 GB">1 GB</option><option value="2 GB">2 GB</option><option value="4 GB">4 GB</option>
-                                <option value="8 GB">8 GB</option><option value="16 GB">16 GB</option><option value="32 GB">32 GB</option>
-                                <option value="64 GB">64 GB</option><option value="128 GB">128 GB</option>
-                            </select></div>
-                            <div class="form-row"><label>GPU</label><select class="form-select" data-field="gpu">
-                                <option value="None">None</option><option value="NVIDIA A100">NVIDIA A100</option>
-                                <option value="NVIDIA V100">NVIDIA V100</option><option value="NVIDIA T4">NVIDIA T4</option>
-                                <option value="NVIDIA A40">NVIDIA A40</option><option value="NVIDIA H100">NVIDIA H100</option>
-                            </select></div>
-                            <div class="form-row"><label>Wall Time</label><select class="form-select" data-field="wallTime">
-                                <option value="00:30:00">30 min</option><option value="01:00:00">1 hour</option>
-                                <option value="02:00:00">2 hours</option><option value="04:00:00">4 hours</option>
-                                <option value="08:00:00">8 hours</option><option value="12:00:00">12 hours</option>
-                                <option value="24:00:00">24 hours</option>
-                            </select></div>
-                            <div class="form-row"><label>Allocation</label><select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
-                                <option value="">Loading...</option>
-                            </select></div>
-                            <div class="form-row"><label>Partition</label><select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
-                                <option value="">Select allocation first</option>
-                            </select></div>
-                            <button class="submit-job-btn" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">Launch</button>
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        };
-
-        // Build workspace cards
-        const sessionsHtml = this._workspaces.length > 0
-            ? this._workspaces.map(ws => {
-                const sortedRuntimes = [...ws.runtimes].sort((a, b) => {
-                    if (a.windowId === this._windowId) { return -1; }
-                    if (b.windowId === this._windowId) { return 1; }
-                    const statusOrder: Record<string, number> = { Local: 0, Active: 1, Submitting: 2, Pending: 3, Failed: 4, Completed: 5 };
-                    const sa = statusOrder[a.status] ?? 99;
-                    const sb = statusOrder[b.status] ?? 99;
-                    if (sa !== sb) { return sa - sb; }
-                    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
-                });
-                const runtimeRows = sortedRuntimes.map(rt => buildRuntimeRow(rt)).join('');
-                const hostPickerHtml = buildHostPickerHtml(ws);
-                return `
-                <div class="workspace-card" data-workspace-id="${escapeHtml(ws.id)}">
-                    <div class="workspace-header">
-                        <span class="workspace-name">&#x1F4C1; ${escapeHtml(ws.directoryName)}</span>
-                        <div class="workspace-header-right">
-                            <button class="workspace-add-remote-btn" data-workspace-id="${escapeHtml(ws.id)}" title="Add Remote">
-                                +
-                            </button>
-                        </div>
-                    </div>
-                    <div class="workspace-runtimes">
-                        ${runtimeRows}
-                    </div>
-                    <div class="workspace-host-picker" id="host-picker-${escapeHtml(ws.id)}" style="display:none;">
-                        ${hostPickerHtml}
-                    </div>
-                </div>`;
-            }).join('')
-            : '<p class="empty-message">No active sessions</p>';
-
-        const filesHtml = sshHosts.length > 0
-            ? sshHosts.map(host => `
-                <div class="ssh-host">
-                    <div class="ssh-host-row file-host-row" data-host="${escapeHtml(host.name)}">
-                        <div class="host-info">
-                            <span class="host-name">${escapeHtml(host.name)}</span>
-                            ${host.hostname ? `<span class="host-detail">${host.user ? `${escapeHtml(host.user)}@` : ''}${escapeHtml(host.hostname)}</span>` : ''}
-                        </div>
-                        <span class="chevron">&#x203A;</span>
-                    </div>
-                    <div class="file-browser" id="file-browser-${escapeHtml(host.name)}" style="display:none;">
-                        <div class="file-nav-bar">
-                            <div class="file-breadcrumbs" id="file-breadcrumbs-${escapeHtml(host.name)}"></div>
-                            <button class="file-nav-btn file-back-btn" data-host="${escapeHtml(host.name)}" title="Back" disabled>&#x2039;</button>
-                            <button class="file-nav-btn file-forward-btn" data-host="${escapeHtml(host.name)}" title="Forward" disabled>&#x203A;</button>
-                        </div>
-                        <div class="file-status" id="file-status-${escapeHtml(host.name)}"></div>
-                        <div class="file-list" id="file-list-${escapeHtml(host.name)}"></div>
-                    </div>
-                </div>
-            `).join('')
-            : '<p class="empty-message">No SSH hosts found in ~/.ssh/config</p>';
-
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CyberShuttle</title>
-    <style>
+    /**
+     * Build shared CSS styles used by both webviews.
+     */
+    private _getCommonStyles(codiconsFontUri: vscode.Uri): string {
+        return `
         @font-face {
             font-family: "codicon";
             font-display: block;
@@ -3775,6 +3710,212 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         .job-form-fields {
             display: none;
         }
+        .empty-message {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            text-align: center;
+            padding: 16px 0;
+        }
+        .refresh-btn {
+            padding: 2px 8px;
+            font-size: 11px;
+            margin: 0;
+        }
+        .section {
+            margin-bottom: 20px;
+        }
+        `;
+    }
+
+    /**
+     * Generate the HTML for the WORKSPACES webview.
+     * Contains: auth bar, description, workspace cards (sessions + file browser), script preview overlay.
+     */
+    private _getWorkspacesHtml(webview: vscode.Webview): string {
+        // Use a nonce to only allow a specific script to run
+        const nonce = getNonce();
+
+        const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'codicons', 'codicon.ttf'));
+
+        // Get SSH hosts from config — used for the workspace host picker
+        const sshHosts = this.getSshHosts();
+
+        // Build sessions HTML — workspace-grouped cards
+        const activeSession = this._detectActiveSession();
+
+        // Helper: build runtime row HTML for one Runtime
+        const buildRuntimeRow = (rt: Runtime): string => {
+            const isActiveInThisWindow = activeSession?.id === rt.id;
+            const isLocal = !!rt.isLocal;
+
+            // Determine status icon
+            let statusIconHtml: string;
+            if (rt.status === 'Local' && rt.windowId === this._windowId) {
+                // This window's local runtime
+                statusIconHtml = `<span class="status-icon">🔵</span>`;
+            } else if (isActiveInThisWindow) {
+                // This window's remote runtime
+                statusIconHtml = `<span class="status-icon">🔵</span>`;
+            } else if (rt.status === 'Local' && rt.windowId !== this._windowId) {
+                // Another window's local runtime
+                statusIconHtml = `<span class="status-icon">🟢</span>`;
+            } else if (rt.status === 'Active' && !isActiveInThisWindow) {
+                // Live but not this window's connection
+                statusIconHtml = `<span class="status-icon">🟢</span>`;
+            } else if (rt.status === 'Submitting') {
+                // SLURM job being submitted
+                statusIconHtml = `<span class="status-icon status-flash">🟡</span>`;
+            } else if (rt.status === 'Pending') {
+                // Job queued, waiting for resources
+                statusIconHtml = `<span class="status-icon">🟡</span>`;
+            } else {
+                // Idle, Completed, Failed, or any saved state
+                statusIconHtml = `<span class="status-icon">⚪</span>`;
+            }
+
+            // Determine this-window indicator
+            const isThisWindowRuntime = (rt.status === 'Local' && rt.windowId === this._windowId) || isActiveInThisWindow;
+
+            // Determine action buttons
+            let headerRightHtml: string;
+            if (isThisWindowRuntime) {
+                headerRightHtml = `<span class="session-badge">this window</span>`;
+            } else {
+                const switchBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="remote" title="Switch">&#x21C4;</button>`;
+                const removeBtn = `<button class="remove-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Remove">✕</button>`;
+                headerRightHtml = `${switchBtn}${removeBtn}`;
+            }
+
+            // Determine display name
+            const displayName = rt.status === 'Local' ? 'Local' : escapeHtml(rt.host);
+
+            // Build detail section for non-local runtimes
+            let detailHtml = '';
+            if (rt.status !== 'Local') {
+                const wtParts = rt.wallTime.split(':').map(Number);
+                const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
+                const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
+                const tunnelInfo = rt.tunnelUrl
+                    ? `<span class="session-detail">&#x1F310; ${escapeHtml(rt.tunnelUrl)}</span>`
+                    : (rt.status === 'Active' ? `<span class="session-detail">&#x23F3; setting up tunnel...</span>` : '');
+                detailHtml = `
+                    <div class="runtime-details">
+                        <span class="session-detail">&#x1F5A5;${escapeHtml(rt.cpus)} &#x1F4BE;${escapeHtml(rt.memory)} ${rt.gpu !== 'None' ? `&#x1F3AE;${escapeHtml(rt.gpu)} ` : ''}&#x23F1;${wallTimeShort}</span>
+                        <span class="session-detail">&#x2630;${escapeHtml(rt.queue)} &#x1F511;${escapeHtml(rt.allocation)}</span>${tunnelInfo}
+                        ${rt.status === 'Failed' && rt.errorMessage ? `<span class="session-error">${escapeHtml(rt.errorMessage)}</span>` : ''}
+                    </div>`;
+            }
+
+            return `
+                <div class="runtime-entry" data-session-id="${escapeHtml(rt.id)}">
+                    <div class="runtime-header">
+                        <span class="runtime-name">${statusIconHtml} ${displayName}</span>
+                        <div class="runtime-header-right">
+                            ${headerRightHtml}
+                        </div>
+                    </div>${detailHtml}
+                </div>`;
+        };
+
+        // Helper: build the host picker HTML for a workspace
+        const buildHostPickerHtml = (ws: Workspace): string => {
+            if (sshHosts.length === 0) {
+                return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
+            }
+            return sshHosts.map(host => `
+                <div class="host-picker-item">
+                    <div class="host-picker-row" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">
+                        <span class="host-picker-chevron">&#x203A;</span>
+                        <span class="host-picker-name">${escapeHtml(host.name)}</span>
+                        ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
+                    </div>
+                    <div class="host-picker-form" id="host-form-${escapeHtml(ws.id)}-${escapeHtml(host.name)}" style="display:none;">
+                        <div class="job-form-loading" style="display:none;"><div class="spinner"></div>Fetching partitions...</div>
+                        <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
+                        <div class="job-form-fields" style="display:none;">
+                            <div class="form-row"><label>CPUs</label><select class="form-select" data-field="cpus">
+                                <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+                                <option value="8">8</option><option value="16">16</option><option value="32">32</option><option value="64">64</option>
+                            </select></div>
+                            <div class="form-row"><label>Memory</label><select class="form-select" data-field="memory">
+                                <option value="1 GB">1 GB</option><option value="2 GB">2 GB</option><option value="4 GB">4 GB</option>
+                                <option value="8 GB">8 GB</option><option value="16 GB">16 GB</option><option value="32 GB">32 GB</option>
+                                <option value="64 GB">64 GB</option><option value="128 GB">128 GB</option>
+                            </select></div>
+                            <div class="form-row"><label>GPU</label><select class="form-select" data-field="gpu">
+                                <option value="None">None</option><option value="NVIDIA A100">NVIDIA A100</option>
+                                <option value="NVIDIA V100">NVIDIA V100</option><option value="NVIDIA T4">NVIDIA T4</option>
+                                <option value="NVIDIA A40">NVIDIA A40</option><option value="NVIDIA H100">NVIDIA H100</option>
+                            </select></div>
+                            <div class="form-row"><label>Wall Time</label><select class="form-select" data-field="wallTime">
+                                <option value="00:30:00">30 min</option><option value="01:00:00">1 hour</option>
+                                <option value="02:00:00">2 hours</option><option value="04:00:00">4 hours</option>
+                                <option value="08:00:00">8 hours</option><option value="12:00:00">12 hours</option>
+                                <option value="24:00:00">24 hours</option>
+                            </select></div>
+                            <div class="form-row"><label>Allocation</label><select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
+                                <option value="">Loading...</option>
+                            </select></div>
+                            <div class="form-row"><label>Partition</label><select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
+                                <option value="">Select allocation first</option>
+                            </select></div>
+                            <button class="submit-job-btn" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">Add</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        };
+
+        // Build workspace cards
+        const sessionsHtml = this._workspaces.length > 0
+            ? this._workspaces.map(ws => {
+                const sortedRuntimes = [...ws.runtimes].sort((a, b) => {
+                    if (a.windowId === this._windowId) { return -1; }
+                    if (b.windowId === this._windowId) { return 1; }
+                    const statusOrder: Record<string, number> = { Local: 0, Active: 1, Submitting: 2, Pending: 3, Idle: 4, Failed: 5, Completed: 6 };
+                    const sa = statusOrder[a.status] ?? 99;
+                    const sb = statusOrder[b.status] ?? 99;
+                    if (sa !== sb) { return sa - sb; }
+                    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+                });
+                const runtimeRows = sortedRuntimes.map(rt => buildRuntimeRow(rt)).join('');
+                const hostPickerHtml = buildHostPickerHtml(ws);
+                const hasActiveWindow = ws.runtimes.some(r => r.windowId && r.status === 'Local');
+                const cardClass = hasActiveWindow ? 'workspace-card' : 'workspace-card workspace-card-inactive';
+                const displayPath = ws.directoryPath.startsWith(os.homedir())
+                    ? '~' + ws.directoryPath.slice(os.homedir().length)
+                    : ws.directoryPath;
+                return `
+                <div class="${cardClass}" data-workspace-id="${escapeHtml(ws.id)}">
+                    <div class="workspace-header">
+                        <span class="workspace-name">&#x1F5C2;&#xFE0F; ${escapeHtml(displayPath)}</span>
+                        <div class="workspace-header-right">
+                            <button class="workspace-add-remote-btn" data-workspace-id="${escapeHtml(ws.id)}" title="Add Remote">
+                                +
+                            </button>
+                            ${!hasActiveWindow ? `<button class="workspace-delete-btn" data-workspace-id="${escapeHtml(ws.id)}" title="Remove Workspace">✕</button>` : ''}
+                        </div>
+                    </div>
+                    <div class="workspace-runtimes">
+                        ${runtimeRows}
+                    </div>
+                    <div class="workspace-host-picker" id="host-picker-${escapeHtml(ws.id)}" style="display:none;">
+                        ${hostPickerHtml}
+                    </div>
+                </div>`;
+            }).join('')
+            : '<p class="empty-message">No active sessions</p>';
+
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberShuttle Workspaces</title>
+    <style>
+        ${this._getCommonStyles(codiconsFontUri)}
         .file-browser {
             border-top: 1px solid var(--vscode-panel-border);
         }
@@ -3903,90 +4044,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             font-size: 11px;
             margin: 0;
         }
-        .tab-row {
-            display: flex;
-            border-bottom: 1px solid var(--vscode-panel-border);
-            margin-bottom: 8px;
-            gap: 0;
-        }
-        .tab-btn {
-            flex: 1;
-            padding: 6px 0;
-            margin: 0;
-            border: none;
-            border-bottom: 2px solid transparent;
-            border-radius: 0;
-            background: none;
-            color: var(--vscode-descriptionForeground);
-            font-size: 12px;
-            text-transform: uppercase;
-            cursor: pointer;
-            text-align: center;
-        }
-        .tab-btn:hover {
-            background: none;
-            color: var(--vscode-foreground);
-        }
-        .tab-btn.active {
-            color: var(--vscode-foreground);
-            border-bottom-color: var(--vscode-focusBorder);
-            font-weight: 600;
-        }
-        .tab-panel {
-            display: none;
-        }
-        .tab-panel.active {
-            display: block;
-        }
-        .servers-panel {
-            border-top: 1px solid var(--vscode-panel-border);
-            margin-top: 8px;
-        }
-        .servers-panel-toggle {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            width: 100%;
-            padding: 6px 8px;
-            border: none;
-            background: none;
-            color: var(--vscode-foreground);
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            cursor: pointer;
-            letter-spacing: 0.5px;
-        }
-        .servers-panel-toggle:hover {
-            background: var(--vscode-list-hoverBackground);
-        }
-        .servers-panel-chevron {
-            transition: transform 0.15s;
-            font-size: 12px;
-        }
-        .servers-panel-chevron.expanded {
-            transform: rotate(90deg);
-        }
-        .servers-panel-actions {
-            display: flex;
-            gap: 4px;
-            margin-bottom: 6px;
-        }
-        .servers-panel-content {
-            display: none;
-            padding: 0 8px 8px;
-        }
-        .servers-panel-content.expanded {
-            display: block;
-        }
         .tab-header {
             display: flex;
             justify-content: flex-end;
             margin-bottom: 6px;
             gap: 4px;
-        }
-        .section {
-            margin-bottom: 20px;
         }
         .workspace-card {
             margin: 6px 0;
@@ -3994,14 +4056,18 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             overflow: hidden;
             border: 1px solid var(--vscode-panel-border);
         }
+        .workspace-card-inactive {
+            opacity: 0.6;
+        }
+        .workspace-card-inactive .workspace-header {
+            background: var(--vscode-list-hoverBackground);
+        }
         .workspace-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 6px 8px;
             font-weight: 600;
-            font-size: 11px;
-            text-transform: uppercase;
             letter-spacing: 0.5px;
             background: var(--vscode-sideBarSectionHeader-background, var(--vscode-list-hoverBackground));
             color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
@@ -4033,6 +4099,22 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             background: var(--vscode-toolbar-hoverBackground);
             color: var(--vscode-foreground);
         }
+        .workspace-delete-btn {
+            margin: 0;
+            padding: 2px 4px;
+            background: none;
+            border: none;
+            color: var(--vscode-descriptionForeground);
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 10px;
+            opacity: 0.6;
+        }
+        .workspace-delete-btn:hover {
+            background: var(--vscode-toolbar-hoverBackground);
+            color: var(--vscode-errorForeground);
+            opacity: 1;
+        }
         .runtime-entry {
             padding: 6px 8px;
             border-bottom: 1px solid var(--vscode-panel-border);
@@ -4060,21 +4142,26 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             gap: 4px;
             flex-shrink: 0;
         }
-        .runtime-local .runtime-name {
-            font-size: 11px;
-            font-weight: 400;
-            color: var(--vscode-descriptionForeground);
+        .runtime-details {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 2px 8px 4px 8px;
         }
-        .runtime-active {
-            border-left: 3px solid var(--vscode-terminal-ansiGreen);
-            background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 10%, transparent);
+        .status-icon {
+            display: inline-block;
         }
-        .runtime-active .runtime-name {
-            color: var(--vscode-terminal-ansiGreen);
+        .status-flash {
+            animation: flash 1s ease-in-out infinite;
+        }
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
         .workspace-host-picker {
             border-top: 1px solid var(--vscode-panel-border);
             background: var(--vscode-editor-background);
+            padding: 4px 0;
         }
         .host-picker-item {
             border-bottom: 1px solid var(--vscode-panel-border);
@@ -4120,21 +4207,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             margin-left: 4px;
             vertical-align: middle;
         }
-        .go-remote-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 3px;
-            font-size: 11px !important;
-        }
         .session-job-id {
             font-weight: 400;
             color: var(--vscode-descriptionForeground);
-        }
-        .session-time-ago {
-            font-size: 10px;
-            font-weight: 400;
-            color: var(--vscode-descriptionForeground);
-            flex-shrink: 0;
         }
         .session-detail {
             font-size: 10px;
@@ -4151,36 +4226,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         .session-detail .codicon:first-child {
             margin-left: 0;
         }
-        .session-log-toggle {
-            cursor: pointer;
-            border-radius: 3px;
-        }
-        .session-log-toggle:hover {
-            background: var(--vscode-list-hoverBackground);
-        }
         .session-error {
             font-size: 10px;
             color: var(--vscode-errorForeground);
             white-space: normal;
             margin-top: 2px;
-        }
-        .session-log-panel {
-            margin-top: 6px;
-            background: var(--vscode-textCodeBlock-background);
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
-            max-height: 200px;
-            overflow: auto;
-        }
-        .session-log-content {
-            margin: 0;
-            padding: 8px;
-            font-family: var(--vscode-editor-font-family, monospace);
-            font-size: 10px;
-            line-height: 1.3;
-            white-space: pre-wrap;
-            word-break: break-all;
-            color: var(--vscode-editor-foreground);
         }
         .session-action-btn, .remove-session-btn {
             margin: 0;
@@ -4315,41 +4365,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     <p class="description">Take your workspace into any runtime</p>
 
-    <div class="tab-row">
-        <button class="tab-btn${this._activeTab === 'sessions' ? ' active' : ''}" data-tab="sessions">Sessions</button>
-        <button class="tab-btn${this._activeTab === 'files' ? ' active' : ''}" data-tab="files">Files</button>
+    <div class="tab-header">
+        <button id="refresh-sessions-btn" class="refresh-btn" title="Refresh Sessions">&#x21BB;</button>
     </div>
-
-    <div id="tab-sessions" class="tab-panel${this._activeTab === 'sessions' ? ' active' : ''}">
-        <div class="tab-header">
-            <button id="refresh-sessions-btn" class="refresh-btn" title="Refresh Sessions">&#x21BB;</button>
-        </div>
-        <div id="sessions">
-            ${sessionsHtml}
-        </div>
-    </div>
-
-    <div id="tab-files" class="tab-panel${this._activeTab === 'files' ? ' active' : ''}">
-        <div id="file-hosts">
-            ${filesHtml}
-        </div>
-    </div>
-
-    <div class="servers-panel">
-        <button class="servers-panel-toggle" id="servers-panel-toggle">
-            <span class="servers-panel-chevron">&#x203A;</span>
-            Servers
-        </button>
-        <div class="servers-panel-content" id="servers-panel-content">
-            <div class="servers-panel-actions">
-                <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">&#x2756; Local</button>
-                <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
-                <button id="refresh-servers-btn" class="refresh-btn" title="Refresh Servers">&#x21BB;</button>
-            </div>
-            <div id="ssh-hosts">
-                ${hostsHtml}
-            </div>
-        </div>
+    <div id="sessions">
+        ${sessionsHtml}
     </div>
 
     <!-- Script preview overlay -->
@@ -4367,45 +4387,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const vscode = acquireVsCodeApi();
 
         try {
-        // Tab switching
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tab = btn.getAttribute('data-tab');
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-                btn.classList.add('active');
-                document.getElementById('tab-' + tab).classList.add('active');
-                vscode.postMessage({ type: 'switchTab', tab: tab });
-            });
-        });
-
-        // Servers panel toggle
-        const serversToggle = document.getElementById('servers-panel-toggle');
-        const serversContent = document.getElementById('servers-panel-content');
-        if (serversToggle && serversContent) {
-            serversToggle.addEventListener('click', () => {
-                const chevron = serversToggle.querySelector('.servers-panel-chevron');
-                const isExpanded = serversContent.classList.toggle('expanded');
-                if (chevron) {
-                    chevron.classList.toggle('expanded', isExpanded);
-                }
-            });
-        }
-
         document.getElementById('refresh-sessions-btn')?.addEventListener('click', () => {
             vscode.postMessage({ type: 'refresh' });
-        });
-
-        document.getElementById('refresh-servers-btn')?.addEventListener('click', () => {
-            vscode.postMessage({ type: 'refresh' });
-        });
-
-        document.getElementById('add-ssh-btn')?.addEventListener('click', () => {
-            vscode.postMessage({ type: 'addSshHost' });
-        });
-
-        document.getElementById('test-local-btn')?.addEventListener('click', () => {
-            vscode.postMessage({ type: 'testLocal' });
         });
 
 
@@ -4500,60 +4483,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
         });
 
-        // Add click handlers to host rows (accordion — only one open at a time)
-        document.querySelectorAll('#ssh-hosts .ssh-host-row').forEach(row => {
-            row.addEventListener('click', () => {
-                const host = row.getAttribute('data-host');
-                const form = document.getElementById('job-form-' + host);
-                if (form) {
-                    const isOpening = form.style.display === 'none';
-                    // Collapse all open forms and reset chevrons
-                    document.querySelectorAll('.job-form').forEach(f => f.style.display = 'none');
-                    document.querySelectorAll('#ssh-hosts .ssh-host-row').forEach(r => r.classList.remove('expanded'));
-                    if (isOpening) {
-                        form.style.display = 'block';
-                        row.classList.add('expanded');
-                        form.querySelector('.job-form-loading').style.display = 'flex';
-                        form.querySelector('.job-form-fields').style.display = 'none';
-                        form.querySelector('.job-form-error').style.display = 'none';
-                        vscode.postMessage({ type: 'expandHost', host: host });
-                        vscode.postMessage({ type: 'queryAssociations', host: host });
-                    } else {
-                        vscode.postMessage({ type: 'expandHost', host: null });
-                    }
-                }
-            });
-        });
-
-        // Add click handlers to retry buttons
-        document.querySelectorAll('.job-form-retry-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const host = btn.getAttribute('data-host');
-                const form = document.getElementById('job-form-' + host);
-                if (form) {
-                    form.querySelector('.job-form-loading').style.display = 'flex';
-                    form.querySelector('.job-form-error').style.display = 'none';
-                    vscode.postMessage({ type: 'queryAssociations', host: host });
-                }
-            });
-        });
-
-        document.querySelectorAll('.job-form-stop-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const host = btn.getAttribute('data-host');
-                vscode.postMessage({ type: 'cancelAssociations', host: host });
-            });
-        });
-
-        // Add click handlers to submit job buttons (both Servers panel and workspace host picker)
+        // Add click handlers to submit job buttons (workspace host picker only)
         document.querySelectorAll('.submit-job-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const host = btn.getAttribute('data-host');
                 const wsId = btn.getAttribute('data-workspace-id');
-                // For host-picker forms, find the closest host-picker-form; for Servers panel use job-form-<host>
-                const form = btn.closest('.host-picker-form') || document.getElementById('job-form-' + host);
+                const form = btn.closest('.host-picker-form');
                 if (!form) { return; }
                 const cpus = form.querySelector('[data-field="cpus"]').value;
                 const memory = form.querySelector('[data-field="memory"]').value;
@@ -4561,7 +4496,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const wallTime = form.querySelector('[data-field="wallTime"]').value;
                 const queue = form.querySelector('[data-field="queue"]').value;
                 const allocation = form.querySelector('[data-field="allocation"]').value;
-                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation, workspaceId: wsId });
+                vscode.postMessage({ type: 'addRuntime', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation, workspaceId: wsId });
             });
         });
 
@@ -4622,106 +4557,55 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
         });
 
-        // Add click handlers to session switch buttons
-        document.querySelectorAll('.switch-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                const direction = btn.getAttribute('data-direction');
-                disableSessionActions(sessionId);
-                if (direction === 'local-window') {
-                    vscode.postMessage({ type: 'switchToWindow', sessionId: sessionId });
-                } else if (direction === 'remote') {
-                    vscode.postMessage({ type: 'switchToRemote', sessionId: sessionId });
-                } else {
-                    vscode.postMessage({ type: 'switchToLocal', sessionId: sessionId });
-                }
-            });
-        });
-
-        // Add click handlers to Go Remote buttons — toggle workspace host picker
-        document.querySelectorAll('.go-remote-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const wsCard = btn.closest('.workspace-card');
-                if (wsCard) {
-                    const wsId = wsCard.getAttribute('data-workspace-id');
-                    const picker = document.getElementById('host-picker-' + wsId);
-                    if (picker) {
-                        picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+        // Add click handlers to session switch buttons (extracted for re-attachment after incremental updates)
+        function attachSwitchHandlers() {
+            document.querySelectorAll('.switch-btn').forEach(btn => {
+                // Remove old listener by cloning to avoid duplicate handlers
+                const newBtn = btn.cloneNode(true);
+                btn.parentNode.replaceChild(newBtn, btn);
+                newBtn.addEventListener('click', () => {
+                    const sessionId = newBtn.getAttribute('data-session-id');
+                    const direction = newBtn.getAttribute('data-direction');
+                    disableSessionActions(sessionId);
+                    if (direction === 'local-window') {
+                        vscode.postMessage({ type: 'switchToWindow', sessionId: sessionId });
+                    } else if (direction === 'remote') {
+                        vscode.postMessage({ type: 'switchToRemote', sessionId: sessionId });
+                    } else {
+                        vscode.postMessage({ type: 'switchToLocal', sessionId: sessionId });
                     }
-                }
+                });
             });
-        });
+        }
+        attachSwitchHandlers();
 
-        // Add click handlers to session relaunch buttons
-        document.querySelectorAll('.relaunch-session-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                disableSessionActions(sessionId);
-                vscode.postMessage({ type: 'relaunchSession', sessionId: sessionId });
+        // Add click handlers to session remove buttons (extracted for re-attachment after incremental updates)
+        function attachRemoveHandlers() {
+            document.querySelectorAll('.remove-session-btn').forEach(btn => {
+                // Remove old listener by cloning to avoid duplicate handlers
+                const newBtn = btn.cloneNode(true);
+                btn.parentNode.replaceChild(newBtn, btn);
+                newBtn.addEventListener('click', () => {
+                    const sessionId = newBtn.getAttribute('data-session-id');
+                    disableSessionActions(sessionId);
+                    vscode.postMessage({ type: 'removeSession', sessionId: sessionId });
+                });
             });
-        });
+        }
+        attachRemoveHandlers();
 
-        // Add click handlers to local session connect buttons
-        document.querySelectorAll('.connect-local-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                vscode.postMessage({ type: 'connectLocal', sessionId: sessionId });
+        // Add click handlers to workspace delete buttons
+        function attachWorkspaceDeleteHandlers() {
+            document.querySelectorAll('.workspace-delete-btn').forEach(btn => {
+                const newBtn = btn.cloneNode(true);
+                btn.parentNode.replaceChild(newBtn, btn);
+                newBtn.addEventListener('click', () => {
+                    const workspaceId = newBtn.getAttribute('data-workspace-id');
+                    vscode.postMessage({ type: 'removeWorkspace', workspaceId: workspaceId });
+                });
             });
-        });
-
-        // Add click handlers to local session stop buttons
-        document.querySelectorAll('.stop-local-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                disableSessionActions(sessionId);
-                vscode.postMessage({ type: 'stopLocal', sessionId: sessionId });
-            });
-        });
-
-        // Add click handlers to remote session stop buttons
-        document.querySelectorAll('.stop-remote-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                disableSessionActions(sessionId);
-                vscode.postMessage({ type: 'stopRemote', sessionId: sessionId });
-            });
-        });
-
-        // Add click handlers to local session relaunch buttons
-        document.querySelectorAll('.relaunch-local-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                disableSessionActions(sessionId);
-                vscode.postMessage({ type: 'removeSession', sessionId: sessionId });
-                vscode.postMessage({ type: 'testLocal' });
-            });
-        });
-
-        // Add click handlers to session body (toggle log panel)
-        document.querySelectorAll('.session-log-toggle').forEach(toggle => {
-            toggle.addEventListener('click', () => {
-                const sessionId = toggle.getAttribute('data-session-id');
-                const logPanel = document.getElementById('session-log-' + sessionId);
-                if (!logPanel) { return; }
-                const isOpening = logPanel.style.display === 'none';
-                if (isOpening) {
-                    logPanel.style.display = 'block';
-                    vscode.postMessage({ type: 'toggleSessionLogs', sessionId: sessionId });
-                } else {
-                    logPanel.style.display = 'none';
-                    vscode.postMessage({ type: 'stopSessionLogs', sessionId: sessionId });
-                }
-            });
-        });
-
-        // Add click handlers to session remove buttons
-        document.querySelectorAll('.remove-session-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const sessionId = btn.getAttribute('data-session-id');
-                disableSessionActions(sessionId);
-                vscode.postMessage({ type: 'removeSession', sessionId: sessionId });
-            });
-        });
+        }
+        attachWorkspaceDeleteHandlers();
 
         // Script preview state
         let previewSessionId = null;
@@ -4773,29 +4657,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 return;
             }
 
-            if (msg.type === 'sessionLogData') {
-                const logPanel = document.getElementById('session-log-' + msg.sessionId);
-                if (logPanel) {
-                    const content = logPanel.querySelector('.session-log-content');
-                    if (content) {
-                        content.textContent += msg.text;
-                        logPanel.scrollTop = logPanel.scrollHeight;
-                    }
-                }
-                return;
-            }
-
-            if (msg.type === 'sessionLogStopped') {
-                const logPanel = document.getElementById('session-log-' + msg.sessionId);
-                if (logPanel) {
-                    const content = logPanel.querySelector('.session-log-content');
-                    if (content && !content.textContent) {
-                        content.textContent = '[No logs available yet]';
-                    }
-                }
-                return;
-            }
-
             if (msg.type === 'associationsCancelled') {
                 // Update all forms for this host (Servers panel + host picker forms)
                 const allForms = getAllFormsForHost(msg.host);
@@ -4816,13 +4677,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 return;
             }
 
-            // Helper: find all job forms (Servers panel + host picker) for a given host name
+            // Helper: find all host-picker job forms for a given host name (workspaces view only)
             function getAllFormsForHost(host) {
                 const forms = [];
-                // Servers panel form
-                const serverForm = document.getElementById('job-form-' + host);
-                if (serverForm) { forms.push(serverForm); }
-                // Host picker forms: query by data-host on allocation select inside host-picker-form
                 document.querySelectorAll('.host-picker-form').forEach(form => {
                     const allocSelect = form.querySelector('[data-field="allocation"][data-host="' + host + '"]');
                     if (allocSelect) { forms.push(form); }
@@ -4984,8 +4841,360 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     });
                 });
             }
+
+            if (msg.type === 'updateRuntimes') {
+                function escapeHtml(str) {
+                    const div = document.createElement('div');
+                    div.textContent = str;
+                    return div.innerHTML;
+                }
+                const updates = msg.updates;
+                for (const wsUpdate of updates) {
+                    for (const rt of wsUpdate.runtimes) {
+                        const entry = document.querySelector('.runtime-entry[data-session-id="' + rt.id + '"]');
+                        if (!entry) { continue; }
+
+                        // Determine new status icon
+                        let iconHtml;
+                        if (rt.isThisWindow || rt.isActiveInThisWindow) {
+                            iconHtml = '<span class="status-icon">🔵</span>';
+                        } else if ((rt.status === 'Local') || (rt.status === 'Active' && !rt.isActiveInThisWindow)) {
+                            iconHtml = '<span class="status-icon">🟢</span>';
+                        } else if (rt.status === 'Submitting') {
+                            iconHtml = '<span class="status-icon status-flash">🟡</span>';
+                        } else if (rt.status === 'Pending') {
+                            iconHtml = '<span class="status-icon">🟡</span>';
+                        } else {
+                            iconHtml = '<span class="status-icon">⚪</span>';
+                        }
+
+                        // Update runtime name (icon + name)
+                        const nameSpan = entry.querySelector('.runtime-name');
+                        if (nameSpan) {
+                            const displayName = rt.status === 'Local' ? 'Local' : escapeHtml(rt.host);
+                            nameSpan.innerHTML = iconHtml + ' ' + displayName;
+                        }
+
+                        // Update action buttons
+                        const headerRight = entry.querySelector('.runtime-header-right');
+                        if (headerRight) {
+                            if (rt.isThisWindow || rt.isActiveInThisWindow) {
+                                headerRight.innerHTML = '<span class="session-badge">this window</span>';
+                            } else {
+                                const switchBtn = '<button class="session-action-btn switch-btn" data-session-id="' + rt.id + '" data-direction="remote" title="Switch">&#x21C4;</button>';
+                                const removeBtn = '<button class="remove-session-btn" data-session-id="' + rt.id + '" title="Remove">✕</button>';
+                                headerRight.innerHTML = switchBtn + removeBtn;
+                            }
+                        }
+
+                        // Update detail section for non-local runtimes
+                        const existingDetails = entry.querySelector('.runtime-details');
+                        if (rt.status !== 'Local') {
+                            const wtParts = rt.wallTime.split(':').map(Number);
+                            const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
+                            const wallTimeShort = wtTotalMin >= 1440 ? Math.floor(wtTotalMin / 1440) + 'd' : wtTotalMin >= 60 ? Math.floor(wtTotalMin / 60) + 'hr' : wtTotalMin + 'min';
+                            const tunnelInfo = rt.tunnelUrl
+                                ? '<span class="session-detail">&#x1F310; ' + escapeHtml(rt.tunnelUrl) + '</span>'
+                                : (rt.status === 'Active' ? '<span class="session-detail">&#x23F3; setting up tunnel...</span>' : '');
+                            const errorHtml = (rt.status === 'Failed' && rt.errorMessage) ? '<span class="session-error">' + escapeHtml(rt.errorMessage) + '</span>' : '';
+                            const detailInner = '<span class="session-detail">&#x1F5A5;' + rt.cpus + ' &#x1F4BE;' + rt.memory + ' ' + (rt.gpu !== 'None' ? '&#x1F3AE;' + rt.gpu + ' ' : '') + '&#x23F1;' + wallTimeShort + '</span>'
+                                + '<span class="session-detail">&#x2630;' + rt.queue + ' &#x1F511;' + rt.allocation + '</span>' + tunnelInfo + errorHtml;
+
+                            if (existingDetails) {
+                                existingDetails.innerHTML = detailInner;
+                            } else {
+                                const div = document.createElement('div');
+                                div.className = 'runtime-details';
+                                div.innerHTML = detailInner;
+                                entry.appendChild(div);
+                            }
+                        } else if (existingDetails) {
+                            existingDetails.remove();
+                        }
+                    }
+                }
+
+                // Re-attach event listeners for any new buttons injected during the update
+                attachSwitchHandlers();
+                attachRemoveHandlers();
+                attachWorkspaceDeleteHandlers();
+            }
         });
         } catch (err) { console.error('[cybershuttle] Webview init error:', err); }
+    </script>
+</body>
+</html>`;
+    }
+
+    /**
+     * Generate the HTML for the SERVERS webview.
+     * Contains: SSH host list with expandable job forms, Local test button, Add SSH button, Refresh button.
+     */
+    private _getServersHtml(webview: vscode.Webview): string {
+        const nonce = getNonce();
+        const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'resources', 'codicons', 'codicon.ttf'));
+
+        // Get SSH hosts from config
+        const sshHosts = this.getSshHosts();
+        const hostsHtml = sshHosts.length > 0
+            ? sshHosts.map(host => `
+                <div class="ssh-host">
+                    <div class="ssh-host-row${this._expandedHost === host.name ? ' expanded' : ''}" data-host="${escapeHtml(host.name)}">
+                        <div class="host-info">
+                            <span class="host-name">${escapeHtml(host.name)}</span>
+                            ${host.hostname ? `<span class="host-detail">${host.user ? `${escapeHtml(host.user)}@` : ''}${escapeHtml(host.hostname)}</span>` : ''}
+                        </div>
+                        <span class="chevron">&#x203A;</span>
+                    </div>
+                    <div class="job-form" id="job-form-${escapeHtml(host.name)}" style="display:${this._expandedHost === host.name ? 'block' : 'none'};">
+                        <div class="job-form-loading" style="display:${this._expandedHost === host.name && this._associationsCts.has(host.name) ? 'flex' : 'none'};"><div class="spinner"></div>Fetching partitions...<button class="job-form-stop-btn" data-host="${escapeHtml(host.name)}">Stop</button></div>
+                        <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span><button class="job-form-retry-btn" data-host="${escapeHtml(host.name)}">Retry</button></div>
+                        <div class="job-form-fields">
+                            <div class="form-row">
+                                <label>CPUs</label>
+                                <select class="form-select" data-field="cpus">
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="4">4</option>
+                                    <option value="8">8</option>
+                                    <option value="16">16</option>
+                                    <option value="32">32</option>
+                                    <option value="64">64</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>Memory</label>
+                                <select class="form-select" data-field="memory">
+                                    <option value="1 GB">1 GB</option>
+                                    <option value="2 GB">2 GB</option>
+                                    <option value="4 GB">4 GB</option>
+                                    <option value="8 GB">8 GB</option>
+                                    <option value="16 GB">16 GB</option>
+                                    <option value="32 GB">32 GB</option>
+                                    <option value="64 GB">64 GB</option>
+                                    <option value="128 GB">128 GB</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>GPU</label>
+                                <select class="form-select" data-field="gpu">
+                                    <option value="None">None</option>
+                                    <option value="NVIDIA A100">NVIDIA A100</option>
+                                    <option value="NVIDIA V100">NVIDIA V100</option>
+                                    <option value="NVIDIA T4">NVIDIA T4</option>
+                                    <option value="NVIDIA A40">NVIDIA A40</option>
+                                    <option value="NVIDIA H100">NVIDIA H100</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>Wall Time</label>
+                                <select class="form-select" data-field="wallTime">
+                                    <option value="00:30:00">30 min</option>
+                                    <option value="01:00:00">1 hour</option>
+                                    <option value="02:00:00">2 hours</option>
+                                    <option value="04:00:00">4 hours</option>
+                                    <option value="08:00:00">8 hours</option>
+                                    <option value="12:00:00">12 hours</option>
+                                    <option value="24:00:00">24 hours</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>Allocation</label>
+                                <select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
+                                    <option value="">Loading...</option>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>Partition</label>
+                                <select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
+                                    <option value="">Select allocation first</option>
+                                </select>
+                            </div>
+                            <button class="submit-job-btn" data-host="${escapeHtml(host.name)}">Launch</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('')
+            : '<p class="empty-message">No SSH hosts found in ~/.ssh/config</p>';
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberShuttle Servers</title>
+    <style>
+        ${this._getCommonStyles(codiconsFontUri)}
+    </style>
+</head>
+<body>
+    <div class="servers-actions" style="display:flex;gap:4px;margin-bottom:8px;">
+        <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">&#x2756; Local</button>
+        <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
+        <button id="refresh-servers-btn" class="refresh-btn" title="Refresh Servers">&#x21BB;</button>
+    </div>
+    <div id="ssh-hosts">
+        ${hostsHtml}
+    </div>
+
+    <script nonce="${nonce}">
+        const vscode = acquireVsCodeApi();
+
+        try {
+
+        document.getElementById('refresh-servers-btn')?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'refresh' });
+        });
+
+        document.getElementById('add-ssh-btn')?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'addSshHost' });
+        });
+
+        document.getElementById('test-local-btn')?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'testLocal' });
+        });
+
+        // Add click handlers to host rows (accordion — only one open at a time)
+        document.querySelectorAll('#ssh-hosts .ssh-host-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const host = row.getAttribute('data-host');
+                const form = document.getElementById('job-form-' + host);
+                if (form) {
+                    const isOpening = form.style.display === 'none';
+                    // Collapse all open forms and reset chevrons
+                    document.querySelectorAll('.job-form').forEach(f => f.style.display = 'none');
+                    document.querySelectorAll('#ssh-hosts .ssh-host-row').forEach(r => r.classList.remove('expanded'));
+                    if (isOpening) {
+                        form.style.display = 'block';
+                        row.classList.add('expanded');
+                        form.querySelector('.job-form-loading').style.display = 'flex';
+                        form.querySelector('.job-form-fields').style.display = 'none';
+                        form.querySelector('.job-form-error').style.display = 'none';
+                        vscode.postMessage({ type: 'expandHost', host: host });
+                        vscode.postMessage({ type: 'queryAssociations', host: host });
+                    } else {
+                        vscode.postMessage({ type: 'expandHost', host: null });
+                    }
+                }
+            });
+        });
+
+        // Retry buttons
+        document.querySelectorAll('.job-form-retry-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const host = btn.getAttribute('data-host');
+                const form = document.getElementById('job-form-' + host);
+                if (form) {
+                    form.querySelector('.job-form-loading').style.display = 'flex';
+                    form.querySelector('.job-form-error').style.display = 'none';
+                    vscode.postMessage({ type: 'queryAssociations', host: host });
+                }
+            });
+        });
+
+        // Stop (cancel associations) buttons
+        document.querySelectorAll('.job-form-stop-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const host = btn.getAttribute('data-host');
+                vscode.postMessage({ type: 'cancelAssociations', host: host });
+            });
+        });
+
+        // Submit job buttons (Servers panel only — no workspace context)
+        document.querySelectorAll('.submit-job-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const host = btn.getAttribute('data-host');
+                const form = document.getElementById('job-form-' + host);
+                if (!form) { return; }
+                const cpus = form.querySelector('[data-field="cpus"]').value;
+                const memory = form.querySelector('[data-field="memory"]').value;
+                const gpu = form.querySelector('[data-field="gpu"]').value;
+                const wallTime = form.querySelector('[data-field="wallTime"]').value;
+                const queue = form.querySelector('[data-field="queue"]').value;
+                const allocation = form.querySelector('[data-field="allocation"]').value;
+                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation });
+            });
+        });
+
+        // Handle messages from the extension
+        window.addEventListener('message', event => {
+            const msg = event.data;
+
+            if (msg.type === 'associationsCancelled') {
+                const form = document.getElementById('job-form-' + msg.host);
+                if (form) {
+                    form.querySelector('.job-form-loading').style.display = 'none';
+                }
+                return;
+            }
+
+            if (msg.type === 'associationsError') {
+                const form = document.getElementById('job-form-' + msg.host);
+                if (form) {
+                    form.querySelector('.job-form-loading').style.display = 'none';
+                    form.querySelector('.job-form-error').style.display = 'flex';
+                    form.querySelector('.job-form-error-text').textContent = 'Failed to fetch partitions: ' + msg.error;
+                }
+                return;
+            }
+
+            if (msg.type === 'associations') {
+                const host = msg.host;
+                const partitions = msg.partitions;
+                const form = document.getElementById('job-form-' + host);
+                if (!form) { return; }
+
+                const allPartNames = Object.keys(partitions);
+                const accountSet = new Set();
+                for (const info of Object.values(partitions)) {
+                    for (const acct of info.accounts) { accountSet.add(acct); }
+                }
+                const accounts = Array.from(accountSet).sort();
+
+                form.querySelector('.job-form-loading').style.display = 'none';
+                form.querySelector('.job-form-error').style.display = 'none';
+                form.querySelector('.job-form-fields').style.display = 'block';
+
+                const allocSelect = form.querySelector('[data-field="allocation"]');
+                const partSelect = form.querySelector('[data-field="queue"]');
+
+                allocSelect.innerHTML = '';
+                if (accounts.length > 0) {
+                    accounts.forEach((acct, i) => {
+                        const opt = document.createElement('option');
+                        opt.value = acct;
+                        opt.textContent = acct;
+                        if (i === 0) { opt.selected = true; }
+                        allocSelect.appendChild(opt);
+                    });
+                } else {
+                    allocSelect.innerHTML = '<option value="">N/A</option>';
+                    allocSelect.disabled = true;
+                }
+
+                function updatePartitions() {
+                    partSelect.innerHTML = '';
+                    allPartNames.forEach((name, i) => {
+                        const info = partitions[name];
+                        const label = info.maxGpus > 0
+                            ? name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs, ' + info.maxGpus + ' GPUs)'
+                            : name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs)';
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = label;
+                        if (i === 0) { opt.selected = true; }
+                        partSelect.appendChild(opt);
+                    });
+                }
+
+                allocSelect.addEventListener('change', updatePartitions);
+                updatePartitions();
+            }
+        });
+        } catch (err) { console.error('[cybershuttle] Servers webview init error:', err); }
     </script>
 </body>
 </html>`;

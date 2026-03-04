@@ -37,7 +37,7 @@
       "view/title": [
         {
           "command": "cybershuttle.openMetrics",
-          "when": "view == cybershuttle.sidebarView",
+          "when": "view == cybershuttle.workspacesView",
           "group": "navigation"
         }
       ]
@@ -55,8 +55,13 @@
       "cybershuttle": [
         {
           "type": "webview",
-          "id": "cybershuttle.sidebarView",
-          "name": "CyberShuttle"
+          "id": "cybershuttle.workspacesView",
+          "name": "Workspaces"
+        },
+        {
+          "type": "webview",
+          "id": "cybershuttle.serversView",
+          "name": "Servers"
         }
       ]
     }

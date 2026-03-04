@@ -17,10 +17,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	const csStorage = new CsStorage(context.secrets);
 
-	// Register the webview sidebar provider
-	const sidebarProvider = new CybershuttleViewProvider(context.extensionUri, context.globalState, metrics);
+	// Register the webview sidebar provider (single instance manages both views)
+	const sidebarProvider = new CybershuttleViewProvider(context.extensionUri, context.workspaceState, metrics);
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.viewType, sidebarProvider)
+		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.workspacesViewType, sidebarProvider),
+		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.serversViewType, sidebarProvider),
 	);
 
 	const auth = vscode.commands.registerCommand('cybershuttle.auth', () => {
