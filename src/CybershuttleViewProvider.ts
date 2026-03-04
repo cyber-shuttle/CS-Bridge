@@ -302,7 +302,28 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Register this VS Code window as a Local session if not already present.
      */
     private _registerWindow() {
+        // If this is a remote window connected to an existing session, claim that
+        // runtime instead of creating a new Local runtime. This prevents duplicate
+        // session cards when switching to a remote runtime.
         const folder = vscode.workspace.workspaceFolders?.[0];
+        if (folder?.uri.scheme === 'vscode-remote') {
+            const authority = folder.uri.authority;
+            // Match cs-tunnel-{id} (local linkspan) or cs-session-{id} (remote SLURM)
+            const match = authority.match(/^ssh-remote\+cs-(?:tunnel|session)-(.+)$/);
+            if (match) {
+                const sessionId = match[1];
+                for (const w of this._workspaces) {
+                    const rt = w.runtimes.find(r => r.id === sessionId);
+                    if (rt) {
+                        rt.windowId = this._windowId;
+                        rt.heartbeat = Date.now();
+                        this._saveSessions();
+                        return;
+                    }
+                }
+            }
+        }
+
         const dirPath = folder
             ? (folder.uri.scheme === 'file' ? folder.uri.fsPath : folder.uri.toString())
             : 'unknown';
@@ -325,6 +346,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 ws.runtimes.push(existing.runtime);
             }
             this._saveSessions();
+            return;
+        }
+
+        // Only create a new Local runtime for non-remote windows
+        if (this._isRemoteWindow) {
             return;
         }
 
@@ -402,11 +428,17 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             this._countdownTimer = undefined;
         }
         this._statusBarItem.dispose();
-        // Remove this window's Local session (keep promoted sessions)
+        // Clean up this window's runtime associations
         for (const ws of this._workspaces) {
             const myRuntime = ws.runtimes.find(r => r.windowId === this._windowId);
-            if (myRuntime && myRuntime.status === 'Local') {
-                ws.runtimes = ws.runtimes.filter(r => r.id !== myRuntime.id);
+            if (myRuntime) {
+                if (myRuntime.status === 'Local') {
+                    // Remove plain Local runtimes entirely (they're just window registrations)
+                    ws.runtimes = ws.runtimes.filter(r => r.id !== myRuntime.id);
+                } else {
+                    // For non-Local runtimes (remote sessions), just detach from this window
+                    myRuntime.windowId = undefined;
+                }
                 this._saveSessions();
                 break;
             }
@@ -431,31 +463,36 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      *   - Remote SLURM sessions: ssh-remote+{hostName}
      */
     private _detectActiveSession(): Runtime | undefined {
-        // First, check if this window has its own registered runtime
+        // First, try to match by vscode-remote URI (more reliable than windowId for remote windows)
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        if (folder?.uri.scheme === 'vscode-remote') {
+            const authority = folder.uri.authority;
+            const allRuntimes = this._allRuntimes();
+            // Local session: ssh-remote+cs-tunnel-{sessionId}
+            const localMatch = authority.match(/^ssh-remote\+cs-tunnel-(.+)$/);
+            if (localMatch) {
+                const sessionId = localMatch[1];
+                return allRuntimes.find(s => s.id === sessionId);
+            }
+            // Remote SLURM session: ssh-remote+cs-session-{sessionId}
+            const remoteMatch = authority.match(/^ssh-remote\+cs-session-(.+)$/);
+            if (remoteMatch) {
+                const sessionId = remoteMatch[1];
+                return allRuntimes.find(s => s.id === sessionId);
+            }
+            // Fallback: match by hostname for remote sessions
+            const hostMatch = authority.match(/^ssh-remote\+(.+)$/);
+            if (hostMatch) {
+                const hostName = hostMatch[1];
+                return allRuntimes.find(s => !s.isLocal && s.host === hostName && s.status === 'Active')
+                    || allRuntimes.find(s => !s.isLocal && s.host === hostName);
+            }
+        }
+
+        // Fallback: check if this window has its own registered runtime
         const allRuntimes = this._allRuntimes();
         const mySession = allRuntimes.find(s => s.windowId === this._windowId);
-        if (mySession) { return mySession; }
-
-        const folder = vscode.workspace.workspaceFolders?.[0];
-        if (!folder || folder.uri.scheme !== 'vscode-remote') {
-            return undefined;
-        }
-        const authority = folder.uri.authority;
-        // Local session: ssh-remote+cs-tunnel-{sessionId}
-        const localMatch = authority.match(/^ssh-remote\+cs-tunnel-(.+)$/);
-        if (localMatch) {
-            const sessionId = localMatch[1];
-            return allRuntimes.find(s => s.id === sessionId);
-        }
-        // Remote SLURM session: ssh-remote+{hostName}
-        const remoteMatch = authority.match(/^ssh-remote\+(.+)$/);
-        if (remoteMatch) {
-            const hostName = remoteMatch[1];
-            // Prefer Active sessions when matching by host
-            return allRuntimes.find(s => !s.isLocal && s.host === hostName && s.status === 'Active')
-                || allRuntimes.find(s => !s.isLocal && s.host === hostName);
-        }
-        return undefined;
+        return mySession;
     }
 
     /**
@@ -3497,6 +3534,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 windowId: rt.windowId,
                 isActiveInThisWindow: activeSession?.id === rt.id,
                 isThisWindow: rt.status === 'Local' && rt.windowId === this._windowId,
+                hasActiveWindow: !!rt.windowId,
                 cpus: rt.cpus,
                 memory: rt.memory,
                 gpu: rt.gpu,
@@ -3861,18 +3899,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             const isLocal = !!rt.isLocal;
 
             // Determine status icon
+            // Blue = has an active VS Code window connected (any window, not just this one)
             let statusIconHtml: string;
-            if (rt.status === 'Local' && rt.windowId === this._windowId) {
-                // This window's local runtime
+            if (rt.status === 'Local' && rt.windowId) {
+                // Local runtime with an active window
                 statusIconHtml = `<span class="status-icon">🔵</span>`;
             } else if (isActiveInThisWindow) {
                 // This window's remote runtime
                 statusIconHtml = `<span class="status-icon">🔵</span>`;
-            } else if (rt.status === 'Local' && rt.windowId !== this._windowId) {
-                // Another window's local runtime
-                statusIconHtml = `<span class="status-icon">🟢</span>`;
-            } else if (rt.status === 'Active' && !isActiveInThisWindow) {
-                // Live but not this window's connection
+            } else if (rt.status === 'Active' && rt.windowId) {
+                // Remote runtime with an active window connected (from another window)
+                statusIconHtml = `<span class="status-icon">🔵</span>`;
+            } else if (rt.status === 'Active') {
+                // Active but no window connected yet
                 statusIconHtml = `<span class="status-icon">🟢</span>`;
             } else if (rt.status === 'Submitting') {
                 // SLURM job being submitted
@@ -3893,7 +3932,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             if (isThisWindowRuntime) {
                 headerRightHtml = `<span class="session-badge">this window</span>`;
             } else {
-                const switchBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="remote" title="Switch">&#x21C4;</button>`;
+                const switchDirection = rt.status === 'Local' ? 'local-window' : 'remote';
+                const switchBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="${switchDirection}" title="Switch">&#x21C4;</button>`;
                 const removeBtn = `<button class="remove-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Remove">✕</button>`;
                 headerRightHtml = `${switchBtn}${removeBtn}`;
             }
@@ -3907,14 +3947,32 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const wtParts = rt.wallTime.split(':').map(Number);
                 const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
                 const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
-                const tunnelInfo = rt.tunnelUrl
-                    ? `<span class="session-detail">&#x1F310; ${escapeHtml(rt.tunnelUrl)}</span>`
-                    : (rt.status === 'Active' ? `<span class="session-detail">&#x23F3; setting up tunnel...</span>` : '');
+                // Line 1: resource specs inline
+                const gpuPart = rt.gpu !== 'None' ? ` ${escapeHtml(rt.gpu)}` : '';
+                const line1 = `${escapeHtml(rt.cpus)} ${escapeHtml(rt.memory)}${gpuPart} ${wallTimeShort}`;
+                // Line 2: status + tunnel
+                let line2 = '';
+                if (rt.status === 'Active') {
+                    const deadlineMs = new Date(rt.submittedAt).getTime() + wtTotalMin * 60000;
+                    const countdownSpan = `<span class="session-countdown" data-deadline="${deadlineMs}"></span>`;
+                    if (rt.tunnelUrl) {
+                        line2 = `${countdownSpan} ${escapeHtml(rt.tunnelUrl)}`;
+                    } else {
+                        line2 = `${countdownSpan} setting up tunnel...`;
+                    }
+                } else if (rt.status === 'Submitting') {
+                    line2 = 'submitting job...';
+                } else if (rt.status === 'Pending') {
+                    line2 = 'queued, waiting for resources...';
+                } else if (rt.status === 'Failed') {
+                    line2 = rt.errorMessage ? `failed: ${escapeHtml(rt.errorMessage)}` : 'failed';
+                } else if (rt.status === 'Completed') {
+                    line2 = 'completed';
+                }
                 detailHtml = `
                     <div class="runtime-details">
-                        <span class="session-detail">&#x1F5A5;${escapeHtml(rt.cpus)} &#x1F4BE;${escapeHtml(rt.memory)} ${rt.gpu !== 'None' ? `&#x1F3AE;${escapeHtml(rt.gpu)} ` : ''}&#x23F1;${wallTimeShort}</span>
-                        <span class="session-detail">&#x2630;${escapeHtml(rt.queue)} &#x1F511;${escapeHtml(rt.allocation)}</span>${tunnelInfo}
-                        ${rt.status === 'Failed' && rt.errorMessage ? `<span class="session-error">${escapeHtml(rt.errorMessage)}</span>` : ''}
+                        <span class="session-detail">${escapeHtml(rt.queue)} ${escapeHtml(rt.allocation)} ${line1}</span>
+                        <span class="session-detail session-status-line">${line2}</span>
                     </div>`;
             }
 
@@ -4344,6 +4402,18 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             white-space: normal;
             margin-top: 2px;
         }
+        .session-countdown {
+            display: block;
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 2px;
+        }
+        .session-countdown.countdown-warning {
+            color: var(--vscode-editorWarning-foreground, #cca700);
+        }
+        .session-countdown.countdown-critical {
+            color: var(--vscode-errorForeground);
+        }
         .session-action-btn, .remove-session-btn {
             margin: 0;
             padding: 2px 4px;
@@ -4497,6 +4567,36 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
+
+        // Live countdown timer for active runtimes
+        function updateCountdowns() {
+            document.querySelectorAll('.session-countdown[data-deadline]').forEach(el => {
+                const deadline = parseInt(el.getAttribute('data-deadline'), 10);
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) {
+                    el.textContent = '⏱ expired';
+                    el.className = 'session-countdown countdown-critical';
+                } else {
+                    const totalSec = Math.floor(remaining / 1000);
+                    const hrs = Math.floor(totalSec / 3600);
+                    const mins = Math.floor((totalSec % 3600) / 60);
+                    const secs = totalSec % 60;
+                    const pad = (n) => String(n).padStart(2, '0');
+                    const timeStr = hrs > 0 ? hrs + ':' + pad(mins) + ':' + pad(secs) : pad(mins) + ':' + pad(secs);
+                    el.textContent = '⏱ ' + timeStr + ' remaining';
+                    const totalMin = totalSec / 60;
+                    if (totalMin <= 5) {
+                        el.className = 'session-countdown countdown-critical';
+                    } else if (totalMin <= 15) {
+                        el.className = 'session-countdown countdown-warning';
+                    } else {
+                        el.className = 'session-countdown';
+                    }
+                }
+            });
+        }
+        updateCountdowns();
+        setInterval(updateCountdowns, 1000);
 
         try {
         document.getElementById('refresh-sessions-btn')?.addEventListener('click', () => {
@@ -4967,10 +5067,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         if (!entry) { continue; }
 
                         // Determine new status icon
+                        // Blue = has an active VS Code window connected (any window)
                         let iconHtml;
-                        if (rt.isThisWindow || rt.isActiveInThisWindow) {
+                        if ((rt.status === 'Local' && rt.hasActiveWindow) || rt.isActiveInThisWindow || (rt.status === 'Active' && rt.hasActiveWindow)) {
                             iconHtml = '<span class="status-icon">🔵</span>';
-                        } else if ((rt.status === 'Local') || (rt.status === 'Active' && !rt.isActiveInThisWindow)) {
+                        } else if (rt.status === 'Active') {
                             iconHtml = '<span class="status-icon">🟢</span>';
                         } else if (rt.status === 'Submitting') {
                             iconHtml = '<span class="status-icon status-flash">🟡</span>';
@@ -4993,7 +5094,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             if (rt.isThisWindow || rt.isActiveInThisWindow) {
                                 headerRight.innerHTML = '<span class="session-badge">this window</span>';
                             } else {
-                                const switchBtn = '<button class="session-action-btn switch-btn" data-session-id="' + rt.id + '" data-direction="remote" title="Switch">&#x21C4;</button>';
+                                const switchDirection = rt.status === 'Local' ? 'local-window' : 'remote';
+                                const switchBtn = '<button class="session-action-btn switch-btn" data-session-id="' + rt.id + '" data-direction="' + switchDirection + '" title="Switch">&#x21C4;</button>';
                                 const removeBtn = '<button class="remove-session-btn" data-session-id="' + rt.id + '" title="Remove">✕</button>';
                                 headerRight.innerHTML = switchBtn + removeBtn;
                             }
@@ -5005,12 +5107,24 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             const wtParts = rt.wallTime.split(':').map(Number);
                             const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
                             const wallTimeShort = wtTotalMin >= 1440 ? Math.floor(wtTotalMin / 1440) + 'd' : wtTotalMin >= 60 ? Math.floor(wtTotalMin / 60) + 'hr' : wtTotalMin + 'min';
-                            const tunnelInfo = rt.tunnelUrl
-                                ? '<span class="session-detail">&#x1F310; ' + escapeHtml(rt.tunnelUrl) + '</span>'
-                                : (rt.status === 'Active' ? '<span class="session-detail">&#x23F3; setting up tunnel...</span>' : '');
-                            const errorHtml = (rt.status === 'Failed' && rt.errorMessage) ? '<span class="session-error">' + escapeHtml(rt.errorMessage) + '</span>' : '';
-                            const detailInner = '<span class="session-detail">&#x1F5A5;' + rt.cpus + ' &#x1F4BE;' + rt.memory + ' ' + (rt.gpu !== 'None' ? '&#x1F3AE;' + rt.gpu + ' ' : '') + '&#x23F1;' + wallTimeShort + '</span>'
-                                + '<span class="session-detail">&#x2630;' + rt.queue + ' &#x1F511;' + rt.allocation + '</span>' + tunnelInfo + errorHtml;
+                            const gpuPart = rt.gpu !== 'None' ? ' ' + escapeHtml(rt.gpu) : '';
+                            const line1 = escapeHtml(rt.queue) + ' ' + escapeHtml(rt.allocation) + ' ' + rt.cpus + ' ' + rt.memory + gpuPart + ' ' + wallTimeShort;
+                            let line2 = '';
+                            if (rt.status === 'Active') {
+                                const deadlineMs = new Date(rt.submittedAt).getTime() + wtTotalMin * 60000;
+                                const countdownSpan = '<span class="session-countdown" data-deadline="' + deadlineMs + '"></span>';
+                                line2 = rt.tunnelUrl ? countdownSpan + ' ' + escapeHtml(rt.tunnelUrl) : countdownSpan + ' setting up tunnel...';
+                            } else if (rt.status === 'Submitting') {
+                                line2 = 'submitting job...';
+                            } else if (rt.status === 'Pending') {
+                                line2 = 'queued, waiting for resources...';
+                            } else if (rt.status === 'Failed') {
+                                line2 = rt.errorMessage ? 'failed: ' + escapeHtml(rt.errorMessage) : 'failed';
+                            } else if (rt.status === 'Completed') {
+                                line2 = 'completed';
+                            }
+                            const detailInner = '<span class="session-detail">' + line1 + '</span>'
+                                + '<span class="session-detail session-status-line">' + line2 + '</span>';
 
                             if (existingDetails) {
                                 existingDetails.innerHTML = detailInner;
