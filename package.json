@@ -18,7 +18,7 @@
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -58,8 +58,8 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "package": "npx @vscode/vsce package --allow-star-activation",
-    "install-ext": "code --install-extension cybershuttle-0.0.1.vsix --force",
+    "package": "npx @vscode/vsce package",
+    "install-ext": "code --install-extension cybershuttle-0.0.1.vsix",
     "dev": "npm install && npm run compile && npm run package && npm run install-ext"
   },
   "devDependencies": {

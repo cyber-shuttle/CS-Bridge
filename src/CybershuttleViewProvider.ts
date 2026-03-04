@@ -29,7 +29,7 @@ interface SshHost {
     user?: string;
 }
 
-interface JobSession {
+interface Runtime {
     id: string;
     host: string;
     cpus: string;
@@ -38,8 +38,12 @@ interface JobSession {
     wallTime: string;
     queue: string;
     allocation: string;
-    status: 'Pending' | 'Active' | 'Submitting' | 'Failed' | 'Completed';
+    status: 'Local' | 'Pending' | 'Active' | 'Submitting' | 'Failed' | 'Completed';
     submittedAt: Date;
+    type: 'local' | 'remote';
+    // Window registration fields
+    windowId?: string;        // Stable per-window identifier (persisted in globalState)
+    heartbeat?: number;       // Unix timestamp of last heartbeat
     slurmJobId?: string;
     script?: string;
     errorMessage?: string;
@@ -64,7 +68,18 @@ interface JobSession {
     localFuseTunnelId?: string;
     localFuseConnectToken?: string;
     localFusePort?: number;
+    // SSH tunnel to compute node (for remote switch)
+    sshTunnelPid?: number;
+    sshTunnelLocalPort?: number;
 }
+
+interface Workspace {
+    id: string;
+    directoryPath: string;
+    directoryName: string;
+    runtimes: Runtime[];
+}
+
 
 export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sidebarView';
@@ -72,8 +87,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private _outputChannel: vscode.OutputChannel;
     private _sshControlDir: string;
-    private _jobSessions: JobSession[] = [];
-    private _activeTab: string = 'servers';
+    private _workspaces: Workspace[] = [];
+    private _activeTab: string = 'sessions';
     private _expandedHost: string | null = null;
     private _globalState: vscode.Memento;
     private _persistentShells: Map<string, PersistentShell> = new Map();
@@ -92,8 +107,36 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _countdownTimer?: ReturnType<typeof setInterval>;
     private _disposing = false;
     private _metrics: MetricsCollector;
+    private _windowId: string = '';
+    private _heartbeatTimer?: ReturnType<typeof setInterval>;
 
     private static readonly SESSIONS_KEY = 'cybershuttle.jobSessions';
+
+    private _allRuntimes(): Runtime[] {
+        return this._workspaces.flatMap(ws => ws.runtimes);
+    }
+
+    private _findRuntime(runtimeId: string): { workspace: Workspace; runtime: Runtime } | undefined {
+        for (const ws of this._workspaces) {
+            const rt = ws.runtimes.find(r => r.id === runtimeId);
+            if (rt) { return { workspace: ws, runtime: rt }; }
+        }
+        return undefined;
+    }
+
+    private _getOrCreateWorkspace(dirPath: string): Workspace {
+        let ws = this._workspaces.find(w => w.directoryPath === dirPath);
+        if (!ws) {
+            ws = {
+                id: crypto.randomBytes(4).toString('hex'),
+                directoryPath: dirPath,
+                directoryName: path.basename(dirPath) || dirPath,
+                runtimes: [],
+            };
+            this._workspaces.push(ws);
+        }
+        return ws;
+    }
 
     constructor(private readonly _extensionUri: vscode.Uri, globalState: vscode.Memento, metrics: MetricsCollector) {
         this._metrics = metrics;
@@ -118,41 +161,90 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._loadSessions();
         this._watchSessionsFile();
         this._updateStatusBar();
+
+        // Generate or retrieve a stable window ID for this VS Code window
+        this._windowId = this._globalState.get<string>('cybershuttle.windowId') || crypto.randomBytes(8).toString('hex');
+        this._globalState.update('cybershuttle.windowId', this._windowId);
+
+        // Auto-register this window as a Local session
+        this._registerWindow();
+
+        // Heartbeat every 30s to keep this window's session alive
+        this._heartbeatTimer = setInterval(() => this._heartbeat(), 30_000);
     }
 
     private _loadSessions() {
-        let raw: any[] = [];
+        let rawData: any = null;
         // Try to load from shared file first
         try {
             if (fs.existsSync(this._sessionsFilePath)) {
                 const content = fs.readFileSync(this._sessionsFilePath, 'utf-8');
-                raw = JSON.parse(content);
+                rawData = JSON.parse(content);
             }
         } catch {
-            raw = [];
+            rawData = null;
         }
+
         // One-time migration from globalState if file is empty/missing
-        if (raw.length === 0) {
+        if (!rawData || (Array.isArray(rawData) && rawData.length === 0)) {
             const legacy = this._globalState.get<any[]>(CybershuttleViewProvider.SESSIONS_KEY, []);
             if (legacy.length > 0) {
-                raw = legacy;
+                rawData = legacy;
                 // Write migrated data to file
                 try {
                     const tmpPath = this._sessionsFilePath + '.tmp';
-                    fs.writeFileSync(tmpPath, JSON.stringify(raw, null, 2));
+                    fs.writeFileSync(tmpPath, JSON.stringify(rawData, null, 2));
                     fs.renameSync(tmpPath, this._sessionsFilePath);
                 } catch { /* best effort */ }
                 // Clear legacy storage
                 this._globalState.update(CybershuttleViewProvider.SESSIONS_KEY, undefined);
             }
         }
-        this._jobSessions = raw.map(s => ({
-            ...s,
-            submittedAt: new Date(s.submittedAt),
-        }));
+
+        if (!rawData) {
+            this._workspaces = [];
+        } else if (Array.isArray(rawData) && rawData.length > 0 && rawData[0].runtimes !== undefined) {
+            // New Workspace[] format
+            this._workspaces = rawData.map((ws: any) => ({
+                ...ws,
+                runtimes: (ws.runtimes || []).map((r: any) => ({
+                    ...r,
+                    submittedAt: new Date(r.submittedAt),
+                })),
+            }));
+        } else if (Array.isArray(rawData)) {
+            // Legacy flat Runtime[] format — migrate by grouping by workspacePath
+            const flatSessions: any[] = rawData.map((s: any) => ({
+                ...s,
+                submittedAt: new Date(s.submittedAt),
+            }));
+            const wsMap = new Map<string, any[]>();
+            for (const s of flatSessions) {
+                const key = s.workspacePath || s.localWorkspaceFolder || 'unknown';
+                if (!wsMap.has(key)) { wsMap.set(key, []); }
+                wsMap.get(key)!.push(s);
+            }
+            this._workspaces = [];
+            for (const [dirPath, sessions] of wsMap) {
+                const runtimes: Runtime[] = sessions.map((s: any) => ({
+                    ...s,
+                    type: (s.isLocal || s.status === 'Local') ? 'local' as const : 'remote' as const,
+                }));
+                this._workspaces.push({
+                    id: crypto.randomBytes(4).toString('hex'),
+                    directoryPath: dirPath,
+                    directoryName: path.basename(dirPath) || dirPath,
+                    runtimes,
+                });
+            }
+        } else {
+            this._workspaces = [];
+        }
+
         // Reconcile orphaned local sessions: if the process died (e.g. VS Code
         // was closed), re-launch it so the session survives across restarts.
-        for (const session of this._jobSessions) {
+        for (const session of this._allRuntimes()) {
+            if (session.status === 'Local') { continue; }
             if (session.isLocal && session.status === 'Active' && session.localPid) {
                 try {
                     process.kill(session.localPid, 0);
@@ -162,7 +254,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
         }
         // Resume polling if any remote sessions are still in non-terminal states
-        const needsPoll = this._jobSessions.some(
+        const needsPoll = this._allRuntimes().some(
             s => s.slurmJobId && !s.isLocal
                 && s.status !== 'Failed' && s.status !== 'Completed'
         );
@@ -174,7 +266,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _saveSessions() {
         try {
             const tmpPath = this._sessionsFilePath + '.tmp';
-            fs.writeFileSync(tmpPath, JSON.stringify(this._jobSessions, null, 2));
+            fs.writeFileSync(tmpPath, JSON.stringify(this._workspaces, null, 2));
             fs.renameSync(tmpPath, this._sessionsFilePath);
             this._lastWriteTime = Date.now();
         } catch (err: any) {
@@ -194,13 +286,124 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    /**
+     * Register this VS Code window as a Local session if not already present.
+     */
+    private _registerWindow() {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        const dirPath = folder
+            ? (folder.uri.scheme === 'file' ? folder.uri.fsPath : folder.uri.toString())
+            : 'unknown';
+
+        let existing: { workspace: Workspace; runtime: Runtime } | undefined;
+        for (const w of this._workspaces) {
+            const rt = w.runtimes.find(r => r.windowId === this._windowId);
+            if (rt) { existing = { workspace: w, runtime: rt }; break; }
+        }
+
+        if (existing) {
+            // Update heartbeat only (workspace info lives on Workspace now)
+            existing.runtime.heartbeat = Date.now();
+            this._saveSessions();
+            return;
+        }
+
+        const ws = this._getOrCreateWorkspace(dirPath);
+        const runtime: Runtime = {
+            id: crypto.randomBytes(4).toString('hex'),
+            host: '',
+            cpus: '',
+            memory: '',
+            gpu: '',
+            wallTime: '',
+            queue: '',
+            allocation: '',
+            status: 'Local',
+            submittedAt: new Date(),
+            type: 'local',
+            windowId: this._windowId,
+            heartbeat: Date.now(),
+        };
+
+        ws.runtimes.push(runtime);
+        this._saveSessions();
+    }
+
+    /**
+     * Update heartbeat timestamp for this window's session.
+     */
+    private _heartbeat() {
+        this._pruneStaleWindows();
+        for (const ws of this._workspaces) {
+            const runtime = ws.runtimes.find(r => r.windowId === this._windowId);
+            if (runtime) {
+                runtime.heartbeat = Date.now();
+                this._saveSessions();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Remove runtimes whose heartbeat is older than 60s (stale windows).
+     * Does NOT prune the current window's own runtime or runtimes that
+     * have been promoted to remote (have a slurmJobId).
+     * Also removes workspaces that become empty after pruning.
+     */
+    private _pruneStaleWindows() {
+        const cutoff = Date.now() - 60_000;
+        let pruned = false;
+        for (const ws of this._workspaces) {
+            const before = ws.runtimes.length;
+            ws.runtimes = ws.runtimes.filter(s => {
+                if (!s.windowId) { return true; }
+                if (s.windowId === this._windowId) { return true; }
+                if (s.slurmJobId) { return true; }
+                if (s.status !== 'Local') { return true; } // Promoted sessions survive
+                if (s.heartbeat && s.heartbeat > cutoff) { return true; }
+                return false;
+            });
+            if (ws.runtimes.length < before) { pruned = true; }
+        }
+        // Remove empty workspaces
+        const wsBefore = this._workspaces.length;
+        this._workspaces = this._workspaces.filter(ws => ws.runtimes.length > 0);
+        if (this._workspaces.length < wsBefore) { pruned = true; }
+        // Save only if something was actually pruned
+        if (pruned) {
+            this._saveSessions();
+        }
+    }
+
     public dispose() {
         this._disposing = true;
+        // Stop heartbeat
+        if (this._heartbeatTimer) {
+            clearInterval(this._heartbeatTimer);
+            this._heartbeatTimer = undefined;
+        }
+        // Stop countdown timer
+        if (this._countdownTimer) {
+            clearInterval(this._countdownTimer);
+            this._countdownTimer = undefined;
+        }
+        this._statusBarItem.dispose();
+        // Remove this window's Local session (keep promoted sessions)
+        for (const ws of this._workspaces) {
+            const myRuntime = ws.runtimes.find(r => r.windowId === this._windowId);
+            if (myRuntime && myRuntime.status === 'Local') {
+                ws.runtimes = ws.runtimes.filter(r => r.id !== myRuntime.id);
+                this._saveSessions();
+                break;
+            }
+        }
+        // Remove empty workspaces
+        this._workspaces = this._workspaces.filter(ws => ws.runtimes.length > 0);
         fs.unwatchFile(this._sessionsFilePath);
         this._stopSessionPolling();
         this.disposePersistentShells();
         this.stopAllLogStreams();
-        for (const session of this._jobSessions) {
+        for (const session of this._allRuntimes()) {
             this.cleanupFuseMount(session);
             this.cleanupLocalFuseServer(session);
         }
@@ -213,7 +416,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      *   - Local sessions: ssh-remote+cs-tunnel-{id}
      *   - Remote SLURM sessions: ssh-remote+{hostName}
      */
-    private _detectActiveSession(): JobSession | undefined {
+    private _detectActiveSession(): Runtime | undefined {
+        // First, check if this window has its own registered runtime
+        const allRuntimes = this._allRuntimes();
+        const mySession = allRuntimes.find(s => s.windowId === this._windowId);
+        if (mySession) { return mySession; }
+
         const folder = vscode.workspace.workspaceFolders?.[0];
         if (!folder || folder.uri.scheme !== 'vscode-remote') {
             return undefined;
@@ -223,15 +431,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const localMatch = authority.match(/^ssh-remote\+cs-tunnel-(.+)$/);
         if (localMatch) {
             const sessionId = localMatch[1];
-            return this._jobSessions.find(s => s.id === sessionId);
+            return allRuntimes.find(s => s.id === sessionId);
         }
         // Remote SLURM session: ssh-remote+{hostName}
         const remoteMatch = authority.match(/^ssh-remote\+(.+)$/);
         if (remoteMatch) {
             const hostName = remoteMatch[1];
             // Prefer Active sessions when matching by host
-            return this._jobSessions.find(s => !s.isLocal && s.host === hostName && s.status === 'Active')
-                || this._jobSessions.find(s => !s.isLocal && s.host === hostName);
+            return allRuntimes.find(s => !s.isLocal && s.host === hostName && s.status === 'Active')
+                || allRuntimes.find(s => !s.isLocal && s.host === hostName);
         }
         return undefined;
     }
@@ -256,7 +464,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 this._sessionPollBusy = false;
             }
             // Stop polling if no sessions need monitoring
-            const needsPoll = this._jobSessions.some(
+            const needsPoll = this._allRuntimes().some(
                 s => s.slurmJobId && !s.isLocal
                     && s.status !== 'Failed' && s.status !== 'Completed'
             );
@@ -625,6 +833,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this.refresh();
                     break;
                 }
+                case 'switchToWindow': {
+                    this.switchToWindow(data.sessionId);
+                    break;
+                }
                 case 'switchTab': {
                     this._activeTab = data.tab;
                     break;
@@ -638,7 +850,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     break;
                 }
                 case 'createJob': {
-                    this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime, data.queue, data.allocation);
+                    this.createJob(data.host, data.cpus, data.memory, data.gpu, data.wallTime, data.queue, data.allocation, data.workspaceId);
                     break;
                 }
                 case 'queryAssociations': {
@@ -654,14 +866,15 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     break;
                 }
                 case 'removeSession': {
-                    const removing = this._jobSessions.find(s => s.id === data.sessionId);
-                    if (removing?.isLocal) {
-                        this.stopLocalSession(data.sessionId);
+                    const found = this._findRuntime(data.sessionId);
+                    if (found) {
+                        if (found.runtime.isLocal) { this.stopLocalSession(data.sessionId); }
+                        this.cleanupLocalFuseServer(found.runtime);
+                        found.workspace.runtimes = found.workspace.runtimes.filter(r => r.id !== data.sessionId);
+                        if (found.workspace.runtimes.length === 0) {
+                            this._workspaces = this._workspaces.filter(w => w.id !== found.workspace.id);
+                        }
                     }
-                    if (removing) {
-                        this.cleanupLocalFuseServer(removing);
-                    }
-                    this._jobSessions = this._jobSessions.filter(s => s.id !== data.sessionId);
                     this._saveSessions();
                     this.refresh();
                     break;
@@ -757,7 +970,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Generates a SLURM script and sends it to the webview for preview
      * before actual submission.
      */
-    private async createJob(hostName: string, cpus: string, memory: string, gpu: string, wallTime: string, queue: string, allocation: string) {
+    private async createJob(hostName: string, cpus: string, memory: string, gpu: string, wallTime: string, queue: string, allocation: string, workspaceId?: string) {
+        // Guard: remove any existing unsubmitted session for this host to prevent duplicates
+        // (can happen if the user clicks "Submit" while a preview is already showing).
+        for (const ws of this._workspaces) {
+            ws.runtimes = ws.runtimes.filter(
+                s => !(s.host === hostName && s.status === 'Pending' && !s.slurmJobId)
+            );
+        }
+        this._workspaces = this._workspaces.filter(ws => ws.runtimes.length > 0);
+
         const sessionId = crypto.randomBytes(4).toString('hex');
 
         let authToken: string;
@@ -770,7 +992,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         const script = this.generateSlurmScript({ cpus, memory, gpu, wallTime, queue, allocation, authToken });
 
-        const session: JobSession = {
+        // Prefer workspace identified by workspaceId (from host picker); fall back to current folder
+        let ws = workspaceId ? this._workspaces.find(w => w.id === workspaceId) : undefined;
+        if (!ws) {
+            const folder = vscode.workspace.workspaceFolders?.[0];
+            const dirPath = folder
+                ? (folder.uri.scheme === 'file' ? folder.uri.fsPath : folder.uri.toString())
+                : 'unknown';
+            ws = this._getOrCreateWorkspace(dirPath);
+        }
+        const session: Runtime = {
             id: sessionId,
             host: hostName,
             cpus,
@@ -781,13 +1012,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             allocation,
             status: 'Pending',
             submittedAt: new Date(),
+            type: 'remote',
             script,
         };
+        ws.runtimes.push(session);
 
         // Store the session (not yet submitted) and send preview to webview
-        this._jobSessions.push(session);
         this._saveSessions();
-        this.postMessage({ type: 'scriptPreview', sessionId, host: hostName, script });
+        this.postMessage({ type: 'scriptPreview', sessionId: session.id, host: hostName, script });
     }
 
     /** Patterns that match remote shell initialization noise (module system, MOTD, etc.) */
@@ -1100,7 +1332,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Submit a previously previewed SLURM job via sbatch over SSH.
      */
     private async submitJob(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session || !session.script) {
             vscode.window.showErrorMessage('Session not found or script missing.');
             return;
@@ -1258,7 +1490,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Relaunch a failed session by resubmitting its script.
      */
     private async viewSessionLogs(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session || !session.slurmJobId) {
             vscode.window.showErrorMessage('Session not found or no SLURM job ID available.');
             return;
@@ -1306,7 +1538,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session || !session.slurmJobId) {
             return;
         }
@@ -1406,7 +1638,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async relaunchSession(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session || !session.script) {
             vscode.window.showErrorMessage('Session not found or script missing.');
             return;
@@ -1425,7 +1657,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Cancel a pending job preview (remove the session that was created during preview).
      */
     private cancelJobPreview(sessionId: string) {
-        this._jobSessions = this._jobSessions.filter(s => s.id !== sessionId);
+        const found = this._findRuntime(sessionId);
+        if (found) {
+            found.workspace.runtimes = found.workspace.runtimes.filter(r => r.id !== sessionId);
+            if (found.workspace.runtimes.length === 0) {
+                this._workspaces = this._workspaces.filter(w => w.id !== found.workspace.id);
+            }
+        }
         this._saveSessions();
         this.postMessage({ type: 'scriptPreviewDismissed' });
     }
@@ -1486,7 +1724,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `      token: "tunnel_token"`,
         ].join('\n');
 
-        const session: JobSession = {
+        const folder = vscode.workspace.workspaceFolders?.[0];
+        const dirPath = folder
+            ? (folder.uri.scheme === 'file' ? folder.uri.fsPath : folder.uri.toString())
+            : localWorkdir;
+        const ws = this._getOrCreateWorkspace(dirPath);
+
+        const session: Runtime = {
             id: sessionId,
             host: 'local',
             cpus: '-',
@@ -1497,14 +1741,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             allocation: '-',
             status: 'Submitting',
             submittedAt: new Date(),
+            type: 'local',
             script: workflowYaml,
             isLocal: true,
+            localWorkdir: localWorkdir,
+            connectedRemotePath: `${os.homedir()}/sessions/${sessionId}`,
         };
 
-        session.localWorkdir = localWorkdir;
-        session.connectedRemotePath = `${os.homedir()}/sessions/${sessionId}`;
-
-        this._jobSessions.push(session);
+        ws.runtimes.push(session);
         this._activeTab = 'sessions';
         this._saveSessions();
         this.refresh();
@@ -1528,7 +1772,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Re-launch a local linkspan session whose process died (e.g. after VS Code restart).
      * Clears stale runtime state, cleans up the old devtunnel, and re-runs the saved workflow.
      */
-    private async _resumeLocalSession(session: JobSession) {
+    private async _resumeLocalSession(session: Runtime) {
         this._outputChannel.appendLine(`\n--- Resuming local session ${session.id} ---`);
 
         // Kill stale FUSE mount / SSH tunnel if still alive
@@ -1574,7 +1818,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Spawn a linkspan process for a local session, wire up output parsing and lifecycle handlers.
      * Used by both testLocal() (new sessions) and _resumeLocalSession() (restarted sessions).
      */
-    private async _launchLinkspanProcess(session: JobSession, authToken: string) {
+    private async _launchLinkspanProcess(session: Runtime, authToken: string) {
         const linkspanPath = await this.ensureLocalLinkspan();
         const proc = spawn(linkspanPath, ['--port', '0', '--tunnel-auth-token', authToken, '--workflow', '-'], {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -1663,7 +1907,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             // During extension disposal, don't update session state — we want
             // sessions to remain Active so they're resumed on next startup.
             if (this._disposing) { return; }
-            const s = this._jobSessions.find(s => s.id === session.id);
+            const s = this._findRuntime(session.id)?.runtime;
             if (s) {
                 // Only update status if not already marked as Failed by error parsing
                 if (s.status !== 'Failed') {
@@ -1683,7 +1927,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         proc.on('error', (err) => {
             this._localProcesses.delete(session.id);
             if (this._disposing) { return; }
-            const s = this._jobSessions.find(s => s.id === session.id);
+            const s = this._findRuntime(session.id)?.runtime;
             if (s) {
                 s.status = 'Failed';
                 s.errorMessage = err.message;
@@ -1700,7 +1944,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Start a background linkspan process serving the local workdir over FUSE
      * with a devtunnel, so a remote session can mount it.
      */
-    private async startLocalFuseServer(session: JobSession, authToken: string): Promise<void> {
+    private async startLocalFuseServer(session: Runtime, authToken: string): Promise<void> {
         const workdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!workdir) {
             this._outputChannel.appendLine('[fuse-server] No workspace folder open, skipping local FUSE server');
@@ -1838,7 +2082,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * but the VS Code connection uses the direct SSH path.
      */
     private async connectLocalSession(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session) {
             vscode.window.showErrorMessage('Session not found.');
             return;
@@ -1850,29 +2094,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Write an SSH config entry (remove any existing entry first)
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
         const hostAlias = `cs-tunnel-${sessionId}`;
-        try {
-            const existing = fs.readFileSync(sshConfigPath, 'utf-8');
-            const re = new RegExp(`\\n# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`, 'g');
-            fs.writeFileSync(sshConfigPath, existing.replace(re, ''));
-        } catch { /* ignore if file doesn't exist yet */ }
-
-        const configBlock = [
-            ``,
-            `# CS-Bridge auto-generated for session ${sessionId}`,
-            `Host ${hostAlias}`,
-            `    HostName 127.0.0.1`,
-            `    Port ${session.sshPort}`,
-            `    User user`,
-            `    StrictHostKeyChecking no`,
-            `    UserKnownHostsFile /dev/null`,
-        ].join('\n');
-
-        try {
-            fs.appendFileSync(sshConfigPath, configBlock + '\n');
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to update SSH config: ${err.message}`);
+        if (!this._writeSshConfigEntry(sessionId, hostAlias, '127.0.0.1', session.sshPort, 'user')) {
             return;
         }
 
@@ -1911,6 +2134,51 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Remove any existing CS-Bridge SSH config entry for the session and write a
+     * fresh one. Returns true on success, false if the append failed (an error
+     * message is shown to the user in that case).
+     */
+    private _writeSshConfigEntry(
+        sessionId: string,
+        hostAlias: string,
+        hostname: string,
+        port: number,
+        user: string,
+    ): boolean {
+        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
+
+        // Remove any existing entry for this session
+        try {
+            const existing = fs.readFileSync(sshConfigPath, 'utf-8');
+            const re = new RegExp(
+                `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`,
+                'gm'
+            );
+            fs.writeFileSync(sshConfigPath, existing.replace(re, ''));
+        } catch { /* ignore if file doesn't exist yet */ }
+
+        const configBlock = [
+            ``,
+            `# CS-Bridge auto-generated for session ${sessionId}`,
+            `Host ${hostAlias}`,
+            `    HostName ${hostname}`,
+            `    Port ${port}`,
+            `    User ${user}`,
+            `    StrictHostKeyChecking no`,
+            `    UserKnownHostsFile /dev/null`,
+        ].join('\n');
+
+        try {
+            fs.appendFileSync(sshConfigPath, configBlock + '\n');
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to update SSH config: ${err.message}`);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Mount a remote FUSE filesystem locally via NFS using the linkspan binary.
      *
      * For local sessions: connects directly to 127.0.0.1:<fusePort>.
@@ -1918,7 +2186,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * node to the compute node's FUSE port, then mounts via NFS.
      */
     private async launchFuseMount(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session || !session.remoteFusePort) {
             return;
         }
@@ -1964,7 +2232,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
             tunnelProc.on('close', (code) => {
                 this._outputChannel.appendLine(`[fuse-tunnel] SSH tunnel exited (code ${code})`);
-                const s = this._jobSessions.find(s => s.id === sessionId);
+                const s = this._findRuntime(sessionId)?.runtime;
                 if (s) {
                     s.fuseTunnelPid = undefined;
                 }
@@ -2010,7 +2278,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         });
 
         proc.on('close', () => {
-            const s = this._jobSessions.find(s => s.id === sessionId);
+            const s = this._findRuntime(sessionId)?.runtime;
             if (s) {
                 s.fuseMountPid = undefined;
                 s.localMountPath = undefined;
@@ -2038,7 +2306,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     /**
      * Kill FUSE mount process and SSH tunnel for a session.
      */
-    private cleanupFuseMount(session: JobSession) {
+    private cleanupFuseMount(session: Runtime) {
         if (session.fuseMountPid) {
             try { process.kill(session.fuseMountPid); } catch { /* already dead */ }
             session.fuseMountPid = undefined;
@@ -2048,12 +2316,17 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             try { process.kill(session.fuseTunnelPid); } catch { /* already dead */ }
             session.fuseTunnelPid = undefined;
         }
+        if (session.sshTunnelPid) {
+            try { process.kill(session.sshTunnelPid); } catch { /* already dead */ }
+            session.sshTunnelPid = undefined;
+            session.sshTunnelLocalPort = undefined;
+        }
     }
 
     /**
      * Kill local FUSE server process and delete its devtunnel (Mac→HPC mount).
      */
-    private cleanupLocalFuseServer(session: JobSession) {
+    private cleanupLocalFuseServer(session: Runtime) {
         if (session.localFuseServerPid) {
             try { process.kill(session.localFuseServerPid); } catch { /* already dead */ }
             session.localFuseServerPid = undefined;
@@ -2070,7 +2343,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Stop a remote SLURM session by cancelling the job via scancel.
      */
     private async stopRemoteSession(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session || !session.slurmJobId) {
             vscode.window.showErrorMessage('Session not found or no SLURM job ID.');
             return;
@@ -2121,7 +2394,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     private stopLocalSession(sessionId: string) {
         // Kill FUSE mount helper and SSH tunnel if running
-        const fuseSession = this._jobSessions.find(s => s.id === sessionId);
+        const fuseSession = this._findRuntime(sessionId)?.runtime;
         if (fuseSession) {
             this.cleanupFuseMount(fuseSession);
             this.cleanupLocalFuseServer(fuseSession);
@@ -2133,7 +2406,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             proc.kill();
             this._localProcesses.delete(sessionId);
         } else {
-            const session = this._jobSessions.find(s => s.id === sessionId);
+            const session = this._findRuntime(sessionId)?.runtime;
             if (session?.localPid) {
                 try { process.kill(session.localPid, 'SIGTERM'); } catch { /* already dead */ }
             }
@@ -2148,14 +2421,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
         try {
             const content = fs.readFileSync(sshConfigPath, 'utf-8');
-            const re = new RegExp(`\\n# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`, 'g');
+            const re = new RegExp(`(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`, 'gm');
             const cleaned = content.replace(re, '');
             if (cleaned !== content) {
                 fs.writeFileSync(sshConfigPath, cleaned);
             }
         } catch { /* ignore cleanup errors */ }
 
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (session) {
             session.status = 'Completed';
             session.localPid = undefined;
@@ -2182,7 +2455,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      */
     private async refreshSessions() {
         // Only check sessions that are still in a non-terminal state
-        const sessionsToCheck = this._jobSessions.filter(
+        const sessionsToCheck = this._allRuntimes().filter(
             s => s.slurmJobId && s.status !== 'Failed' && s.status !== 'Completed'
         );
         if (sessionsToCheck.length === 0) {
@@ -2283,7 +2556,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * fuse_server_port) and workflow step errors.
      * Called during refreshSessions when a job is RUNNING.
      */
-    private async parseSlurmSessionLogs(session: JobSession) {
+    private async parseSlurmSessionLogs(session: Runtime) {
         if (!session.slurmJobId) { return; }
         // Skip if we already captured all workflow variables
         if (session.tunnelUrl && session.tunnelToken && session.sshPort && session.remoteFusePort) { return; }
@@ -2456,7 +2729,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      */
     private async connectToSshHost(hostName: string) {
         // Find matching session for this host to save context
-        const matchedSession = this._jobSessions.find(
+        const matchedSession = this._allRuntimes().find(
             s => !s.isLocal && s.host === hostName && s.status === 'Active'
         );
 
@@ -2498,10 +2771,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     /**
      * Switch the current window to the remote session.
      * For local sessions, connects via ssh-remote+cs-tunnel-{id}.
-     * For remote sessions, connects via ssh-remote+{host}.
+     * For remote sessions with compute node SSH, sets up port forwarding
+     * through the login node and connects via ssh-remote+cs-session-{id}.
+     * For remote sessions without compute node info, connects via ssh-remote+{host}.
      */
     private async switchToRemote(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session) {
             vscode.window.showErrorMessage('Session not found.');
             return;
@@ -2518,11 +2793,26 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 session.localWorkspaceFolder = folder.uri.fsPath;
             }
 
-            // Resolve remote workspace path — prefer the FUSE workspace path
+            // Resolve remote workspace path
             let remotePath = session.connectedRemotePath;
+
+            // Resolve ~ to absolute path via SSH to login node
+            if (remotePath && remotePath.startsWith('~')) {
+                progress.report({ message: 'Resolving remote home directory...' });
+                try {
+                    const result = await this.runRemoteCommand(session.host, 'echo $HOME');
+                    const remoteHome = result.stdout.trim();
+                    if (remoteHome) {
+                        remotePath = remotePath.replace(/^~/, remoteHome);
+                        session.connectedRemotePath = remotePath;
+                    }
+                } catch {
+                    // Fall through — will try with unresolved path
+                }
+            }
+
             if (!remotePath) {
                 if (session.isLocal && session.localWorkdir) {
-                    // Local session: workspace is at ~/sessions/<id> on the remote side
                     remotePath = `${os.homedir()}/sessions/${sessionId}`;
                 } else {
                     progress.report({ message: 'Resolving remote home directory...' });
@@ -2540,28 +2830,78 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             progress.report({ message: 'Opening remote folder...' });
 
             if (session.isLocal) {
+                // Local sessions: connect via devtunnel SSH on localhost
                 const hostAlias = `cs-tunnel-${sessionId}`;
-                const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
-                try {
-                    const existing = fs.readFileSync(sshConfigPath, 'utf-8');
-                    if (!existing.includes(`Host ${hostAlias}`)) {
-                        const configBlock = [
-                            ``,
-                            `# CS-Bridge auto-generated for session ${sessionId}`,
-                            `Host ${hostAlias}`,
-                            `    HostName 127.0.0.1`,
-                            `    Port ${session.sshPort}`,
-                            `    User user`,
-                            `    StrictHostKeyChecking no`,
-                            `    UserKnownHostsFile /dev/null`,
-                        ].join('\n');
-                        fs.appendFileSync(sshConfigPath, configBlock + '\n');
-                    }
-                } catch (err: any) {
-                    vscode.window.showErrorMessage(`Failed to update SSH config: ${err.message}`);
+                if (!this._writeSshConfigEntry(sessionId, hostAlias, '127.0.0.1', session.sshPort!, 'user')) {
                     return;
                 }
 
+                this._outputChannel.appendLine(
+                    `[switch] Opening remote folder: scheme=vscode-remote, authority=ssh-remote+${hostAlias}, path=${remotePath}`
+                );
+                vscode.commands.executeCommand(
+                    'vscode.openFolder',
+                    vscode.Uri.from({
+                        scheme: 'vscode-remote',
+                        authority: `ssh-remote+${hostAlias}`,
+                        path: remotePath,
+                    }),
+                    { forceNewWindow: false }
+                );
+            } else if (session.sshPort && session.computeNode) {
+                // Remote sessions with compute node SSH: forward through login node
+                const hostAlias = `cs-session-${sessionId}`;
+
+                // Set up SSH port forwarding if not already active
+                if (!session.sshTunnelPid || !session.sshTunnelLocalPort) {
+                    progress.report({ message: 'Setting up SSH tunnel to compute node...' });
+                    const localPort = await this.findFreePort();
+                    if (!localPort) {
+                        vscode.window.showErrorMessage('Could not find a free local port for SSH tunnel.');
+                        return;
+                    }
+
+                    this._outputChannel.appendLine(
+                        `[switch] SSH tunnel: localhost:${localPort} → ${session.computeNode}:${session.sshPort} via ${session.host}`
+                    );
+
+                    const tunnelProc = spawn('ssh', [
+                        '-N',
+                        '-L', `${localPort}:${session.computeNode}:${session.sshPort}`,
+                        session.host,
+                    ], {
+                        stdio: ['ignore', 'pipe', 'pipe'],
+                    });
+
+                    session.sshTunnelPid = tunnelProc.pid;
+                    session.sshTunnelLocalPort = localPort;
+
+                    tunnelProc.stderr!.on('data', (data: Buffer) => {
+                        this._outputChannel.appendLine(`[ssh-tunnel/err] ${data.toString().trimEnd()}`);
+                    });
+
+                    tunnelProc.on('close', (code) => {
+                        this._outputChannel.appendLine(`[ssh-tunnel] SSH tunnel exited (code ${code})`);
+                        const s = this._findRuntime(sessionId)?.runtime;
+                        if (s) {
+                            s.sshTunnelPid = undefined;
+                            s.sshTunnelLocalPort = undefined;
+                        }
+                    });
+
+                    // Give the SSH tunnel a moment to establish
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    this._saveSessions();
+                }
+
+                // Create/update SSH config entry for the compute node
+                if (!this._writeSshConfigEntry(sessionId, hostAlias, '127.0.0.1', session.sshTunnelLocalPort!, 'user')) {
+                    return;
+                }
+
+                this._outputChannel.appendLine(
+                    `[switch] Opening remote folder: scheme=vscode-remote, authority=ssh-remote+${hostAlias}, path=${remotePath}`
+                );
                 vscode.commands.executeCommand(
                     'vscode.openFolder',
                     vscode.Uri.from({
@@ -2572,6 +2912,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     { forceNewWindow: false }
                 );
             } else {
+                // Remote sessions without compute node: connect to login node
+                this._outputChannel.appendLine(
+                    `[switch] Opening remote folder: scheme=vscode-remote, authority=ssh-remote+${session.host}, path=${remotePath}`
+                );
                 vscode.commands.executeCommand(
                     'vscode.openFolder',
                     vscode.Uri.from({
@@ -2589,7 +2933,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Switch back to the local workspace folder from a remote session.
      */
     private async switchToLocal(sessionId: string) {
-        const session = this._jobSessions.find(s => s.id === sessionId);
+        const session = this._findRuntime(sessionId)?.runtime;
         if (!session) {
             vscode.window.showErrorMessage('Session not found.');
             return;
@@ -2602,6 +2946,26 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             vscode.Uri.file(localPath),
             { forceNewWindow: false }
         );
+    }
+
+    /**
+     * Open the workspace folder for a Local session in the current window.
+     */
+    private switchToWindow(sessionId: string) {
+        const found = this._findRuntime(sessionId);
+        if (!found) {
+            vscode.window.showErrorMessage('Session not found.');
+            return;
+        }
+        const dirPath = found.workspace.directoryPath;
+        if (!dirPath || dirPath === 'unknown') {
+            vscode.window.showErrorMessage('Session not found or no workspace path.');
+            return;
+        }
+        const uri = dirPath.includes('://')
+            ? vscode.Uri.parse(dirPath)
+            : vscode.Uri.file(dirPath);
+        vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
     }
 
     /**
@@ -2790,6 +3154,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Refresh the webview content
      */
     public refresh() {
+        this._pruneStaleWindows();
         if (this._view) {
             this._view.webview.html = this._getHtmlForWebview(this._view.webview);
             // Re-send cached associations so expanded host keeps its partition data
@@ -2811,7 +3176,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     private _updateStatusBar() {
         const session = this._detectActiveSession();
-        if (!session || session.status !== 'Active') {
+        if (!session || session.status === 'Local' || session.status !== 'Active') {
             this._statusBarItem.hide();
             if (this._countdownTimer) {
                 clearInterval(this._countdownTimer);
@@ -2948,89 +3313,179 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `).join('')
             : '<p class="empty-message">No SSH hosts found in ~/.ssh/config</p>';
 
-        // Build sessions HTML
+        // Build sessions HTML — workspace-grouped cards
         const activeSession = this._detectActiveSession();
-        const sessionsHtml = this._jobSessions.length > 0
-            ? this._jobSessions.map(session => {
-                const now = new Date();
-                const sub = session.submittedAt;
-                const diffMs = now.getTime() - sub.getTime();
-                const diffMin = Math.floor(diffMs / 60000);
-                const diffHr = Math.floor(diffMin / 60);
-                const diffDay = Math.floor(diffHr / 24);
-                const timeAgo = diffDay > 0 ? `${diffDay}d ago` : diffHr > 0 ? `${diffHr}h ago` : diffMin > 0 ? `${diffMin}m ago` : 'just now';
-                const statusIcon = session.status === 'Active' ? '🟢' : session.status === 'Failed' ? '🔴' : session.status === 'Completed' ? '⚪' : session.status === 'Submitting' ? '🔵' : '🟡';
-                const hasLogs = !!session.slurmJobId;
-                const isLocal = !!session.isLocal;
-                const isActiveInThisWindow = activeSession?.id === session.id;
 
-                // Action buttons differ by session type and status.
-                // When the session is active in this remote window, show Switch (to local) + Stop.
-                // When ready in a local window, show Switch (to remote) + Stop.
-                let actionButtons: string;
-                const switchToLocalBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(session.id)}" data-direction="local" title="Switch to local workspace"><i class="codicon codicon-arrow-swap"></i></button>`;
-                const switchToRemoteBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(session.id)}" data-direction="remote" title="Switch to remote session"><i class="codicon codicon-arrow-swap"></i></button>`;
-                const stopLocalBtn = `<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(session.id)}" title="Stop"><i class="codicon codicon-debug-stop"></i></button>`;
-                const stopRemoteBtn = `<button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(session.id)}" title="Cancel Job"><i class="codicon codicon-debug-stop"></i></button>`;
-                const spinner = `<i class="codicon codicon-loading codicon-modifier-spin session-action-spinner"></i>`;
+        // Helper: build runtime row HTML for one Runtime
+        const buildRuntimeRow = (rt: Runtime): string => {
+            const now = new Date();
+            const sub = rt.submittedAt;
+            const diffMs = now.getTime() - sub.getTime();
+            const diffMin = Math.floor(diffMs / 60000);
+            const diffHr = Math.floor(diffMin / 60);
+            const diffDay = Math.floor(diffHr / 24);
+            const timeAgo = diffDay > 0 ? `${diffDay}d ago` : diffHr > 0 ? `${diffHr}h ago` : diffMin > 0 ? `${diffMin}m ago` : 'just now';
+            const statusIcon = rt.status === 'Local' ? '🟣' : rt.status === 'Active' ? '🟢' : rt.status === 'Failed' ? '🔴' : rt.status === 'Completed' ? '⚪' : rt.status === 'Submitting' ? '🔵' : '🟡';
+            const hasLogs = !!rt.slurmJobId;
+            const isLocal = !!rt.isLocal;
+            const isActiveInThisWindow = activeSession?.id === rt.id;
 
-                if (session.status === 'Submitting') {
-                    actionButtons = spinner;
-                } else if (isActiveInThisWindow) {
-                    // This remote window is connected to this session — offer switch back to local
-                    actionButtons = `${switchToLocalBtn}${isLocal ? stopLocalBtn : stopRemoteBtn}`;
-                } else if (isLocal) {
-                    if (session.status === 'Active') {
-                        if (session.sshPort) {
-                            actionButtons = `${switchToRemoteBtn}${stopLocalBtn}`;
-                        } else {
-                            actionButtons = `${spinner}${stopLocalBtn}`;
-                        }
-                    } else {
-                        actionButtons = `<button class="session-action-btn relaunch-local-btn" data-session-id="${escapeHtml(session.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
-                    }
-                } else if (session.status === 'Failed' || session.status === 'Completed') {
-                    actionButtons = `<button class="session-action-btn relaunch-session-btn" data-session-id="${escapeHtml(session.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
-                } else if (session.status === 'Pending' || (session.status === 'Active' && !session.tunnelUrl)) {
-                    actionButtons = `${spinner}${stopRemoteBtn}`;
-                } else {
-                    // Remote, Active, tunnelUrl ready
-                    actionButtons = `${switchToRemoteBtn}${stopRemoteBtn}`;
-                }
+            const switchToLocalBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local" title="Switch to local workspace"><i class="codicon codicon-arrow-swap"></i></button>`;
+            const switchToRemoteBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="remote" title="Switch to remote session"><i class="codicon codicon-arrow-swap"></i></button>`;
+            const stopLocalBtn = `<button class="session-action-btn stop-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Stop"><i class="codicon codicon-debug-stop"></i></button>`;
+            const stopRemoteBtn = `<button class="session-action-btn stop-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Cancel Job"><i class="codicon codicon-debug-stop"></i></button>`;
+            const spinner = `<i class="codicon codicon-loading codicon-modifier-spin session-action-spinner"></i>`;
 
-                // Detail lines differ for local vs remote
-                let detailHtml: string;
-                if (isLocal) {
-                    const tunnelInfo = session.tunnelUrl
-                        ? `<span class="session-detail"><i class="codicon codicon-globe"></i> ${escapeHtml(session.tunnelUrl)}</span>`
-                        : (session.status === 'Active' ? `<span class="session-detail"><i class="codicon codicon-loading codicon-modifier-spin"></i> setting up tunnel...</span>` : '');
-                    detailHtml = `<span class="session-detail"><i class="codicon codicon-terminal"></i> local linkspan${session.localPid ? ` (pid ${session.localPid})` : ''}${session.sshPort ? ` <i class="codicon codicon-plug"></i> ssh :${session.sshPort}` : ''}</span>${tunnelInfo}`;
-                } else {
-                    const wtParts = session.wallTime.split(':').map(Number);
-                    const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
-                    const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
-                    const tunnelInfo = session.tunnelUrl
-                        ? `<span class="session-detail"><i class="codicon codicon-globe"></i> ${escapeHtml(session.tunnelUrl)}</span>`
-                        : (session.status === 'Active' ? `<span class="session-detail"><i class="codicon codicon-loading codicon-modifier-spin"></i> setting up tunnel...</span>` : '');
-                    detailHtml = `<span class="session-detail"><i class="codicon codicon-server-process"></i>${escapeHtml(session.cpus)} <i class="codicon codicon-circuit-board"></i>${escapeHtml(session.memory)} ${session.gpu !== 'None' ? `<i class="codicon codicon-dashboard"></i>${escapeHtml(session.gpu)} ` : ''}<i class="codicon codicon-clock"></i>${wallTimeShort}</span>
-                            <span class="session-detail"><i class="codicon codicon-layers"></i>${escapeHtml(session.queue)} <i class="codicon codicon-key"></i>${escapeHtml(session.allocation)}</span>${tunnelInfo}`;
-                }
-
+            if (rt.status === 'Local') {
+                const isThisWindow = rt.windowId === this._windowId;
+                const switchWindowBtn = `<button class="session-action-btn switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local-window" title="Switch to this window"><i class="codicon codicon-arrow-swap"></i></button>`;
+                const goRemoteBtn = `<button class="session-action-btn go-remote-btn" data-session-id="${escapeHtml(rt.id)}" title="Go Remote"><i class="codicon codicon-remote"></i></button>`;
+                const headerRight = isThisWindow ? goRemoteBtn : `${switchWindowBtn}${goRemoteBtn}`;
                 return `
-                <div class="session-entry${isActiveInThisWindow ? ' session-active' : ''}" data-session-id="${escapeHtml(session.id)}">
-                    <div class="session-header">
-                        <span class="session-name">${statusIcon} ${escapeHtml(session.host)}${session.slurmJobId ? ` <span class="session-job-id">#${escapeHtml(session.slurmJobId)}</span>` : ''}</span>
-                        <div class="session-header-right">
-                            <span class="session-time-ago">${timeAgo}</span>
-                            ${actionButtons}
-                            <button class="remove-session-btn" data-session-id="${escapeHtml(session.id)}" title="Remove">✕</button>
+                <div class="runtime-entry runtime-local" data-session-id="${escapeHtml(rt.id)}">
+                    <div class="runtime-header">
+                        <span class="runtime-name">🟣 Local${isThisWindow ? ' <span class="session-badge">This Window</span>' : ''}</span>
+                        <div class="runtime-header-right">
+                            ${headerRight}
                         </div>
                     </div>
-                    <div class="${hasLogs ? 'session-log-toggle' : ''}" ${hasLogs ? `data-session-id="${escapeHtml(session.id)}"` : ''}>
-                        ${detailHtml}
-                        ${session.status === 'Failed' && session.errorMessage ? `<span class="session-error">${escapeHtml(session.errorMessage)}</span>` : ''}
+                </div>`;
+            }
+
+            let actionButtons: string;
+            if (rt.status === 'Submitting') {
+                actionButtons = spinner;
+            } else if (isActiveInThisWindow) {
+                actionButtons = `${switchToLocalBtn}${isLocal ? stopLocalBtn : stopRemoteBtn}`;
+            } else if (isLocal) {
+                if (rt.status === 'Active') {
+                    actionButtons = rt.sshPort ? `${switchToRemoteBtn}${stopLocalBtn}` : `${spinner}${stopLocalBtn}`;
+                } else {
+                    actionButtons = `<button class="session-action-btn relaunch-local-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
+                }
+            } else if (rt.status === 'Failed' || rt.status === 'Completed') {
+                actionButtons = `<button class="session-action-btn relaunch-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Relaunch"><i class="codicon codicon-refresh"></i></button>`;
+            } else if (rt.status === 'Pending' || (rt.status === 'Active' && !rt.tunnelUrl)) {
+                actionButtons = `${spinner}${stopRemoteBtn}`;
+            } else {
+                actionButtons = `${switchToRemoteBtn}${stopRemoteBtn}`;
+            }
+
+            let detailHtml: string;
+            if (isLocal) {
+                const tunnelInfo = rt.tunnelUrl
+                    ? `<span class="session-detail"><i class="codicon codicon-globe"></i> ${escapeHtml(rt.tunnelUrl)}</span>`
+                    : (rt.status === 'Active' ? `<span class="session-detail"><i class="codicon codicon-loading codicon-modifier-spin"></i> setting up tunnel...</span>` : '');
+                detailHtml = `<span class="session-detail"><i class="codicon codicon-terminal"></i> local linkspan${rt.localPid ? ` (pid ${rt.localPid})` : ''}${rt.sshPort ? ` <i class="codicon codicon-plug"></i> ssh :${rt.sshPort}` : ''}</span>${tunnelInfo}`;
+            } else {
+                const wtParts = rt.wallTime.split(':').map(Number);
+                const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
+                const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
+                const tunnelInfo = rt.tunnelUrl
+                    ? `<span class="session-detail"><i class="codicon codicon-globe"></i> ${escapeHtml(rt.tunnelUrl)}</span>`
+                    : (rt.status === 'Active' ? `<span class="session-detail"><i class="codicon codicon-loading codicon-modifier-spin"></i> setting up tunnel...</span>` : '');
+                detailHtml = `<span class="session-detail"><i class="codicon codicon-server-process"></i>${escapeHtml(rt.cpus)} <i class="codicon codicon-circuit-board"></i>${escapeHtml(rt.memory)} ${rt.gpu !== 'None' ? `<i class="codicon codicon-dashboard"></i>${escapeHtml(rt.gpu)} ` : ''}<i class="codicon codicon-clock"></i>${wallTimeShort}</span>
+                            <span class="session-detail"><i class="codicon codicon-layers"></i>${escapeHtml(rt.queue)} <i class="codicon codicon-key"></i>${escapeHtml(rt.allocation)}</span>${tunnelInfo}`;
+            }
+
+            const jobIdSpan = rt.slurmJobId ? ` <span class="session-job-id">#${escapeHtml(rt.slurmJobId)}</span>` : '';
+            return `
+                <div class="runtime-entry runtime-remote${isActiveInThisWindow ? ' runtime-active' : ''}" data-session-id="${escapeHtml(rt.id)}">
+                    <div class="runtime-header">
+                        <span class="runtime-name">${statusIcon} ${escapeHtml(rt.host)}${jobIdSpan}</span>
+                        <div class="runtime-header-right">
+                            <span class="session-time-ago">${timeAgo}</span>
+                            ${actionButtons}
+                            <button class="remove-session-btn" data-session-id="${escapeHtml(rt.id)}" title="Remove">✕</button>
+                        </div>
                     </div>
-                    ${hasLogs ? `<div class="session-log-panel" id="session-log-${escapeHtml(session.id)}" style="display:none;"><pre class="session-log-content"></pre></div>` : ''}
+                    <div class="${hasLogs ? 'session-log-toggle' : ''}" ${hasLogs ? `data-session-id="${escapeHtml(rt.id)}"` : ''}>
+                        ${detailHtml}
+                        ${rt.status === 'Failed' && rt.errorMessage ? `<span class="session-error">${escapeHtml(rt.errorMessage)}</span>` : ''}
+                    </div>
+                    ${hasLogs ? `<div class="session-log-panel" id="session-log-${escapeHtml(rt.id)}" style="display:none;"><pre class="session-log-content"></pre></div>` : ''}
+                </div>`;
+        };
+
+        // Helper: build the host picker HTML for a workspace
+        const buildHostPickerHtml = (ws: Workspace): string => {
+            if (sshHosts.length === 0) {
+                return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
+            }
+            return sshHosts.map(host => `
+                <div class="host-picker-item">
+                    <div class="host-picker-row" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">
+                        <i class="codicon codicon-chevron-right host-picker-chevron"></i>
+                        <span class="host-picker-name">${escapeHtml(host.name)}</span>
+                        ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
+                    </div>
+                    <div class="host-picker-form" id="host-form-${escapeHtml(ws.id)}-${escapeHtml(host.name)}" style="display:none;">
+                        <div class="job-form-loading" style="display:none;"><div class="spinner"></div>Fetching partitions...</div>
+                        <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
+                        <div class="job-form-fields" style="display:none;">
+                            <div class="form-row"><label>CPUs</label><select class="form-select" data-field="cpus">
+                                <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+                                <option value="8">8</option><option value="16">16</option><option value="32">32</option><option value="64">64</option>
+                            </select></div>
+                            <div class="form-row"><label>Memory</label><select class="form-select" data-field="memory">
+                                <option value="1 GB">1 GB</option><option value="2 GB">2 GB</option><option value="4 GB">4 GB</option>
+                                <option value="8 GB">8 GB</option><option value="16 GB">16 GB</option><option value="32 GB">32 GB</option>
+                                <option value="64 GB">64 GB</option><option value="128 GB">128 GB</option>
+                            </select></div>
+                            <div class="form-row"><label>GPU</label><select class="form-select" data-field="gpu">
+                                <option value="None">None</option><option value="NVIDIA A100">NVIDIA A100</option>
+                                <option value="NVIDIA V100">NVIDIA V100</option><option value="NVIDIA T4">NVIDIA T4</option>
+                                <option value="NVIDIA A40">NVIDIA A40</option><option value="NVIDIA H100">NVIDIA H100</option>
+                            </select></div>
+                            <div class="form-row"><label>Wall Time</label><select class="form-select" data-field="wallTime">
+                                <option value="00:30:00">30 min</option><option value="01:00:00">1 hour</option>
+                                <option value="02:00:00">2 hours</option><option value="04:00:00">4 hours</option>
+                                <option value="08:00:00">8 hours</option><option value="12:00:00">12 hours</option>
+                                <option value="24:00:00">24 hours</option>
+                            </select></div>
+                            <div class="form-row"><label>Allocation</label><select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
+                                <option value="">Loading...</option>
+                            </select></div>
+                            <div class="form-row"><label>Partition</label><select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
+                                <option value="">Select allocation first</option>
+                            </select></div>
+                            <button class="submit-job-btn" data-host="${escapeHtml(host.name)}" data-workspace-id="${escapeHtml(ws.id)}">Launch</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        };
+
+        // Build workspace cards
+        const sessionsHtml = this._workspaces.length > 0
+            ? this._workspaces.map(ws => {
+                const sortedRuntimes = [...ws.runtimes].sort((a, b) => {
+                    if (a.windowId === this._windowId) { return -1; }
+                    if (b.windowId === this._windowId) { return 1; }
+                    const statusOrder: Record<string, number> = { Local: 0, Active: 1, Submitting: 2, Pending: 3, Failed: 4, Completed: 5 };
+                    const sa = statusOrder[a.status] ?? 99;
+                    const sb = statusOrder[b.status] ?? 99;
+                    if (sa !== sb) { return sa - sb; }
+                    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+                });
+                const runtimeRows = sortedRuntimes.map(rt => buildRuntimeRow(rt)).join('');
+                const hostPickerHtml = buildHostPickerHtml(ws);
+                return `
+                <div class="workspace-card" data-workspace-id="${escapeHtml(ws.id)}">
+                    <div class="workspace-header">
+                        <span class="workspace-name"><i class="codicon codicon-folder"></i> ${escapeHtml(ws.directoryName)}</span>
+                        <div class="workspace-header-right">
+                            <button class="workspace-add-remote-btn" data-workspace-id="${escapeHtml(ws.id)}" title="Add Remote">
+                                <i class="codicon codicon-add"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="workspace-runtimes">
+                        ${runtimeRows}
+                    </div>
+                    <div class="workspace-host-picker" id="host-picker-${escapeHtml(ws.id)}" style="display:none;">
+                        ${hostPickerHtml}
+                    </div>
                 </div>`;
             }).join('')
             : '<p class="empty-message">No active sessions</p>';
@@ -3415,6 +3870,47 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         .tab-panel.active {
             display: block;
         }
+        .servers-panel {
+            border-top: 1px solid var(--vscode-panel-border);
+            margin-top: 8px;
+        }
+        .servers-panel-toggle {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            width: 100%;
+            padding: 6px 8px;
+            border: none;
+            background: none;
+            color: var(--vscode-foreground);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+        }
+        .servers-panel-toggle:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+        .servers-panel-chevron {
+            transition: transform 0.15s;
+            font-size: 12px;
+        }
+        .servers-panel-chevron.expanded {
+            transform: rotate(90deg);
+        }
+        .servers-panel-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 4px;
+        }
+        .servers-panel-content {
+            display: none;
+            padding: 0 8px 8px;
+        }
+        .servers-panel-content.expanded {
+            display: block;
+        }
         .tab-header {
             display: flex;
             justify-content: flex-end;
@@ -3424,32 +3920,64 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         .section {
             margin-bottom: 20px;
         }
-        .session-entry {
-            padding: 8px;
-            margin: 4px 0;
-            background: var(--vscode-list-hoverBackground);
-            border-radius: 4px;
-        }
-        .session-entry.session-active {
-            border-left: 3px solid var(--vscode-terminal-ansiGreen);
-            background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 15%, var(--vscode-editor-background));
-        }
-        .session-entry.session-active .session-name {
-            color: var(--vscode-terminal-ansiGreen);
-        }
-        .session-info {
-            display: flex;
-            flex-direction: column;
+        .workspace-card {
+            margin: 6px 0;
+            border-radius: 6px;
             overflow: hidden;
-            flex: 1;
-            min-width: 0;
+            border: 1px solid var(--vscode-panel-border);
         }
-        .session-header {
+        .workspace-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 8px;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: var(--vscode-sideBarSectionHeader-background, var(--vscode-list-hoverBackground));
+            color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
+        }
+        .workspace-name {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .workspace-header-right {
+            display: flex;
+            gap: 2px;
+            flex-shrink: 0;
+        }
+        .workspace-add-remote-btn {
+            margin: 0;
+            padding: 2px 4px;
+            background: none;
+            border: none;
+            color: var(--vscode-descriptionForeground);
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        .workspace-add-remote-btn:hover {
+            background: var(--vscode-toolbar-hoverBackground);
+            color: var(--vscode-foreground);
+        }
+        .runtime-entry {
+            padding: 6px 8px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+        .runtime-entry:last-child {
+            border-bottom: none;
+        }
+        .runtime-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
-        .session-name {
+        .runtime-name {
             font-weight: 600;
             font-size: 12px;
             white-space: nowrap;
@@ -3458,15 +3986,81 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             min-width: 0;
             flex: 1;
         }
-        .session-job-id {
-            font-weight: 400;
-            color: var(--vscode-descriptionForeground);
-        }
-        .session-header-right {
+        .runtime-header-right {
             display: flex;
             align-items: center;
             gap: 4px;
             flex-shrink: 0;
+        }
+        .runtime-local .runtime-name {
+            font-size: 11px;
+            font-weight: 400;
+            color: var(--vscode-descriptionForeground);
+        }
+        .runtime-active {
+            border-left: 3px solid var(--vscode-terminal-ansiGreen);
+            background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 10%, transparent);
+        }
+        .runtime-active .runtime-name {
+            color: var(--vscode-terminal-ansiGreen);
+        }
+        .workspace-host-picker {
+            border-top: 1px solid var(--vscode-panel-border);
+            background: var(--vscode-editor-background);
+        }
+        .host-picker-item {
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+        .host-picker-item:last-child {
+            border-bottom: none;
+        }
+        .host-picker-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .host-picker-row:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+        .host-picker-chevron {
+            font-size: 10px;
+            transition: transform 0.15s;
+        }
+        .host-picker-chevron.expanded {
+            transform: rotate(90deg);
+        }
+        .host-picker-name {
+            font-weight: 500;
+        }
+        .host-picker-detail {
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            margin-left: auto;
+        }
+        .host-picker-form {
+            padding: 4px 8px 8px 20px;
+        }
+        .session-badge {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+        .go-remote-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 11px !important;
+        }
+        .session-job-id {
+            font-weight: 400;
+            color: var(--vscode-descriptionForeground);
         }
         .session-time-ago {
             font-size: 10px;
@@ -3656,26 +4250,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     <button id="open-metrics-btn" class="full-width" style="margin-bottom:8px;">Session Metrics</button>
 
     <div class="tab-row">
-        <button class="tab-btn${this._activeTab === 'servers' ? ' active' : ''}" data-tab="servers">Servers</button>
         <button class="tab-btn${this._activeTab === 'sessions' ? ' active' : ''}" data-tab="sessions">Sessions</button>
         <button class="tab-btn${this._activeTab === 'files' ? ' active' : ''}" data-tab="files">Files</button>
     </div>
 
-    <div id="tab-servers" class="tab-panel${this._activeTab === 'servers' ? ' active' : ''}">
-        <div class="tab-header">
-            <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">Local</button>
-            <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
-            <button id="refresh-btn" class="refresh-btn" title="Refresh"><i class="codicon codicon-refresh"></i></button>
-        </div>
-        <div id="ssh-hosts">
-            ${hostsHtml}
-        </div>
-    </div>
-
     <div id="tab-sessions" class="tab-panel${this._activeTab === 'sessions' ? ' active' : ''}">
-        <div class="tab-header">
-            <button id="refresh-sessions-btn" class="refresh-btn" title="Refresh Sessions"><i class="codicon codicon-refresh"></i></button>
-        </div>
         <div id="sessions">
             ${sessionsHtml}
         </div>
@@ -3684,6 +4263,23 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     <div id="tab-files" class="tab-panel${this._activeTab === 'files' ? ' active' : ''}">
         <div id="file-hosts">
             ${filesHtml}
+        </div>
+    </div>
+
+    <div class="servers-panel">
+        <button class="servers-panel-toggle" id="servers-panel-toggle">
+            <i class="codicon codicon-chevron-right servers-panel-chevron"></i>
+            Servers
+            <span class="servers-panel-actions">
+                <button id="test-local-btn" class="refresh-btn" title="Test Local (linkspan)">Local</button>
+                <button id="add-ssh-btn" class="refresh-btn" title="Add SSH Host">+ Add</button>
+                <button id="refresh-btn" class="refresh-btn" title="Refresh"><i class="codicon codicon-refresh"></i></button>
+            </span>
+        </button>
+        <div class="servers-panel-content" id="servers-panel-content">
+            <div id="ssh-hosts">
+                ${hostsHtml}
+            </div>
         </div>
     </div>
 
@@ -3712,6 +4308,20 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 vscode.postMessage({ type: 'switchTab', tab: tab });
             });
         });
+
+        // Servers panel toggle
+        const serversToggle = document.getElementById('servers-panel-toggle');
+        const serversContent = document.getElementById('servers-panel-content');
+        if (serversToggle && serversContent) {
+            serversToggle.addEventListener('click', (e) => {
+                if (e.target.closest('.refresh-btn')) { return; }
+                const chevron = serversToggle.querySelector('.servers-panel-chevron');
+                const isExpanded = serversContent.classList.toggle('expanded');
+                if (chevron) {
+                    chevron.classList.toggle('expanded', isExpanded);
+                }
+            });
+        }
 
         document.getElementById('refresh-btn').addEventListener('click', () => {
             vscode.postMessage({ type: 'refresh' });
@@ -3745,10 +4355,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
         }
         bindAuthBarButtons();
-
-        document.getElementById('refresh-sessions-btn').addEventListener('click', () => {
-            vscode.postMessage({ type: 'refreshSessions' });
-        });
 
         // File browser history per host: { back: string[], forward: string[], current: string|null, loading: bool }
         const fileHistory = {};
@@ -3871,11 +4477,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             });
         });
 
-        // Add click handlers to submit job buttons
+        // Add click handlers to submit job buttons (both Servers panel and workspace host picker)
         document.querySelectorAll('.submit-job-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const host = btn.getAttribute('data-host');
-                const form = document.getElementById('job-form-' + host);
+                const wsId = btn.getAttribute('data-workspace-id');
+                // For host-picker forms, find the closest host-picker-form; for Servers panel use job-form-<host>
+                const form = btn.closest('.host-picker-form') || document.getElementById('job-form-' + host);
                 if (!form) { return; }
                 const cpus = form.querySelector('[data-field="cpus"]').value;
                 const memory = form.querySelector('[data-field="memory"]').value;
@@ -3883,15 +4491,48 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const wallTime = form.querySelector('[data-field="wallTime"]').value;
                 const queue = form.querySelector('[data-field="queue"]').value;
                 const allocation = form.querySelector('[data-field="allocation"]').value;
-                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation });
+                vscode.postMessage({ type: 'createJob', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation, workspaceId: wsId });
             });
         });
 
-        // Helper: disable all action buttons in a session card and show spinner
+        // Workspace add-remote button: toggle host picker
+        document.querySelectorAll('.workspace-add-remote-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const wsId = btn.getAttribute('data-workspace-id');
+                const picker = document.getElementById('host-picker-' + wsId);
+                if (picker) {
+                    picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+                }
+            });
+        });
+
+        // Host picker row: toggle form + trigger queryAssociations
+        document.querySelectorAll('.host-picker-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const host = row.getAttribute('data-host');
+                const wsId = row.getAttribute('data-workspace-id');
+                const formId = 'host-form-' + wsId + '-' + host;
+                const form = document.getElementById(formId);
+                const chevron = row.querySelector('.host-picker-chevron');
+                if (!form) { return; }
+                const isExpanding = form.style.display === 'none';
+                form.style.display = isExpanding ? 'block' : 'none';
+                if (chevron) { chevron.classList.toggle('expanded', isExpanding); }
+                if (isExpanding) {
+                    form.querySelector('.job-form-loading').style.display = 'flex';
+                    form.querySelector('.job-form-fields').style.display = 'none';
+                    form.querySelector('.job-form-error').style.display = 'none';
+                    vscode.postMessage({ type: 'queryAssociations', host: host });
+                }
+            });
+        });
+
+        // Helper: disable all action buttons in a runtime card and show spinner
         function disableSessionActions(sessionId) {
-            const entry = document.querySelector('.session-entry[data-session-id="' + sessionId + '"]');
+            const entry = document.querySelector('.runtime-entry[data-session-id="' + sessionId + '"]');
             if (!entry) { return; }
-            const right = entry.querySelector('.session-header-right');
+            const right = entry.querySelector('.runtime-header-right');
             if (!right) { return; }
             right.querySelectorAll('.session-action-btn, .remove-session-btn').forEach(b => b.disabled = true);
             // Insert spinner before the first button if not already present
@@ -3917,7 +4558,27 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const sessionId = btn.getAttribute('data-session-id');
                 const direction = btn.getAttribute('data-direction');
                 disableSessionActions(sessionId);
-                vscode.postMessage({ type: direction === 'remote' ? 'switchToRemote' : 'switchToLocal', sessionId: sessionId });
+                if (direction === 'local-window') {
+                    vscode.postMessage({ type: 'switchToWindow', sessionId: sessionId });
+                } else if (direction === 'remote') {
+                    vscode.postMessage({ type: 'switchToRemote', sessionId: sessionId });
+                } else {
+                    vscode.postMessage({ type: 'switchToLocal', sessionId: sessionId });
+                }
+            });
+        });
+
+        // Add click handlers to Go Remote buttons — toggle workspace host picker
+        document.querySelectorAll('.go-remote-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const wsCard = btn.closest('.workspace-card');
+                if (wsCard) {
+                    const wsId = wsCard.getAttribute('data-workspace-id');
+                    const picker = document.getElementById('host-picker-' + wsId);
+                    if (picker) {
+                        picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+                    }
+                }
             });
         });
 
@@ -4066,34 +4727,43 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
 
             if (msg.type === 'associationsCancelled') {
-                const form = document.getElementById('job-form-' + msg.host);
-                if (!form) { return; }
-                form.querySelector('.job-form-loading').style.display = 'none';
+                // Update all forms for this host (Servers panel + host picker forms)
+                const allForms = getAllFormsForHost(msg.host);
+                allForms.forEach(form => {
+                    form.querySelector('.job-form-loading').style.display = 'none';
+                });
                 // Reset to collapsed state — user can click to retry
                 return;
             }
 
             if (msg.type === 'associationsError') {
-                const form = document.getElementById('job-form-' + msg.host);
-                if (!form) { return; }
-                form.querySelector('.job-form-loading').style.display = 'none';
-                form.querySelector('.job-form-error').style.display = 'flex';
-                form.querySelector('.job-form-error-text').textContent = 'Failed to fetch partitions: ' + msg.error;
+                const allForms = getAllFormsForHost(msg.host);
+                allForms.forEach(form => {
+                    form.querySelector('.job-form-loading').style.display = 'none';
+                    form.querySelector('.job-form-error').style.display = 'flex';
+                    form.querySelector('.job-form-error-text').textContent = 'Failed to fetch partitions: ' + msg.error;
+                });
                 return;
+            }
+
+            // Helper: find all job forms (Servers panel + host picker) for a given host name
+            function getAllFormsForHost(host) {
+                const forms = [];
+                // Servers panel form
+                const serverForm = document.getElementById('job-form-' + host);
+                if (serverForm) { forms.push(serverForm); }
+                // Host picker forms: query by data-host on allocation select inside host-picker-form
+                document.querySelectorAll('.host-picker-form').forEach(form => {
+                    const allocSelect = form.querySelector('[data-field="allocation"][data-host="' + host + '"]');
+                    if (allocSelect) { forms.push(form); }
+                });
+                return forms;
             }
 
             if (msg.type === 'associations') {
                 const host = msg.host;
                 const partitions = msg.partitions; // { name: { accounts, nodes, maxCpus, maxGpus } }
-                const form = document.getElementById('job-form-' + host);
-                if (!form) { return; }
-
-                form.querySelector('.job-form-loading').style.display = 'none';
-                form.querySelector('.job-form-error').style.display = 'none';
-                form.querySelector('.job-form-fields').style.display = 'block';
-
-                const allocSelect = form.querySelector('[data-field="allocation"]');
-                const partSelect = form.querySelector('[data-field="queue"]');
+                const allForms = getAllFormsForHost(host);
 
                 // Collect unique accounts across all partitions
                 const allPartNames = Object.keys(partitions);
@@ -4103,39 +4773,48 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
                 const accounts = Array.from(accountSet).sort();
 
-                // Populate Allocation dropdown (independent of partition selection)
-                allocSelect.innerHTML = '';
-                if (accounts.length > 0) {
-                    accounts.forEach((acct, i) => {
-                        const opt = document.createElement('option');
-                        opt.value = acct;
-                        opt.textContent = acct;
-                        if (i === 0) { opt.selected = true; }
-                        allocSelect.appendChild(opt);
-                    });
-                } else {
-                    allocSelect.innerHTML = '<option value="">N/A</option>';
-                    allocSelect.disabled = true;
-                }
+                allForms.forEach(form => {
+                    form.querySelector('.job-form-loading').style.display = 'none';
+                    form.querySelector('.job-form-error').style.display = 'none';
+                    form.querySelector('.job-form-fields').style.display = 'block';
 
-                // Always show all partitions — no filtering by account
-                function updatePartitions() {
-                    partSelect.innerHTML = '';
-                    allPartNames.forEach((name, i) => {
-                        const info = partitions[name];
-                        const label = info.maxGpus > 0
-                            ? name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs, ' + info.maxGpus + ' GPUs)'
-                            : name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs)';
-                        const opt = document.createElement('option');
-                        opt.value = name;
-                        opt.textContent = label;
-                        if (i === 0) { opt.selected = true; }
-                        partSelect.appendChild(opt);
-                    });
-                }
+                    const allocSelect = form.querySelector('[data-field="allocation"]');
+                    const partSelect = form.querySelector('[data-field="queue"]');
 
-                allocSelect.addEventListener('change', updatePartitions);
-                updatePartitions(); // populate for initial selection
+                    // Populate Allocation dropdown (independent of partition selection)
+                    allocSelect.innerHTML = '';
+                    if (accounts.length > 0) {
+                        accounts.forEach((acct, i) => {
+                            const opt = document.createElement('option');
+                            opt.value = acct;
+                            opt.textContent = acct;
+                            if (i === 0) { opt.selected = true; }
+                            allocSelect.appendChild(opt);
+                        });
+                    } else {
+                        allocSelect.innerHTML = '<option value="">N/A</option>';
+                        allocSelect.disabled = true;
+                    }
+
+                    // Always show all partitions — no filtering by account
+                    function updatePartitions() {
+                        partSelect.innerHTML = '';
+                        allPartNames.forEach((name, i) => {
+                            const info = partitions[name];
+                            const label = info.maxGpus > 0
+                                ? name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs, ' + info.maxGpus + ' GPUs)'
+                                : name + ' (' + info.nodes + ' Nodes, ' + info.maxCpus + ' CPUs)';
+                            const opt = document.createElement('option');
+                            opt.value = name;
+                            opt.textContent = label;
+                            if (i === 0) { opt.selected = true; }
+                            partSelect.appendChild(opt);
+                        });
+                    }
+
+                    allocSelect.addEventListener('change', updatePartitions);
+                    updatePartitions(); // populate for initial selection
+                });
             }
 
             if (msg.type === 'browseCancelled') {
