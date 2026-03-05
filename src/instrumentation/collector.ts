@@ -6,6 +6,8 @@ import {
     getSummary as getDbSummary,
     purgeOldEvents,
     saveDatabase,
+    deleteEventsByDateRange,
+    markEventsExported,
     EventFilters,
     Summary,
 } from './storage';
@@ -35,9 +37,6 @@ export class MetricsCollector {
         return MetricsCollector._instance;
     }
 
-    /**
-     * Initialize the database. Must be called once during extension activation.
-     */
     async initialize(dbPath: string): Promise<void> {
         try {
             this._dbPath = dbPath;
@@ -50,10 +49,6 @@ export class MetricsCollector {
         }
     }
 
-    /**
-     * Record a metric event. Fire-and-forget: deferred to next tick,
-     * try-catch wrapped, never throws.
-     */
     record(
         eventType: EventType,
         status: EventStatus,
@@ -81,9 +76,6 @@ export class MetricsCollector {
         }, 0);
     }
 
-    /**
-     * Query events for the dashboard.
-     */
     query(filters?: EventFilters): MetricEvent[] {
         try {
             if (!this._db) { return []; }
@@ -94,9 +86,6 @@ export class MetricsCollector {
         }
     }
 
-    /**
-     * Get aggregate summary for the dashboard.
-     */
     getSummary(): Summary {
         try {
             if (!this._db) { return { total: 0, by_type: {}, by_status: {} }; }
@@ -107,10 +96,6 @@ export class MetricsCollector {
         }
     }
 
-    /**
-     * Purge events older than the given number of days.
-     * Returns counts of deleted events.
-     */
     purge(days: number): { total: number; unexported: number } {
         try {
             if (!this._db) { return { total: 0, unexported: 0 }; }
@@ -123,9 +108,28 @@ export class MetricsCollector {
         }
     }
 
-    /**
-     * Save and close the database. Call during extension deactivation.
-     */
+    deleteByDateRange(fromDate?: string, toDate?: string): number {
+        try {
+            if (!this._db) { return 0; }
+            const count = deleteEventsByDateRange(this._db, fromDate, toDate);
+            if (count > 0) { this._dirty = true; }
+            return count;
+        } catch (err) {
+            console.warn('[MetricsCollector] Failed to delete events by date range:', err);
+            return 0;
+        }
+    }
+
+    markExported(fromDate?: string, toDate?: string): void {
+        try {
+            if (!this._db) { return; }
+            markEventsExported(this._db, fromDate, toDate);
+            this._dirty = true;
+        } catch (err) {
+            console.warn('[MetricsCollector] Failed to mark events exported:', err);
+        }
+    }
+
     dispose(): void {
         try {
             if (this._autoSaveTimer) {

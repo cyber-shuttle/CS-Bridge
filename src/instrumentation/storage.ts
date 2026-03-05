@@ -6,6 +6,27 @@ type Database = import('sql.js').Database;
 
 import { MetricEvent, EventType, EventStatus } from './types';
 
+type SqlJsFactory = { Database: new (...args: unknown[]) => Database };
+let sqlJsPromise: Promise<SqlJsFactory> | null = null;
+
+export function getSqlJsFactory(): Promise<SqlJsFactory> {
+    if (!sqlJsPromise) {
+        const p = (async () => {
+            const sqljs = await import('sql.js');
+            const initSqlJs = sqljs.default;
+            const wasmPath = path.join(
+                path.dirname(require.resolve('sql.js')),
+                'sql-wasm.wasm'
+            );
+            const wasmBinary = fs.readFileSync(wasmPath);
+            return initSqlJs({ wasmBinary });
+        })() as Promise<SqlJsFactory>;
+        sqlJsPromise = p;
+        p.catch(() => { sqlJsPromise = null; });
+    }
+    return sqlJsPromise;
+}
+
 export interface EventFilters {
     event_type?: EventType;
     status?: EventStatus;
@@ -19,19 +40,8 @@ export interface Summary {
     by_status: Record<string, number>;
 }
 
-/**
- * Initialize (or open) the SQLite database at `dbPath`.
- * Creates the `events` table and indexes if they don't exist.
- */
 export async function initDatabase(dbPath: string): Promise<Database> {
-    const sqljs = await import('sql.js');
-    const initSqlJs = sqljs.default;
-    const wasmPath = path.join(
-        path.dirname(require.resolve('sql.js')),
-        'sql-wasm.wasm'
-    );
-    const wasmBinary = fs.readFileSync(wasmPath);
-    const SQL = await initSqlJs({ wasmBinary });
+    const SQL = await getSqlJsFactory();
 
     let db: Database;
     if (fs.existsSync(dbPath)) {
@@ -60,9 +70,6 @@ export async function initDatabase(dbPath: string): Promise<Database> {
     return db;
 }
 
-/**
- * Insert a metric event into the database.
- */
 export function insertEvent(db: Database, event: MetricEvent): void {
     db.run(
         `INSERT INTO events (timestamp, event_type, status, duration_ms, error_message, metadata, exported)
@@ -79,9 +86,6 @@ export function insertEvent(db: Database, event: MetricEvent): void {
     );
 }
 
-/**
- * Query events with optional filters.
- */
 export function queryEvents(db: Database, filters?: EventFilters): MetricEvent[] {
     const conditions: string[] = [];
     const params: (string | number)[] = [];
@@ -124,9 +128,6 @@ export function queryEvents(db: Database, filters?: EventFilters): MetricEvent[]
     return results;
 }
 
-/**
- * Get aggregate summary counts by event type and status.
- */
 export function getSummary(db: Database): Summary {
     const total = (db.exec('SELECT COUNT(*) FROM events')[0]?.values[0]?.[0] as number) || 0;
 
@@ -149,22 +150,22 @@ export function getSummary(db: Database): Summary {
     return { total, by_type, by_status };
 }
 
-/**
- * Delete events older than `days` days.
- * Returns counts of total deleted and unexported deleted.
- */
 export function purgeOldEvents(db: Database, days: number): { total: number; unexported: number } {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-    const unexportedResult = db.exec(
-        `SELECT COUNT(*) FROM events WHERE timestamp < '${cutoff}' AND exported = 0`
+    const unexportedStmt = db.prepare(
+        `SELECT COUNT(*) FROM events WHERE timestamp < ? AND exported = 0`, [cutoff]
     );
-    const unexported = (unexportedResult[0]?.values[0]?.[0] as number) || 0;
+    unexportedStmt.step();
+    const unexported = (unexportedStmt.getAsObject() as Record<string, unknown>)['COUNT(*)'] as number || 0;
+    unexportedStmt.free();
 
-    const totalResult = db.exec(
-        `SELECT COUNT(*) FROM events WHERE timestamp < '${cutoff}'`
+    const totalStmt = db.prepare(
+        `SELECT COUNT(*) FROM events WHERE timestamp < ?`, [cutoff]
     );
-    const total = (totalResult[0]?.values[0]?.[0] as number) || 0;
+    totalStmt.step();
+    const total = (totalStmt.getAsObject() as Record<string, unknown>)['COUNT(*)'] as number || 0;
+    totalStmt.free();
 
     if (total > 0) {
         db.run(`DELETE FROM events WHERE timestamp < ?`, [cutoff]);
@@ -173,9 +174,43 @@ export function purgeOldEvents(db: Database, days: number): { total: number; une
     return { total, unexported };
 }
 
-/**
- * Export the database bytes to a file on disk.
- */
+export function deleteEventsByDateRange(db: Database, fromDate?: string, toDate?: string): number {
+    const conditions: string[] = [];
+    const params: string[] = [];
+
+    if (fromDate) {
+        conditions.push('timestamp >= ?');
+        params.push(fromDate);
+    }
+    if (toDate) {
+        conditions.push('timestamp <= ?');
+        params.push(toDate);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    db.run(`DELETE FROM events ${where}`, params);
+
+    const result = db.exec('SELECT changes()');
+    return (result[0]?.values[0]?.[0] as number) || 0;
+}
+
+export function markEventsExported(db: Database, fromDate?: string, toDate?: string): void {
+    const conditions: string[] = [];
+    const params: string[] = [];
+
+    if (fromDate) {
+        conditions.push('timestamp >= ?');
+        params.push(fromDate);
+    }
+    if (toDate) {
+        conditions.push('timestamp <= ?');
+        params.push(toDate);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    db.run(`UPDATE events SET exported = 1 ${where}`, params);
+}
+
 export function saveDatabase(db: Database, dbPath: string): void {
     const data = db.export();
     const buffer = Buffer.from(data);

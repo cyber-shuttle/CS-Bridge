@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src 'nonce-${nonce}';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="${cssUri}">
     <title>Session Metrics</title>
@@ -10,7 +10,10 @@
 <body>
     <div class="header-bar">
         <h1>Session Metrics</h1>
-        <button class="refresh-btn" id="refresh-btn">Refresh</button>
+        <div class="header-actions">
+            <button class="export-btn" id="export-btn">Report</button>
+            <button class="refresh-btn" id="refresh-btn">Refresh</button>
+        </div>
     </div>
 
     <!-- Filter bar -->
@@ -45,6 +48,7 @@
                 <option value="7">Last 7 days</option>
                 <option value="30">Last 30 days</option>
                 <option value="90">Last 90 days</option>
+                <option value="">All data</option>
             </select>
         </div>
     </div>

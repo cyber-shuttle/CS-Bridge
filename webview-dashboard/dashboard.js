@@ -18,6 +18,7 @@
     const filterStatus = document.getElementById('filter-status');
     const filterRange = document.getElementById('filter-range');
     const refreshBtn = document.getElementById('refresh-btn');
+    const exportBtn = document.getElementById('export-btn');
 
     // --- Messaging ---
 
@@ -42,7 +43,7 @@
     }
 
     function refreshData() {
-        vscode.postMessage({ type: 'refreshData' });
+        vscode.postMessage({ type: 'refreshData', filters: getFilters() });
     }
 
     // --- Rendering ---
@@ -166,6 +167,10 @@
 
     refreshBtn.addEventListener('click', function () {
         refreshData();
+    });
+
+    exportBtn.addEventListener('click', function () {
+        vscode.postMessage({ type: 'reportMetrics' });
     });
 
     filterType.addEventListener('change', function () { requestSummary(); requestEvents(); });
