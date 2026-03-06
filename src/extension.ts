@@ -82,13 +82,25 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	const sidebarProvider = new CybershuttleViewProvider(context.extensionUri, context.workspaceState, metrics);
 	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.infoViewType, sidebarProvider),
 		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.workspacesViewType, sidebarProvider),
 		vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.serversViewType, sidebarProvider),
 	);
 
-	const auth = vscode.commands.registerCommand('cybershuttle.auth', () => {
-		const csCommands = new CsCommands(metrics);
-		csCommands.deviceAuth(csStorage);
+	const auth = vscode.commands.registerCommand('cybershuttle.auth', async () => {
+		if (sidebarProvider.devTunnelAccount) {
+			const choice = await vscode.window.showQuickPick(
+				['Switch Account', 'Sign Out'],
+				{ placeHolder: `Signed in as ${sidebarProvider.devTunnelAccount}` }
+			);
+			if (choice === 'Switch Account') {
+				sidebarProvider.switchDevTunnelAccount();
+			} else if (choice === 'Sign Out') {
+				sidebarProvider.signOutDevTunnel();
+			}
+		} else {
+			sidebarProvider.signInDevTunnel();
+		}
 	});
 
 	context.subscriptions.push(auth);
@@ -212,6 +224,20 @@ export async function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(reportMetrics);
 
+	// Register Add Remote command — forward to the provider
+	context.subscriptions.push(
+		vscode.commands.registerCommand('cybershuttle.addRemote', () => sidebarProvider.handleAddRemote()),
+	);
+
+	// Register Files navigation commands — forward to the provider's message handler
+	context.subscriptions.push(
+		vscode.commands.registerCommand('cybershuttle.filesGoBack', () => sidebarProvider.handleFilesNav('filesGoBack')),
+		vscode.commands.registerCommand('cybershuttle.filesGoForward', () => sidebarProvider.handleFilesNav('filesGoForward')),
+		vscode.commands.registerCommand('cybershuttle.filesGoHome', () => sidebarProvider.handleFilesNav('filesGoHome')),
+		vscode.commands.registerCommand('cybershuttle.filesRefresh', () => sidebarProvider.handleFilesNav('filesRefresh')),
+	);
+
+	// Record activation event
 	const activationDuration = Date.now() - activateStart;
 	metrics.record('extension_activate', 'success', {
 		vscode_version: vscode.version,

@@ -25,7 +25,8 @@
     "commands": [
       {
         "command": "cybershuttle.auth",
-        "title": "CyberShuttle: Auth"
+        "title": "Sign In",
+        "icon": "$(account)"
       },
       {
         "command": "cybershuttle.openMetrics",
@@ -39,14 +40,69 @@
       {
         "command": "cybershuttle.reportMetrics",
         "title": "CyberShuttle: Report Metrics"
+      },
+      {
+        "command": "cybershuttle.addRemote",
+        "title": "Add Remote",
+        "icon": "$(add)"
+      },
+      {
+        "command": "cybershuttle.filesGoBack",
+        "title": "Go Back",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "cybershuttle.filesGoForward",
+        "title": "Go Forward",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "cybershuttle.filesGoHome",
+        "title": "Go Home",
+        "icon": "$(home)"
+      },
+      {
+        "command": "cybershuttle.filesRefresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
       "view/title": [
         {
+          "command": "cybershuttle.addRemote",
+          "when": "view == cybershuttle.workspacesView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cybershuttle.auth",
+          "when": "view == cybershuttle.workspacesView",
+          "group": "navigation@2"
+        },
+        {
           "command": "cybershuttle.openMetrics",
           "when": "view == cybershuttle.workspacesView",
-          "group": "navigation"
+          "group": "navigation@3"
+        },
+        {
+          "command": "cybershuttle.filesGoBack",
+          "when": "view == cybershuttle.serversView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cybershuttle.filesGoForward",
+          "when": "view == cybershuttle.serversView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cybershuttle.filesGoHome",
+          "when": "view == cybershuttle.serversView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "cybershuttle.filesRefresh",
+          "when": "view == cybershuttle.serversView",
+          "group": "navigation@4"
         }
       ]
     },
@@ -64,12 +120,12 @@
         {
           "type": "webview",
           "id": "cybershuttle.workspacesView",
-          "name": "Workspaces"
+          "name": "Sessions"
         },
         {
           "type": "webview",
           "id": "cybershuttle.serversView",
-          "name": "Servers"
+          "name": "Files"
         }
       ]
     },

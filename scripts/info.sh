@@ -86,36 +86,46 @@ EOF2
   fi
 }
 
-max_gpus_in_partition() {
-  # $1 partition -> max GPUs per node from %G, avoiding double-counting
+gpu_info_in_partition() {
+  # $1 partition -> "maxGpus|type1,type2,..." from %G
   p="$1"
   sinfo -h -p "$p" -N -o "%G" 2>/dev/null \
   | awk '
-      function tok_gpu(tok,    m) {
-        if (tok !~ /(^|[^[:alnum:]_])gpu([^[:alnum:]_]|$)/) return 0
-        if (match(tok, /:([0-9]+)/, m)) return m[1]+0
-        return 1
+      function tok_gpu(tok,    m, t, c) {
+        if (tok !~ /(^|[^[:alnum:]_])gpu([^[:alnum:]_]|$)/) return
+        # Format: gpu:type:count or gpu:count or gpu
+        c=1; t=""
+        if (match(tok, /gpu:([^:,]+):([0-9]+)/, m)) { t=m[1]; c=m[2]+0 }
+        else if (match(tok, /gpu:([0-9]+)/, m)) { c=m[1]+0 }
+        else if (match(tok, /gpu:([^:,]+)/, m)) { t=m[1]; c=1 }
+        if (c > max_count) max_count=c
+        if (t != "" && t+0 != t) types[t]=1
       }
-      function gres_gpu_max(gres,   n,items,i,g,best) {
-        best=0
-        if (gres=="" || gres=="(null)") return 0
-        n=split(gres, items, ",")
-        for (i=1;i<=n;i++) { g=tok_gpu(items[i]); if (g>best) best=g }
-        return best
+      BEGIN { max_count=0 }
+      {
+        if ($0=="" || $0=="(null)") next
+        n=split($0, items, ",")
+        for (i=1;i<=n;i++) tok_gpu(items[i])
       }
-      { g=gres_gpu_max($0); if (g>max) max=g }
-      END{ print max+0 }
+      END {
+        s=""
+        for (t in types) s = (s=="" ? t : s","t)
+        printf "%d|%s\n", max_count, s
+      }
     '
 }
 
-printf "%s\n" "partition|nodes|max_cpus_per_node|max_gpus_per_node|accounts"
+printf "%s\n" "partition|nodes|max_cpus_per_node|max_mem_mb_per_node|max_gpus_per_node|gpu_types|accounts"
 
 for p in $parts; do
   nodes="$(sinfo -h -p "$p" -o "%D" 2>/dev/null | awk '{s+=$1} END{print s+0}')"
   [ "${nodes:-0}" -gt 0 ] || continue
 
   maxcpus="$(sinfo -h -p "$p" -N -o "%c" 2>/dev/null | awk '$1>m{m=$1} END{print m+0}')"
-  maxgpus="$(max_gpus_in_partition "$p" 2>/dev/null || echo 0)"
+  maxmem="$(sinfo -h -p "$p" -N -o "%m" 2>/dev/null | awk '$1+0>m{m=$1+0} END{print m+0}')"
+  gpu_info="$(gpu_info_in_partition "$p" 2>/dev/null || echo "0|")"
+  maxgpus="$(printf "%s" "$gpu_info" | cut -d'|' -f1)"
+  gpu_types="$(printf "%s" "$gpu_info" | cut -d'|' -f2)"
 
   is_gpu=0
   [ "${maxgpus:-0}" -gt 0 ] && is_gpu=1
@@ -125,6 +135,6 @@ for p in $parts; do
     accts="$(accounts_for_partition "$p" "$is_gpu")"
   fi
 
-  printf "%s|%s|%s|%s|%s\n" \
-    "$p" "$nodes" "${maxcpus:-0}" "${maxgpus:-0}" "${accts:-}"
+  printf "%s|%s|%s|%s|%s|%s|%s\n" \
+    "$p" "$nodes" "${maxcpus:-0}" "${maxmem:-0}" "${maxgpus:-0}" "${gpu_types:-}" "${accts:-}"
 done
