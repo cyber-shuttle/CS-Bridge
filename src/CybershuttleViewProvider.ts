@@ -629,7 +629,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         const shellConnectStart = Date.now();
-        this._metrics.record('ssh_connect', 'in_progress', { target_host: hostName });
+        this._metrics.record('ssh_connect', 'in_progress', { target_host: this._resolveHostname(hostName) });
         const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
         const cancelFile = path.join(sessionDir, 'cancel');
         const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
@@ -675,7 +675,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 // Consume trailing newline
                 if (buffer.startsWith('\n')) { buffer = buffer.slice(1); }
                 resolveReady!();
-                this._metrics.record('ssh_connect', 'success', { target_host: hostName }, Date.now() - shellConnectStart);
+                this._metrics.record('ssh_connect', 'success', { target_host: this._resolveHostname(hostName) }, Date.now() - shellConnectStart);
             }
 
             // Process pending command response
@@ -761,7 +761,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
             this._persistentShells.delete(hostName);
             if (!isReady) {
-                this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, Date.now() - shellConnectStart, 'SSH connection closed before ready');
+                this._metrics.record('ssh_connect', 'failure', { target_host: this._resolveHostname(hostName) }, Date.now() - shellConnectStart, 'SSH connection closed before ready');
             }
             if (shell.pending) {
                 shell.pending.reject(new Error('SSH connection closed'));
@@ -775,7 +775,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
             this._persistentShells.delete(hostName);
             if (!isReady) {
-                this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, Date.now() - shellConnectStart, err.message);
+                this._metrics.record('ssh_connect', 'failure', { target_host: this._resolveHostname(hostName) }, Date.now() - shellConnectStart, err.message);
             }
             if (shell.pending) {
                 shell.pending.reject(err);
@@ -903,6 +903,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         return hosts;
+    }
+
+    /**
+     * Resolve an SSH config alias to its actual HostName.
+     * Returns the HostName if found, otherwise returns the alias as-is.
+     */
+    private _resolveHostname(alias: string): string {
+        const hosts = this.getSshHosts();
+        const match = hosts.find(h => h.name === alias);
+        return match?.hostname ?? alias;
     }
 
     public resolveWebviewView(
@@ -1808,7 +1818,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._updateStatusBar();
 
         const submitStart = Date.now();
-        this._metrics.record('job_submit', 'in_progress', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime });
+        this._metrics.record('job_submit', 'in_progress', { cluster: this._resolveHostname(session.host), cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime });
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -1892,7 +1902,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         progress.report({ message: `Job ${session.slurmJobId || ''} submitted — waiting for node allocation...` });
                         this._startSessionPolling();
                     }
-                    this._metrics.record('job_submit', 'success', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime, job_id_slurm: session.slurmJobId }, Date.now() - submitStart);
+                    this._metrics.record('job_submit', 'success', { cluster: this._resolveHostname(session.host), cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime, job_id_slurm: session.slurmJobId }, Date.now() - submitStart);
                 } else {
                     session.status = 'Failed';
                     const errLines = (result.stderr || '').split('\n')
@@ -1904,7 +1914,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         this._outputChannel.appendLine(result.stderr);
                     }
                     vscode.window.showErrorMessage(`Failed to start session on ${session.host}: ${session.errorMessage}`);
-                    this._metrics.record('job_submit', 'failure', { cluster: session.host, cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime }, Date.now() - submitStart, session.errorMessage);
+                    this._metrics.record('job_submit', 'failure', { cluster: this._resolveHostname(session.host), cpu: session.cpus, gpu: session.gpu, memory: session.memory, walltime_requested: session.wallTime }, Date.now() - submitStart, session.errorMessage);
                 }
             } catch (err: any) {
                 if (err.cancelled) {
@@ -1918,7 +1928,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._outputChannel.appendLine(`Error: ${err.message}`);
                     vscode.window.showErrorMessage(`Failed to submit job: ${err.message}`);
                 }
-                this._metrics.record('job_submit', 'failure', { cluster: session.host }, Date.now() - submitStart, session.errorMessage);
+                this._metrics.record('job_submit', 'failure', { cluster: this._resolveHostname(session.host) }, Date.now() - submitStart, session.errorMessage);
             }
 
             // If submission failed, clean up the local FUSE server (no point keeping it running)
@@ -1945,7 +1955,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        this._metrics.record('linkspan_deploy', 'in_progress', { deploy_type: 'remote', target_host: hostName });
+        this._metrics.record('linkspan_deploy', 'in_progress', { deploy_type: 'remote', target_host: this._resolveHostname(hostName) });
 
         try {
             // Detect remote architecture
@@ -1967,9 +1977,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             );
 
             this._outputChannel.appendLine('linkspan deployed to ' + hostName);
-            this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'remote', target_host: hostName }, Date.now() - deployStart);
+            this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'remote', target_host: this._resolveHostname(hostName) }, Date.now() - deployStart);
         } catch (err: any) {
-            this._metrics.record('linkspan_deploy', 'failure', { deploy_type: 'remote', target_host: hostName }, Date.now() - deployStart, err.message);
+            this._metrics.record('linkspan_deploy', 'failure', { deploy_type: 'remote', target_host: this._resolveHostname(hostName) }, Date.now() - deployStart, err.message);
             throw err;
         }
     }
@@ -2361,7 +2371,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         session.sshPort = parseInt(value, 10);
                     } else if (varName === 'tunnel_url') {
                         session.tunnelUrl = value.trim();
-                        this._metrics.record('tunnel_create', 'success', { tunnel_type: 'devtunnel', target_host: session.host });
+                        this._metrics.record('tunnel_create', 'success', { tunnel_type: 'devtunnel', target_host: this._resolveHostname(session.host) });
                     } else if (varName === 'tunnel_token') {
                         session.tunnelToken = value.trim();
                     } else if (varName === 'tunnel_id') {
@@ -2387,7 +2397,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._saveSessions();
                     this.refresh();
                     vscode.window.showErrorMessage(`Linkspan workflow failed — ${stepName}: ${errMsg.trim()}`);
-                    this._metrics.record('tunnel_create', 'failure', { tunnel_type: 'devtunnel', target_host: session.host }, undefined, session.errorMessage);
+                    this._metrics.record('tunnel_create', 'failure', { tunnel_type: 'devtunnel', target_host: this._resolveHostname(session.host) }, undefined, session.errorMessage);
                     continue;
                 }
 
@@ -3273,7 +3283,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         session.host,
                         `squeue -j ${session.slurmJobId} -h -o "%T %N"`
                     );
-                    this._metrics.record('sinfo_fetch', 'success', { cluster: session.host, raw_output_truncated: result.stdout.slice(0, 200) }, Date.now() - squeueStart);
+                    this._metrics.record('sinfo_fetch', 'success', { cluster: this._resolveHostname(session.host), raw_output_truncated: result.stdout.slice(0, 200) }, Date.now() - squeueStart);
 
                     const parts0 = result.stdout.trim().split(/\s+/);
                     const state = parts0[0] || '';
@@ -3337,7 +3347,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         job_id_slurm: session.slurmJobId!,
                         old_status: oldStatus,
                         new_status: session.status,
-                        cluster: session.host,
+                        cluster: this._resolveHostname(session.host),
                     });
                 }
 
@@ -3980,17 +3990,17 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 if (cancelled) {
                     const err: any = new Error('Operation cancelled');
                     err.cancelled = true;
-                    this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, duration, 'Cancelled');
+                    this._metrics.record('ssh_connect', 'failure', { target_host: this._resolveHostname(hostName) }, duration, 'Cancelled');
                     reject(err);
                 } else {
-                    this._metrics.record('ssh_connect', (code ?? 1) === 0 ? 'success' : 'failure', { target_host: hostName }, duration, code !== 0 ? `exit code ${code}` : undefined);
+                    this._metrics.record('ssh_connect', (code ?? 1) === 0 ? 'success' : 'failure', { target_host: this._resolveHostname(hostName) }, duration, code !== 0 ? `exit code ${code}` : undefined);
                     resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 });
                 }
             });
 
             sshProcess.on('error', (err: Error) => {
                 cleanup();
-                this._metrics.record('ssh_connect', 'failure', { target_host: hostName }, Date.now() - cmdStart, err.message);
+                this._metrics.record('ssh_connect', 'failure', { target_host: this._resolveHostname(hostName) }, Date.now() - cmdStart, err.message);
                 reject(err);
             });
         });

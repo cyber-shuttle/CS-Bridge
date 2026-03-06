@@ -38,10 +38,6 @@
         "title": "CyberShuttle: Export Metrics"
       },
       {
-        "command": "cybershuttle.reportMetrics",
-        "title": "CyberShuttle: Report Metrics"
-      },
-      {
         "command": "cybershuttle.addRemote",
         "title": "Add Remote",
         "icon": "$(add)"
@@ -136,6 +132,11 @@
           "type": "string",
           "default": "https://admin.dev.cybershuttle.org",
           "description": "URL of the CS-Bridge admin server for metrics reporting."
+        },
+        "cybershuttle.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable anonymous telemetry reporting to help improve CS-Bridge."
         }
       }
     }

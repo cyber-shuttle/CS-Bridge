@@ -4,7 +4,7 @@ import * as os from 'os';
 import { CsCommands } from './cscommands';
 import { CsStorage } from './csstorage';
 import { CybershuttleViewProvider } from './CybershuttleViewProvider';
-import { MetricsCollector, MetricEvent, decodeJwtClaims, anonymizeEvents, buildExportDatabase, saveExportFile, generateReporterID, submitReport } from './instrumentation';
+import { MetricsCollector, MetricEvent, decodeJwtClaims, anonymizeEvents, buildExportDatabase, saveExportFile, showConsentModal, syncTelemetry } from './instrumentation';
 
 const metrics = MetricsCollector.instance;
 
@@ -18,13 +18,11 @@ interface MetricsExportResult {
 
 async function prepareMetricsExport(
 	csStorage: CsStorage,
-	opts?: { queryOverride?: { to_date?: string }; placeholderVerb?: string; warnIfNoIdentity?: boolean },
+	queryOverride?: { to_date?: string },
 ): Promise<MetricsExportResult | undefined> {
-	const verb = opts?.placeholderVerb ?? 'export';
-
 	let fromDate: string | undefined;
 	let rangeValue: string;
-	if (opts?.queryOverride) {
+	if (queryOverride) {
 		rangeValue = 'custom';
 	} else {
 		const rangeOptions = [
@@ -34,7 +32,7 @@ async function prepareMetricsExport(
 		];
 		const rangeChoice = await vscode.window.showQuickPick(
 			rangeOptions.map(o => o.label),
-			{ placeHolder: `Select time range to ${verb}` }
+			{ placeHolder: 'Select time range to export' }
 		);
 		if (!rangeChoice) { return undefined; }
 		const range = rangeOptions.find(o => o.label === rangeChoice)!;
@@ -51,16 +49,10 @@ async function prepareMetricsExport(
 		const claims = decodeJwtClaims(accessToken);
 		userName = claims.name;
 		userEmail = claims.email;
-	} else if (opts?.warnIfNoIdentity) {
-		const proceed = await vscode.window.showWarningMessage(
-			'Unable to retrieve identity for anonymization. Export will include unmasked data. Proceed?',
-			'Yes', 'Cancel'
-		);
-		if (proceed !== 'Yes') { return undefined; }
 	}
 
-	const queryFilters = opts?.queryOverride
-		? { to_date: opts.queryOverride.to_date }
+	const queryFilters = queryOverride
+		? { to_date: queryOverride.to_date }
 		: { from_date: fromDate };
 	const events = metrics.query(queryFilters);
 	if (events.length === 0) {
@@ -117,7 +109,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	const exportMetrics = vscode.commands.registerCommand('cybershuttle.exportMetrics', async () => {
 		try {
-			const prepared = await prepareMetricsExport(csStorage, { warnIfNoIdentity: true });
+			const prepared = await prepareMetricsExport(csStorage);
 			if (!prepared) { return; }
 
 			const dateStr = new Date().toISOString().split('T')[0];
@@ -162,68 +154,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	});
 	context.subscriptions.push(exportMetrics);
 
-	const reportMetrics = vscode.commands.registerCommand('cybershuttle.reportMetrics', async () => {
-		try {
-			const prepared = await prepareMetricsExport(csStorage, { placeholderVerb: 'report' });
-			if (!prepared) { return; }
-
-			let reporterEmail: string | undefined;
-			try {
-				const msSession = await vscode.authentication.getSession('microsoft', [], { silent: true });
-				if (msSession) {
-					reporterEmail = msSession.account.label;
-				}
-			} catch {
-			}
-			if (!reporterEmail) {
-				reporterEmail = prepared.userEmail;
-			}
-			if (!reporterEmail) {
-				vscode.window.showWarningMessage('Unable to determine user identity. Please sign in first.');
-				return;
-			}
-			const reporterID = generateReporterID(reporterEmail);
-
-			const serverUrl = vscode.workspace.getConfiguration('cybershuttle').get<string>('adminServerUrl', 'https://admin.dev.cybershuttle.org');
-			const extVersion = context.extension?.packageJSON?.version ?? 'unknown';
-
-			const result = await vscode.window.withProgress(
-				{
-					location: vscode.ProgressLocation.Notification,
-					title: `Reporting ${prepared.events.length} events...`,
-					cancellable: false,
-				},
-				async () => {
-					return submitReport(serverUrl, reporterID, prepared.events, {
-						extension_version: extVersion,
-						vscode_version: vscode.version,
-						time_range_filter: prepared.rangeValue,
-						record_count: prepared.events.length,
-					});
-				}
-			);
-
-			if (result.success) {
-				metrics.markExported(prepared.fromDate);
-				const cleanup = await vscode.window.showInformationMessage(
-					`Reported ${prepared.events.length} events to the CS-Bridge team. Clear reported records?`,
-					'Clear reported records', 'Keep records'
-				);
-				if (cleanup === 'Clear reported records') {
-					metrics.deleteByDateRange(prepared.fromDate);
-				}
-			} else {
-				vscode.window.showErrorMessage(
-					`Report failed: ${result.error || 'Unknown error'}. Your data is still stored locally.`
-				);
-			}
-		} catch (err) {
-			console.warn('[MetricsCollector] Report failed:', err);
-			vscode.window.showErrorMessage('Report failed. Your data is still stored locally.');
-		}
-	});
-	context.subscriptions.push(reportMetrics);
-
 	// Register Add Remote command — forward to the provider
 	context.subscriptions.push(
 		vscode.commands.registerCommand('cybershuttle.addRemote', () => sidebarProvider.handleAddRemote()),
@@ -244,23 +174,40 @@ export async function activate(context: vscode.ExtensionContext) {
 		extension_version: context.extension?.packageJSON?.version ?? 'unknown',
 	}, activationDuration);
 
+	// Telemetry: check consent and start periodic background sync
+	try {
+		const consentGiven = context.globalState.get<boolean>('cybershuttle.telemetry.consent_given');
+		if (consentGiven === undefined) {
+			// First time — show consent modal
+			await showConsentModal(context);
+		}
+		// Initial sync
+		syncTelemetry(context, metrics).catch(() => {});
+		// Periodic sync every 60s (syncTelemetry has its own cooldown gate)
+		const telemetryTimer = setInterval(() => {
+			syncTelemetry(context, metrics).catch(() => {});
+		}, 60_000);
+		context.subscriptions.push({ dispose: () => clearInterval(telemetryTimer) });
+	} catch {
+		// Telemetry must never disrupt activation
+	}
+
+	// 30-day TTL cleanup prompt
 	setTimeout(() => {
-		const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-		const oldEvents = metrics.query({ to_date: cutoff90 });
+		const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+		const oldEvents = metrics.query({ to_date: cutoff });
 		if (oldEvents.length > 0) {
 			vscode.window.showInformationMessage(
-				`You have ${oldEvents.length} instrumentation events older than 90 days. Export before clearing?`,
+				`You have ${oldEvents.length} instrumentation events older than 30 days. Export before clearing?`,
 				'Export & Clear', 'Clear Now', 'Remind Me Later'
 			).then(async (choice) => {
 				if (choice === 'Export & Clear') {
-					const prepared = await prepareMetricsExport(csStorage, {
-						queryOverride: { to_date: cutoff90 },
-					});
+					const prepared = await prepareMetricsExport(csStorage, { to_date: cutoff });
 					if (!prepared) { return; }
 
 					const dateStr = new Date().toISOString().split('T')[0];
 					const saveUri = await vscode.window.showSaveDialog({
-						defaultUri: vscode.Uri.file(path.join(os.homedir(), `cs-bridge-metrics-old-90d-${dateStr}.db`)),
+						defaultUri: vscode.Uri.file(path.join(os.homedir(), `cs-bridge-metrics-old-30d-${dateStr}.db`)),
 						filters: { 'SQLite Database': ['db'] },
 					});
 					if (!saveUri) { return; }
@@ -270,16 +217,16 @@ export async function activate(context: vscode.ExtensionContext) {
 						export_timestamp: new Date().toISOString(),
 						extension_version: extVersion,
 						vscode_version: vscode.version,
-						time_range_filter: 'older-than-90d',
+						time_range_filter: 'older-than-30d',
 						record_count: prepared.events.length,
 						anonymization_applied: !!(prepared.userName || prepared.userEmail),
 					});
 					saveExportFile(exportDb, saveUri.fsPath);
 					exportDb.close();
-					metrics.markExported(undefined, cutoff90);
-					metrics.purge(90);
+					metrics.markExported(undefined, cutoff);
+					metrics.purge(30);
 				} else if (choice === 'Clear Now') {
-					metrics.purge(90);
+					metrics.purge(30);
 				}
 			});
 		}

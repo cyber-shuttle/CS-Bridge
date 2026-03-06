@@ -18,7 +18,6 @@
     const filterStatus = document.getElementById('filter-status');
     const filterRange = document.getElementById('filter-range');
     const refreshBtn = document.getElementById('refresh-btn');
-    const exportBtn = document.getElementById('export-btn');
 
     // --- Messaging ---
 
@@ -50,11 +49,16 @@
 
     function renderSummary(summary) {
         if (!summary) { return; }
-        cardTotal.textContent = String(summary.total ?? 0);
+        if (summary.total === 0) {
+            cardTotal.textContent = '0';
+            cardSuccessRate.textContent = '--';
+            cardFailed.textContent = '0';
+            cardAvgDuration.textContent = '--';
+            return;
+        }
+        cardTotal.textContent = String(summary.total);
 
-        const successRate = summary.total > 0
-            ? Math.round((summary.success / summary.total) * 100)
-            : 0;
+        const successRate = Math.round((summary.success / summary.total) * 100);
         cardSuccessRate.textContent = successRate + '%';
         cardFailed.textContent = String(summary.failure ?? 0);
 
@@ -91,7 +95,7 @@
 
     function renderTable() {
         if (events.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="6" class="empty-state"><p>No events found</p></td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="6" class="empty-state"><p>No events recorded yet</p><p>Events will appear here as you use CyberShuttle features.</p></td></tr>';
             return;
         }
 
@@ -167,10 +171,6 @@
 
     refreshBtn.addEventListener('click', function () {
         refreshData();
-    });
-
-    exportBtn.addEventListener('click', function () {
-        vscode.postMessage({ type: 'reportMetrics' });
     });
 
     filterType.addEventListener('change', function () { requestSummary(); requestEvents(); });

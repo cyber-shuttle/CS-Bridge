@@ -111,10 +111,6 @@ export class DashboardPanel {
                 this._handleMessage({ type: 'requestEvents', filters: msg.filters });
                 break;
             }
-            case 'reportMetrics': {
-                vscode.commands.executeCommand('cybershuttle.reportMetrics');
-                break;
-            }
         }
     }
 
