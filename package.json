@@ -2,7 +2,7 @@
   "name": "cybershuttle",
   "displayName": "CyberShuttle",
   "publisher": "cybershuttle",
-  "description": "",
+  "description": "Connect to any remote machine via SSH — interactive sessions, local filesystem mounting, and HPC/SLURM integration",
   "repository": {
     "type": "git",
     "url": "https://github.com/cyber-shuttle/CS-Bridge.git"
@@ -15,8 +15,22 @@
     "ui"
   ],
   "categories": [
+    "Data Science",
+    "Education",
     "Other"
   ],
+  "keywords": [
+    "hpc",
+    "slurm",
+    "ssh",
+    "remote",
+    "cluster"
+  ],
+  "icon": "resources/cs-logo.png",
+  "galleryBanner": {
+    "color": "#1A1F36",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
