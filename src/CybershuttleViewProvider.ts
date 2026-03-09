@@ -4519,77 +4519,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Shared implementation for browsing a remote directory.
-     * Parses ls output into structured entries and posts results via the given callback.
-     */
-    private async _browseRemote(
-        hostName: string,
-        remotePath: string,
-        requestIdMap: Map<string, number>,
-        postMessage: (msg: unknown) => void,
-        msgType: string
-    ) {
-        const reqId = (requestIdMap.get(hostName) ?? 0) + 1;
-        requestIdMap.set(hostName, reqId);
-
-        postMessage({ type: msgType, host: hostName, path: remotePath, loading: true, entries: [] });
-
-        try {
-            const result = await this._runShellCommand(
-                hostName,
-                `cd "${(remotePath === '~' ? '$HOME' : remotePath.startsWith('~/') ? '$HOME' + remotePath.slice(1) : remotePath).replace(/"/g, '\\"')}" && pwd && ls -lAhp`
-            );
-
-            if (requestIdMap.get(hostName) !== reqId) { return; }
-
-            if (result.code === 0) {
-                const lines = result.stdout.split('\n');
-                const resolvedPath = lines[0].trim();
-                const entries: { name: string; isDir: boolean; size: string }[] = [];
-
-                for (let i = 2; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) { continue; }
-                    const parts = line.split(/\s+/);
-                    if (parts.length < 9) { continue; }
-                    const size = parts[4];
-                    const name = parts.slice(8).join(' ');
-                    if (name === './' || name === '../') { continue; }
-                    const isDir = name.endsWith('/');
-                    entries.push({ name: isDir ? name.slice(0, -1) : name, isDir, size });
-                }
-
-                entries.sort((a, b) => {
-                    if (a.isDir !== b.isDir) { return a.isDir ? -1 : 1; }
-                    return a.name.localeCompare(b.name);
-                });
-
-                postMessage({ type: msgType, host: hostName, path: resolvedPath, loading: false, entries });
-            } else {
-                postMessage({ type: msgType, host: hostName, path: remotePath, loading: false, entries: [], error: `exit code ${result.code}` });
-            }
-        } catch (err: any) {
-            if (requestIdMap.get(hostName) !== reqId) { return; }
-            postMessage({ type: msgType, host: hostName, path: remotePath, loading: false, entries: [], error: err.message });
-        }
-    }
-
-    /**
-     * Browse a directory on a remote SSH host.
-     * Parses ls output into structured entries and sends to the webview.
-     */
-    private async browseRemoteDir(hostName: string, remotePath: string) {
-        await this._browseRemote(hostName, remotePath, this._browseRequestId, (msg: unknown) => this._postSessionsMessage(msg), 'fileListing');
-    }
-
-    /**
-     * Browse a directory on a remote SSH host — sends results to the Files panel.
-     */
-    private async browseRemoteDirForFiles(hostName: string, remotePath: string) {
-        await this._browseRemote(hostName, remotePath, this._filesBrowseRequestId, (msg: unknown) => this._postStoragesMessage(msg), 'filesListing');
-    }
-
-    /**
      * Fetch a remote file's content and open it in a VS Code editor tab.
      */
     private async openRemoteFile(hostName: string, remotePath: string) {
@@ -4713,13 +4642,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Check if any workspace has a running linkspan
         const linkspanRunning = visibleWorkspaces.some(ws => ws.directoryPath && !!this._localLinkspan.get(ws.directoryPath));
         this._postSessionsMessage({ type: 'updateRuntimes', updates, isRemoteWindow: this._isRemoteWindow, linkspanRunning });
-    }
-
-    /**
-     * Refresh the Servers webview content (legacy alias).
-     */
-    public refreshServers() {
-        this.refreshStorages();
     }
 
     /**
