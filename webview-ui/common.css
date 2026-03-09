@@ -1,4 +1,4 @@
-/* Common webview styles — shared across Sessions and Files panels */
+/* Common webview styles — shared across Sessions, Files, and Info panels */
 /* Note: @font-face for codicon is injected inline (dynamic URI) */
 
 .codicon {
@@ -17,27 +17,103 @@ body {
     font-size: var(--vscode-font-size);
 }
 
+h2 {
+    margin-top: 0;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    padding-bottom: 8px;
+}
+
 button {
-    padding: 3px 10px;
-    margin: 0;
+    padding: 8px 12px;
+    margin: 8px 0;
     border: none;
-    border-radius: 3px;
+    border-radius: 4px;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     cursor: pointer;
-    font-size: 11px;
-    font-weight: 500;
+    font-size: 13px;
 }
 
 button:hover {
     background: var(--vscode-button-hoverBackground);
 }
 
+.full-width {
+    display: block;
+    width: 100%;
+}
+
+.description {
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+    margin-bottom: 16px;
+}
+
+.ssh-host {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 8px;
+    margin: 1px 0;
+    background: var(--vscode-list-hoverBackground);
+    border-radius: 3px;
+}
+
+.ssh-host-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+}
+
+.host-info {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.host-name {
+    font-weight: 600;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+
+.host-detail {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chevron {
+    font-size: 14px;
+    color: var(--vscode-descriptionForeground);
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+    transform: rotate(90deg);
+}
+
+.ssh-host-row.expanded .chevron {
+    transform: rotate(270deg);
+}
+
+.job-form {
+    width: 100%;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--vscode-panel-border);
+}
+
 .resource-tabs {
     display: flex;
     gap: 0;
     margin-bottom: 8px;
-    border-radius: 3px;
+    border-radius: 4px;
     overflow: hidden;
 }
 
@@ -97,10 +173,8 @@ button:hover {
 .submit-job-btn {
     width: 100%;
     margin: 6px 0 0 0;
-    padding: 3px 12px;
-    font-size: 11px;
-    border-radius: 3px;
-    font-weight: 500;
+    padding: 6px 10px;
+    font-size: 12px;
 }
 
 .job-form-loading {
@@ -121,19 +195,62 @@ button:hover {
     color: var(--vscode-errorForeground);
 }
 
+.job-form-retry-btn {
+    margin: 0;
+    padding: 2px 8px;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.job-form-stop-btn {
+    padding: 2px 6px;
+    font-size: 10px;
+    flex-shrink: 0;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-errorForeground);
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.job-form-stop-btn:hover {
+    background: var(--vscode-button-secondaryHoverBackground);
+}
+
 .spinner {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    border: 1.5px solid currentColor;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--vscode-descriptionForeground);
     border-top-color: transparent;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-    vertical-align: text-bottom;
 }
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+.skeleton {
+    display: inline-block;
+    background: linear-gradient(90deg,
+        var(--vscode-editor-inactiveSelectionBackground) 25%,
+        var(--vscode-list-hoverBackground) 50%,
+        var(--vscode-editor-inactiveSelectionBackground) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: 3px;
+}
+
+.skeleton-text {
+    height: 12px;
+    vertical-align: middle;
+}
+
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
 }
 
 .job-form-fields {
@@ -145,4 +262,14 @@ button:hover {
     font-style: italic;
     text-align: center;
     padding: 16px 0;
+}
+
+.refresh-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    margin: 0;
+}
+
+.section {
+    margin-bottom: 20px;
 }
