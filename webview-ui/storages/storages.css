@@ -1,0 +1,102 @@
+/* Storages panel styles */
+
+html {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 10px 10px 8px 10px;
+    box-sizing: border-box;
+}
+
+.storage-breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 12px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    overflow: hidden;
+    color: var(--vscode-breadcrumb-foreground, var(--vscode-descriptionForeground));
+    margin-bottom: 6px;
+    padding: 3px 4px;
+    background: var(--vscode-breadcrumb-background, transparent);
+    border-radius: 3px;
+    min-height: 22px;
+    flex-shrink: 0;
+}
+
+.storage-breadcrumbs .codicon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.breadcrumb-seg {
+    cursor: pointer;
+    color: var(--vscode-breadcrumb-foreground, var(--vscode-descriptionForeground));
+    padding: 1px 3px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+.breadcrumb-seg:hover {
+    color: var(--vscode-breadcrumb-focusForeground, var(--vscode-foreground));
+    background: var(--vscode-breadcrumb-picker-background, var(--vscode-list-hoverBackground));
+}
+
+.breadcrumb-seg.breadcrumb-current {
+    color: var(--vscode-breadcrumb-activeSelectionForeground, var(--vscode-foreground));
+    cursor: default;
+    background: none;
+}
+
+.breadcrumb-sep {
+    color: var(--vscode-breadcrumb-foreground, var(--vscode-descriptionForeground));
+    opacity: 0.6;
+    font-size: 11px;
+}
+
+.storage-col-headers {
+    display: flex;
+    align-items: center;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--vscode-descriptionForeground);
+    border-bottom: 1px solid var(--vscode-panel-border);
+    flex-shrink: 0;
+    gap: 6px;
+    padding-left: 30px;
+}
+
+.storage-col-name { flex: 1; }
+.storage-col-size { flex-shrink: 0; }
+
+.storage-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 0 0 4px 4px;
+    min-height: 0;
+}
+
+.storage-entry { display: flex; align-items: center; padding: 4px 8px; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); gap: 6px; }
+.storage-entry:last-child { border-bottom: none; }
+.storage-entry.dir { cursor: pointer; }
+.storage-entry.dir:hover, .storage-entry.file:hover { background: var(--vscode-list-hoverBackground); }
+.storage-entry.file { cursor: pointer; }
+.storage-entry .codicon { flex-shrink: 0; width: 16px; text-align: center; font-size: 14px; }
+.storage-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-size { flex-shrink: 0; color: var(--vscode-descriptionForeground); font-size: 10px; }
+.storage-status { display: flex; align-items: center; gap: 8px; padding: 12px 0; font-size: 12px; color: var(--vscode-descriptionForeground); flex-shrink: 0; }
+.storage-status.error { color: var(--vscode-errorForeground); }
+.storage-status:empty { display: none; }
+.storage-status.loading { justify-content: center; }
+.loading-path { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,184 +1,218 @@
 {
-  "name": "cybershuttle",
-  "displayName": "CyberShuttle",
-  "publisher": "cybershuttle",
-  "description": "Connect to any remote machine via SSH — interactive sessions, local filesystem mounting, and HPC/SLURM integration",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/cyber-shuttle/CS-Bridge.git"
-  },
-  "version": "0.0.1",
-  "engines": {
-    "vscode": "^1.98.0"
-  },
-  "extensionKind": [
-    "ui"
-  ],
-  "categories": [
-    "Data Science",
-    "Education",
-    "Other"
-  ],
-  "keywords": [
-    "hpc",
-    "slurm",
-    "ssh",
-    "remote",
-    "cluster"
-  ],
-  "icon": "resources/cs-logo.png",
-  "galleryBanner": {
-    "color": "#1A1F36",
-    "theme": "dark"
-  },
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "cybershuttle.auth",
-        "title": "Sign In",
-        "icon": "$(account)"
-      },
-      {
-        "command": "cybershuttle.openMetrics",
-        "title": "Session Metrics",
-        "icon": "$(graph)"
-      },
-      {
-        "command": "cybershuttle.exportMetrics",
-        "title": "CyberShuttle: Export Metrics"
-      },
-      {
-        "command": "cybershuttle.addRemote",
-        "title": "Add Remote",
-        "icon": "$(add)"
-      },
-      {
-        "command": "cybershuttle.filesGoBack",
-        "title": "Go Back",
-        "icon": "$(arrow-left)"
-      },
-      {
-        "command": "cybershuttle.filesGoForward",
-        "title": "Go Forward",
-        "icon": "$(arrow-right)"
-      },
-      {
-        "command": "cybershuttle.filesGoHome",
-        "title": "Go Home",
-        "icon": "$(home)"
-      },
-      {
-        "command": "cybershuttle.filesRefresh",
-        "title": "Refresh",
-        "icon": "$(refresh)"
-      }
-    ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "cybershuttle.addRemote",
-          "when": "view == cybershuttle.workspacesView",
-          "group": "navigation@1"
-        },
-        {
-          "command": "cybershuttle.auth",
-          "when": "view == cybershuttle.workspacesView",
-          "group": "navigation@2"
-        },
-        {
-          "command": "cybershuttle.openMetrics",
-          "when": "view == cybershuttle.workspacesView",
-          "group": "navigation@3"
-        },
-        {
-          "command": "cybershuttle.filesGoBack",
-          "when": "view == cybershuttle.serversView",
-          "group": "navigation@1"
-        },
-        {
-          "command": "cybershuttle.filesGoForward",
-          "when": "view == cybershuttle.serversView",
-          "group": "navigation@2"
-        },
-        {
-          "command": "cybershuttle.filesGoHome",
-          "when": "view == cybershuttle.serversView",
-          "group": "navigation@3"
-        },
-        {
-          "command": "cybershuttle.filesRefresh",
-          "when": "view == cybershuttle.serversView",
-          "group": "navigation@4"
-        }
-      ]
-    },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "cybershuttle",
-          "title": "CyberShuttle",
-          "icon": "resources/cybershuttle.svg"
-        }
-      ]
-    },
-    "views": {
-      "cybershuttle": [
-        {
-          "type": "webview",
-          "id": "cybershuttle.workspacesView",
-          "name": "Sessions"
-        },
-        {
-          "type": "webview",
-          "id": "cybershuttle.serversView",
-          "name": "Files"
-        }
-      ]
-    },
-    "configuration": {
-      "title": "CyberShuttle",
-      "properties": {
-        "cybershuttle.adminServerUrl": {
-          "type": "string",
-          "default": "https://admin.dev.cybershuttle.org",
-          "description": "URL of the CS-Bridge admin server for metrics reporting."
-        },
-        "cybershuttle.telemetry.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable anonymous telemetry reporting to help improve CS-Bridge."
-        }
-      }
-    }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test",
-    "package": "npx @vscode/vsce package",
-    "install-ext": "code --install-extension cybershuttle-0.0.1.vsix",
-    "dev": "npm install && npm run compile && npm run package && npm run install-ext"
-  },
-  "devDependencies": {
-    "@types/mocha": "^10.0.10",
-    "@types/node": "20.x",
-    "@types/vscode": "^1.98.0",
-    "@typescript-eslint/eslint-plugin": "^8.25.0",
-    "@typescript-eslint/parser": "^8.25.0",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1",
-    "eslint": "^9.21.0",
-    "typescript": "^5.7.3"
-  },
-  "dependencies": {
-    "@vscode/codicons": "^0.0.44",
-    "sql.js": "^1.14.0"
-  }
+	"name": "cybershuttle",
+	"displayName": "CyberShuttle",
+	"publisher": "cybershuttle",
+	"description": "Manage SSH sessions, HPC jobs, Dev Tunnels, and remote storage from VS Code",
+	"license": "Apache-2.0",
+	"icon": "resources/cybershuttle.png",
+	"keywords": [
+		"ssh",
+		"hpc",
+		"slurm",
+		"dev-tunnel",
+		"remote"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/cyber-shuttle/CS-Bridge.git"
+	},
+	"version": "0.0.1",
+	"engines": {
+		"vscode": "^1.98.0"
+	},
+	"extensionKind": [
+		"ui"
+	],
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "cybershuttle.auth",
+				"title": "Sign In",
+				"icon": "$(account)"
+			},
+			{
+				"command": "cybershuttle.openMetrics",
+				"title": "Session Metrics",
+				"icon": "$(graph)"
+			},
+			{
+				"command": "cybershuttle.exportMetrics",
+				"title": "CyberShuttle: Export Metrics"
+			},
+			{
+				"command": "cybershuttle.reportMetrics",
+				"title": "CyberShuttle: Report Metrics"
+			},
+			{
+				"command": "cybershuttle.addRemote",
+				"title": "Add Storage",
+				"icon": "$(add)"
+			},
+			{
+				"command": "cybershuttle.storagesGoBack",
+				"title": "Go Back",
+				"icon": "$(arrow-left)"
+			},
+			{
+				"command": "cybershuttle.storagesGoForward",
+				"title": "Go Forward",
+				"icon": "$(arrow-right)"
+			},
+			{
+				"command": "cybershuttle.storagesGoHome",
+				"title": "Go Home",
+				"icon": "$(home)"
+			},
+			{
+				"command": "cybershuttle.storagesRefresh",
+				"title": "Refresh",
+				"icon": "$(refresh)"
+			},
+			{
+				"command": "cybershuttle.switchSession",
+				"title": "CyberShuttle: Switch Session"
+			},
+			{
+				"command": "cybershuttle.reinstallDependencies",
+				"title": "CyberShuttle: Reinstall Dependencies"
+			},
+			{
+				"command": "cybershuttle.startLinkspan",
+				"title": "CyberShuttle: Start Linkspan"
+			},
+			{
+				"command": "cybershuttle.restartLinkspan",
+				"title": "CyberShuttle: Restart Linkspan"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "cybershuttle.auth",
+					"when": "view == cybershuttle.sessionsView",
+					"group": "navigation@1"
+				},
+				{
+					"command": "cybershuttle.openMetrics",
+					"when": "view == cybershuttle.sessionsView",
+					"group": "navigation@2"
+				},
+				{
+					"command": "cybershuttle.storagesGoBack",
+					"when": "view == cybershuttle.storagesView",
+					"group": "navigation@1"
+				},
+				{
+					"command": "cybershuttle.storagesGoForward",
+					"when": "view == cybershuttle.storagesView",
+					"group": "navigation@2"
+				},
+				{
+					"command": "cybershuttle.storagesGoHome",
+					"when": "view == cybershuttle.storagesView",
+					"group": "navigation@3"
+				},
+				{
+					"command": "cybershuttle.storagesRefresh",
+					"when": "view == cybershuttle.storagesView",
+					"group": "navigation@4"
+				},
+				{
+					"command": "cybershuttle.addRemote",
+					"when": "view == cybershuttle.storagesView",
+					"group": "navigation@5"
+				}
+			]
+		},
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "cybershuttle",
+					"title": "CyberShuttle",
+					"icon": "resources/cybershuttle.svg"
+				}
+			]
+		},
+		"views": {
+			"cybershuttle": [
+				{
+					"type": "webview",
+					"id": "cybershuttle.sessionsView",
+					"name": "Sessions"
+				},
+				{
+					"type": "webview",
+					"id": "cybershuttle.storagesView",
+					"name": "Storages"
+				}
+			]
+		},
+		"configuration": {
+			"title": "CyberShuttle",
+			"properties": {
+				"cybershuttle.adminServerUrl": {
+					"type": "string",
+					"default": "https://admin.dev.cybershuttle.org",
+					"description": "URL of the CS-Bridge admin server for metrics reporting."
+				},
+				"cybershuttle.tunnelProvider": {
+					"type": "string",
+					"enum": [
+						"devtunnel",
+						"frp"
+					],
+					"default": "devtunnel",
+					"description": "Tunnel provider for linkspan connections. 'devtunnel' uses Microsoft Dev Tunnels, 'frp' uses a self-hosted FRP relay."
+				},
+				"cybershuttle.frpServerUrl": {
+					"type": "string",
+					"default": "",
+					"description": "FRP relay server address (host:port). Required when tunnelProvider is 'frp'."
+				},
+				"cybershuttle.frpApiKey": {
+					"type": "string",
+					"default": "",
+					"description": "API key for the FRP relay server. Required when tunnelProvider is 'frp'."
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile && npm run lint",
+		"lint": "eslint src",
+		"test": "vscode-test",
+		"package": "npx @vscode/vsce package",
+		"install-ext": "code --install-extension cybershuttle-0.0.1.vsix",
+		"dev": "npm install && npm run compile && npm run package && npm run install-ext"
+	},
+	"devDependencies": {
+		"@types/mocha": "^10.0.10",
+		"@types/node": "20.x",
+		"@types/vscode": "^1.98.0",
+		"@typescript-eslint/eslint-plugin": "^8.25.0",
+		"@typescript-eslint/parser": "^8.25.0",
+		"@vscode/test-cli": "^0.0.10",
+		"@vscode/test-electron": "^2.4.1",
+		"eslint": "^9.21.0",
+		"typescript": "^5.7.3"
+	},
+	"dependencies": {
+		"@vscode/codicons": "^0.0.44",
+		"sql.js": "^1.14.0"
+	},
+	"__metadata": {
+		"installedTimestamp": 1773025451091,
+		"targetPlatform": "undefined",
+		"size": 627168
+	}
 }

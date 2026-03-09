@@ -1,0 +1,148 @@
+/* Common webview styles — shared across Sessions and Files panels */
+/* Note: @font-face for codicon is injected inline (dynamic URI) */
+
+.codicon {
+    font: normal normal normal 16px/1 codicon;
+    display: inline-block;
+    text-decoration: none;
+    text-rendering: auto;
+    text-align: center;
+    user-select: none;
+}
+
+body {
+    padding: 10px;
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+}
+
+button {
+    padding: 3px 10px;
+    margin: 0;
+    border: none;
+    border-radius: 3px;
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+button:hover {
+    background: var(--vscode-button-hoverBackground);
+}
+
+.resource-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 8px;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.resource-tab {
+    flex: 1;
+    padding: 4px 0;
+    font-size: 11px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    transition: background 0.15s, color 0.15s;
+}
+
+.resource-tab.active {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+.resource-tab:not(.active):hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.form-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.form-row label {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    flex-shrink: 0;
+    width: 70px;
+}
+
+.form-select {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 6px;
+    font-size: 12px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 3px;
+    outline: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.form-select:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+.submit-job-btn {
+    width: 100%;
+    margin: 6px 0 0 0;
+    padding: 3px 12px;
+    font-size: 11px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.job-form-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.job-form-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    font-size: 12px;
+    color: var(--vscode-errorForeground);
+}
+
+.spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: text-bottom;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.job-form-fields {
+    display: none;
+}
+
+.empty-message {
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+    text-align: center;
+    padding: 16px 0;
+}

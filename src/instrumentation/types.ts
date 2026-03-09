@@ -6,6 +6,7 @@ export type EventType =
   | 'linkspan_deploy'
   | 'auth_flow'
   | 'session_reconnect'
+  | 'session_corrupted'
   | 'sinfo_fetch'
   | 'extension_activate';
 
