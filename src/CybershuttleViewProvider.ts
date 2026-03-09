@@ -12,7 +12,7 @@ import { StorageBrowserManager } from './StorageBrowserManager.js';
 import { DataCache } from './vfs/DataCache.js';
 import { SyncProvider } from './vfs/SyncProvider.js';
 import { MountProvider } from './vfs/MountProvider.js';
-import { LocalLinkspanManager, LocalLinkspanInfo } from './LocalLinkspan.js';
+import { LocalLinkspanManager } from './LocalLinkspan.js';
 
 /**
  * Generate the linkspan workflow YAML for a given tunnel name.
@@ -110,29 +110,12 @@ interface Runtime {
     sshPort?: number;
     connectedRemotePath?: string;
     localWorkspaceFolder?: string;
-    // FUSE mount fields
-    localWorkdir?: string;
-    fuseMountPid?: number;
-    localMountPath?: string;
-    remoteMountPath?: string;
-    localFuseTunnelUrl?: string;
-    remoteFusePort?: number;
-    computeNode?: string;
-    fuseTunnelPid?: number;
-    localFuseServerPid?: number;
-    localFuseTunnelId?: string;
-    localFuseConnectToken?: string;
-    localFusePort?: number;
     // Tunnel connection state (ephemeral / Tier 3 — not persisted)
     connectionId?: string;
     _portMap?: Map<number, number>; // transient: remotePort → localPort
     // SSH tunnel to compute node (for remote switch)
     sshTunnelPid?: number;
     sshTunnelLocalPort?: number;
-    /** @deprecated — old devtunnel CLI connect PID */
-    devtunnelConnectPid?: number;
-    /** @deprecated — old devtunnel CLI port map */
-    _devtunnelPortMap?: Map<number, number>;
     noSlurm?: boolean;
     // Log port from linkspan workflow
     logPort?: number;
@@ -187,16 +170,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _linkspanDownloaded = false;
     /** @deprecated — kept only for old SSH shell methods that haven't been removed yet */
     private _persistentShells: Map<string, PersistentShell> = new Map();
-    /** @deprecated — old browse request tracking, not used in new code */
-    private _browseRequestId: Map<string, number> = new Map();
-    /** @deprecated — old files browse request tracking, not used in new code */
-    private _filesBrowseRequestId: Map<string, number> = new Map();
-    /** @deprecated — old files browse host, not used in new code */
-    private _filesBrowseHost = '';
-    /** @deprecated — old files browse history, not used in new code */
-    private _filesBrowseHistory: { path: string }[] = [];
-    /** @deprecated — old files browse cursor, not used in new code */
-    private _filesBrowseCursor = 0;
 
     private static readonly HOST_PREFS_KEY = 'cybershuttle.hostPrefs';
     private static readonly TIER3_FIELDS: (keyof Runtime)[] = [
