@@ -1,5 +1,27 @@
 /* Sessions panel styles */
 
+.session-group {
+    margin-bottom: 8px;
+}
+
+.session-group:last-child {
+    margin-bottom: 0;
+}
+
+.session-group-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 3px;
+    padding-top: 4px;
+}
+
+.session-group:first-child .session-group-label {
+    padding-top: 0;
+}
+
 .file-browser {
     border-top: 1px solid var(--vscode-panel-border);
 }
@@ -47,110 +69,9 @@
     background: var(--vscode-button-secondaryHoverBackground);
 }
 
-.file-breadcrumbs {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px;
-    font-size: 11px;
-    flex: 1;
-    overflow: hidden;
-    color: var(--vscode-descriptionForeground);
-}
-
-.breadcrumb-seg {
-    cursor: pointer;
-    color: var(--vscode-textLink-foreground);
-    padding: 1px 2px;
-    border-radius: 2px;
-}
-
-.breadcrumb-root {
-}
-
-.breadcrumb-seg:hover {
-    text-decoration: underline;
-}
-
-.breadcrumb-sep {
-    color: var(--vscode-descriptionForeground);
-}
-
+/* Sessions: override file-list height for inline file browser */
 .file-list {
     max-height: 260px;
-    overflow-y: auto;
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
-}
-
-.file-entry {
-    display: flex;
-    align-items: center;
-    padding: 3px 8px;
-    font-size: 11px;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    gap: 6px;
-}
-
-.file-entry:last-child {
-    border-bottom: none;
-}
-
-.file-entry.dir {
-    cursor: pointer;
-}
-
-.file-entry.dir:hover {
-    background: var(--vscode-list-hoverBackground);
-}
-
-.file-icon {
-    flex-shrink: 0;
-    width: 14px;
-    text-align: center;
-}
-
-.file-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.file-size {
-    flex-shrink: 0;
-    color: var(--vscode-descriptionForeground);
-    font-size: 10px;
-}
-
-.file-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 0;
-    font-size: 12px;
-    color: var(--vscode-descriptionForeground);
-}
-
-.file-status.error {
-    color: var(--vscode-errorForeground);
-}
-
-.file-status:empty {
-    display: none;
-}
-
-.empty-message {
-    color: var(--vscode-descriptionForeground);
-    font-style: italic;
-    text-align: center;
-    padding: 16px 0;
-}
-
-.refresh-btn {
-    padding: 2px 8px;
-    font-size: 11px;
-    margin: 0;
 }
 
 .tab-header {
@@ -203,7 +124,7 @@
 
 .runtime-workdir {
     font-weight: 400;
-    opacity: 0.7;
+    color: var(--vscode-descriptionForeground);
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 10px;
     white-space: nowrap;
@@ -239,16 +160,16 @@
 }
 
 .status-dot.dot-live {
-    background: #28a745;
+    background: var(--vscode-testing-iconPassed, #28a745);
 }
 
 .status-dot.dot-activating {
-    background: #cca700;
+    background: var(--vscode-editorWarning-foreground, #cca700);
     animation: pulse 2s ease-in-out infinite;
 }
 
 .status-dot.dot-failed {
-    background: #f44747;
+    background: var(--vscode-errorForeground, #f44747);
 }
 
 .status-dot.dot-idle {
@@ -286,7 +207,7 @@
     color: var(--vscode-foreground);
 }
 
-.runtime-entry:hover .dot-action-wrap .status-dot {
+.runtime-entry:hover .dot-action-wrap:has(.dot-action-btn) .status-dot {
     visibility: hidden;
 }
 
@@ -304,7 +225,7 @@
 }
 
 .runtime-entry.active-session {
-    background: rgba(0, 120, 212, 0.08);
+    background: var(--vscode-list-inactiveSelectionBackground, rgba(0, 120, 212, 0.08));
 }
 
 @keyframes pulse {
@@ -425,6 +346,28 @@
     color: var(--vscode-errorForeground);
 }
 
+.copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 2px;
+    margin: 0;
+    color: var(--vscode-descriptionForeground);
+    font-size: inherit;
+    line-height: 1;
+    vertical-align: middle;
+    display: inline-flex;
+    align-items: center;
+}
+
+.copy-btn:hover {
+    color: var(--vscode-foreground);
+}
+
+.copy-btn .codicon {
+    font-size: inherit !important;
+}
+
 .session-action-row {
     display: flex;
     align-items: center;
@@ -447,6 +390,7 @@
     display: flex;
     gap: 6px;
     flex-shrink: 0;
+    margin-left: auto;
 }
 
 .session-action-main {
@@ -474,7 +418,7 @@
 
 .session-progress-fill {
     height: 100%;
-    background: #28a745;
+    background: var(--vscode-testing-iconPassed, #28a745);
     transition: width 1s linear;
 }
 

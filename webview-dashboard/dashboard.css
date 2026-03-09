@@ -211,7 +211,7 @@ tbody td {
 
 .badge-failure {
     background: rgba(241, 76, 76, 0.15);
-    color: var(--vscode-testing-iconFailed, #f14c4c);
+    color: var(--vscode-errorForeground, #f14c4c);
 }
 
 .badge-in_progress {
@@ -230,7 +230,7 @@ tbody td {
 }
 
 .error-text {
-    color: var(--vscode-testing-iconFailed, #f14c4c);
+    color: var(--vscode-errorForeground, #f14c4c);
     font-size: 11px;
     max-width: 200px;
     overflow: hidden;

@@ -1,6 +1,6 @@
-/* Info panel styles */
+/* Info panel styles — body padding overrides common.css for wider side margins */
 
-body { margin: 0; padding: 0 20px 4px 20px; }
+body { padding: 4px 20px; }
 
 .info-line {
     display: flex;

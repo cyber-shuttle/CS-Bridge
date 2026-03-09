@@ -150,7 +150,7 @@ function attachSwitchHandlers() {
             const sessionId = newBtn.getAttribute('data-session-id');
             const direction = newBtn.getAttribute('data-direction');
             disableSessionActions(sessionId);
-            newBtn.innerHTML = '<div class="spinner"></div> Activating...';
+            newBtn.innerHTML = '<span class="spinner"></span> Activating...';
             newBtn.classList.add('btn-loading');
             if (direction === 'local-window') {
                 vscode.postMessage({ type: 'switchToWindow', sessionId: sessionId });
@@ -205,42 +205,27 @@ function attachStopHandlers() {
 attachStopHandlers();
 
 // Add click handlers to restart-linkspan, start-linkspan, and stop-linkspan buttons
-function attachLinkspanHandlers() {
-    document.querySelectorAll('.action-restart-linkspan').forEach(btn => {
-        const newBtn = btn.cloneNode(true);
-        btn.parentNode.replaceChild(newBtn, btn);
-        newBtn.addEventListener('click', () => {
-            const sessionId = newBtn.getAttribute('data-session-id');
-            newBtn.disabled = true;
-            newBtn.innerHTML = '<div class="spinner"></div> Restarting...';
-            newBtn.classList.add('btn-loading');
-            vscode.postMessage({ type: 'restartLinkspan', sessionId: sessionId });
-        });
-    });
-    document.querySelectorAll('.action-start-linkspan').forEach(btn => {
-        const newBtn = btn.cloneNode(true);
-        btn.parentNode.replaceChild(newBtn, btn);
-        newBtn.addEventListener('click', () => {
-            const sessionId = newBtn.getAttribute('data-session-id');
-            newBtn.disabled = true;
-            newBtn.innerHTML = '<div class="spinner"></div> Starting...';
-            newBtn.classList.add('btn-loading');
-            vscode.postMessage({ type: 'startLinkspan', sessionId: sessionId });
-        });
-    });
-    document.querySelectorAll('.action-stop-linkspan').forEach(btn => {
-        const newBtn = btn.cloneNode(true);
-        btn.parentNode.replaceChild(newBtn, btn);
-        newBtn.addEventListener('click', () => {
-            const sessionId = newBtn.getAttribute('data-session-id');
-            newBtn.disabled = true;
-            newBtn.innerHTML = '<div class="spinner"></div> Stopping...';
-            newBtn.classList.add('btn-loading');
-            vscode.postMessage({ type: 'stopLinkspan', sessionId: sessionId });
-        });
-    });
-}
-attachLinkspanHandlers();
+// Linkspan button handlers — use event delegation so dynamically created buttons always work
+document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.action-start-linkspan, .action-stop-linkspan, .action-restart-linkspan');
+    if (!btn || btn.disabled) { return; }
+    var sessionId = btn.getAttribute('data-session-id');
+    btn.disabled = true;
+    if (btn.classList.contains('action-start-linkspan')) {
+        btn.innerHTML = '<span class="spinner"></span> Starting...';
+        btn.classList.add('btn-loading');
+        vscode.postMessage({ type: 'startLinkspan', sessionId: sessionId });
+    } else if (btn.classList.contains('action-stop-linkspan')) {
+        btn.innerHTML = '<span class="spinner"></span> Stopping...';
+        btn.classList.add('btn-loading');
+        vscode.postMessage({ type: 'stopLinkspan', sessionId: sessionId });
+    } else if (btn.classList.contains('action-restart-linkspan')) {
+        btn.innerHTML = '<span class="spinner"></span> Restarting...';
+        btn.classList.add('btn-loading');
+        vscode.postMessage({ type: 'restartLinkspan', sessionId: sessionId });
+    }
+});
+function attachLinkspanHandlers() { /* now handled by event delegation above */ }
 
 // Add click handlers to copy-to-clipboard buttons
 function attachCopyHandlers() {
@@ -600,39 +585,42 @@ window.addEventListener('message', event => {
                 const existingDetails = entry.querySelector('.runtime-details');
                 if (rt.status === 'Local') {
                     // Local card: show linkspan status + action buttons
-                    var localLine1 = '';
-                    var localLine2 = '';
+                    var detailInner = '';
                     if (rt.linkspanInfo) {
-                        localLine1 = '<span class="session-detail">'
+                        var statsHtml = '<span class="session-detail">'
                             + ci('pulse') + ' ' + rt.linkspanInfo.pid
                             + ' <span class="detail-sep">|</span> ' + ci('server-process') + ' :' + rt.linkspanInfo.serverPort
                             + ' <span class="detail-sep">|</span> ' + ci('terminal') + ' :' + rt.linkspanInfo.sshPort
                             + '</span>';
+                        var statusLeft = '';
                         if (rt.linkspanInfo.tunnelId) {
-                            localLine2 = '<span class="session-detail">'
+                            statusLeft = '<span class="session-status-text">'
                                 + ci('cloud') + ' ' + escapeHtml(rt.linkspanInfo.tunnelId)
                                 + (rt.linkspanInfo.tunnelUrl ? ' <button class="copy-btn" data-copy="' + escapeHtml(rt.linkspanInfo.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button>' : '')
                                 + '</span>';
                         }
-                    } else if (!isRemoteWindow) {
-                        localLine1 = '<span class="session-detail">Linkspan is stopped. Start it to enable remote access.</span>';
+                        var localBtns = [];
+                        if (!isRemoteWindow) {
+                            localBtns.push('<button class="session-action-main action-stop-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-debug-stop"></i>Stop</button>');
+                            localBtns.push('<button class="session-action-main action-restart-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-debug-restart"></i>Restart</button>');
+                        }
+                        var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
+                        var actionRow = '<div class="session-action-row">' + statusLeft + btnsRight + '</div>';
+                        detailInner = statsHtml + actionRow;
+                    } else {
+                        var statusLeft = '';
+                        var localBtns = [];
+                        if (!isRemoteWindow) {
+                            statusLeft = '<span class="session-status-text">Linkspan is stopped. Start it to enable remote access.</span>';
+                            localBtns.push('<button class="session-action-main action-start-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-play"></i>Start</button>');
+                        }
+                        if (isRemoteWindow && !isThisWin && !isSwitching) {
+                            localBtns.push('<button class="session-action-main action-switch switch-btn" data-session-id="' + rt.id + '" data-direction="local"><i class="codicon codicon-arrow-swap"></i>Activate</button>');
+                        }
+                        var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
+                        var actionRow = (statusLeft || btnsRight) ? '<div class="session-action-row">' + statusLeft + btnsRight + '</div>' : '';
+                        detailInner = actionRow;
                     }
-                    var localBtns = [];
-                    if (isRemoteWindow && !isThisWin && !isSwitching) {
-                        localBtns.push('<button class="session-action-main action-switch switch-btn" data-session-id="' + rt.id + '" data-direction="local">' + ci('arrow-swap') + ' Activate</button>');
-                    }
-                    if (!isRemoteWindow && rt.linkspanInfo) {
-                        localBtns.push('<button class="session-action-main action-stop-linkspan" data-session-id="' + rt.id + '">' + ci('debug-stop') + ' Stop</button>');
-                        localBtns.push('<button class="session-action-main action-restart-linkspan" data-session-id="' + rt.id + '">' + ci('debug-restart') + ' Restart</button>');
-                    }
-                    if (!isRemoteWindow && !rt.linkspanInfo) {
-                        localBtns.push('<button class="session-action-main action-start-linkspan" data-session-id="' + rt.id + '">' + ci('play') + ' Start</button>');
-                    }
-                    // Build detail: line1 on top, then action row with tunnel info left + buttons right
-                    var tunnelLeft = localLine2 || '';
-                    var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
-                    var actionRowHtml = (tunnelLeft || btnsRight) ? '<div class="session-action-row">' + tunnelLeft + btnsRight + '</div>' : '';
-                    var detailInner = localLine1 + actionRowHtml;
                     if (detailInner) {
                         if (existingDetails) {
                             existingDetails.innerHTML = detailInner;
@@ -679,12 +667,12 @@ window.addEventListener('message', event => {
                         if (rt.tunnelUrl) {
                             line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(rt.tunnelId || '') + ' <button class="copy-btn" data-copy="' + escapeHtml(rt.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
                         } else {
-                            line2 = '<span class="session-detail"><div class="spinner"></div> setting up tunnel...</span>';
+                            line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
                         }
                     } else if (rt.status === 'Deploying agent') {
-                        line2 = '<span class="session-detail"><div class="spinner"></div> deploying agent to ' + escapeHtml(rt.host) + '...</span>';
+                        line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(rt.host) + '...</span>';
                     } else if (rt.status === 'Submitting') {
-                        line2 = '<span class="session-detail"><div class="spinner"></div> submitting job...</span>';
+                        line2 = '<span class="session-detail"><span class="spinner"></span> submitting job...</span>';
                     } else if (rt.status === 'Pending') {
                         var queuedStr = '';
                         if (rt.submittedAt) {
@@ -692,7 +680,7 @@ window.addEventListener('message', event => {
                             if (elapsed >= 60) { queuedStr = ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)'; }
                             else { queuedStr = ' (' + elapsed + 's)'; }
                         }
-                        line2 = '<span class="session-detail"><div class="spinner"></div> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + rt.submittedAt + '">' + queuedStr + '</span></span>';
+                        line2 = '<span class="session-detail"><span class="spinner"></span> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + rt.submittedAt + '">' + queuedStr + '</span></span>';
                     } else if (rt.status === 'Failed') {
                         line2 = '<span class="session-detail">' + (rt.errorMessage ? ci('error') + ' failed: ' + escapeHtml(rt.errorMessage) : ci('error') + ' failed') + '</span>';
                     } else if (rt.status === 'Completed') {
@@ -700,7 +688,7 @@ window.addEventListener('message', event => {
                     }
                     const incActionBtns = [];
                     if (isSwitching) {
-                        incActionBtns.push('<button class="session-action-main btn-loading" disabled><div class="spinner"></div> Activating...</button>');
+                        incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
                     } else if (isRunningNow || isActivatingNow) {
                         incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + rt.id + '">' + ci('debug-stop') + ' Stop</button>');
                         if (!isThisWin) {

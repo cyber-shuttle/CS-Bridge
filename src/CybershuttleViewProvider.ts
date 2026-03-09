@@ -166,6 +166,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _localProcesses: Map<string, ChildProcess> = new Map();
     public tunnelManager: TunnelManager;
     private _localLinkspan: LocalLinkspanManager;
+    private _linkspanStartingPath: string | undefined;
     private _ssh: SshManager;
     private _storageBrowser: StorageBrowserManager;
     private _dataCache: DataCache;
@@ -272,10 +273,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Auto-register this window as a Local session
         this._registerWindow();
 
-        // Auto-start local linkspan (fire-and-forget, non-blocking)
-        if (!this._isRemoteWindow) {
-            this._autoStartLinkspan();
-        }
 
         // Heartbeat every 30s to keep this window's session alive
         this._heartbeatTimer = setInterval(() => this._heartbeat(), 30_000);
@@ -4230,6 +4227,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             vscode.window.showErrorMessage('No workspace folder open');
             return;
         }
+        // Immediate UI feedback — mark as starting
+        this._linkspanStartingPath = workspacePath;
+        this.refreshSessionsView();
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: 'Starting Linkspan',
@@ -4245,15 +4245,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._outputChannel.appendLine(`[linkspan-local] Started: tunnel=${info.tunnelId}, ssh=${info.sshPort}, http=${info.serverPort}`);
                 }
                 vscode.window.showInformationMessage('Linkspan started');
-                this._sendRuntimeUpdates();
-                // Reconnect any active sessions through the new linkspan
-                await this._reconnectActiveSessions(workspacePath);
             } catch (err: any) {
                 this._outputChannel.appendLine(`[linkspan-local] Start failed: ${err.message}`);
                 vscode.window.showErrorMessage(`Linkspan start failed: ${err.message}`);
-                this._sendRuntimeUpdates();
+            } finally {
+                this._linkspanStartingPath = undefined;
+                this.refreshSessionsView();
             }
         });
+        // Reconnect any active sessions through the new linkspan
+        await this._reconnectActiveSessions(workspacePath);
     }
 
     /**
@@ -4265,6 +4266,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             vscode.window.showErrorMessage('No workspace folder open');
             return;
         }
+        // Immediate UI feedback — mark as restarting
+        this._linkspanStartingPath = workspacePath;
+        this.refreshSessionsView();
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: 'Restarting Linkspan',
@@ -4282,15 +4286,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     this._outputChannel.appendLine(`[linkspan-local] Restarted: tunnel=${info.tunnelId}, ssh=${info.sshPort}, http=${info.serverPort}`);
                 }
                 vscode.window.showInformationMessage('Linkspan restarted with latest version');
-                this._sendRuntimeUpdates();
-                // Reconnect any active sessions through the new linkspan
-                await this._reconnectActiveSessions(workspacePath);
             } catch (err: any) {
                 this._outputChannel.appendLine(`[linkspan-local] Restart failed: ${err.message}`);
                 vscode.window.showErrorMessage(`Linkspan restart failed: ${err.message}`);
-                this._sendRuntimeUpdates();
+            } finally {
+                this._linkspanStartingPath = undefined;
+                this.refreshSessionsView();
             }
         });
+        // Reconnect any active sessions through the new linkspan
+        await this._reconnectActiveSessions(workspacePath);
     }
 
     /**
@@ -4947,6 +4952,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             const localLinkspanUp = rt.status === 'Local' && wsPath ? !!this._localLinkspan.get(wsPath) : false;
             if (rt.status === 'Local' && localLinkspanUp) {
                 statusClass = 'status-live';
+            } else if (rt.status === 'Local' && this._linkspanStartingPath === wsPath) {
+                statusClass = 'status-activating';
             } else if (rt.status === 'Local') {
                 statusClass = 'status-idle';
             } else if (isActiveInThisWindow) {
@@ -5026,12 +5033,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         const fmt = (b: number) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(1)}MB`;
                         line2 = `${ci('cloud-upload')} syncing ${fmt(rt.syncProgress.transferred)} / ${fmt(rt.syncProgress.total)}`;
                     } else {
-                        line2 = `<div class="spinner"></div> submitting job...`;
+                        line2 = `<span class="spinner"></span> submitting job...`;
                     }
                 } else if (rt.status === 'Submitting') {
-                    line2 = `<div class="spinner"></div> submitting job...`;
+                    line2 = `<span class="spinner"></span> submitting job...`;
                 } else if (rt.status === 'Pending') {
-                    line2 = `<div class="spinner"></div> queued, waiting for resources...`;
+                    line2 = `<span class="spinner"></span> queued, waiting for resources...`;
                 } else if (rt.status === 'Failed') {
                     line2 = rt.errorMessage ? `${ci('error')} failed: ${escapeHtml(rt.errorMessage)}` : `${ci('error')} failed`;
                 } else if (rt.status === 'Completed') {
@@ -5069,33 +5076,41 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             } else {
                 // Local session: show linkspan stats + action buttons
                 const localInfo = wsPath ? this._localLinkspan.get(wsPath) : undefined;
-                let localLine1 = '';
-                let localLine2 = '';
-                if (localInfo) {
-                    localLine1 = `<span class="session-detail">${ci('pulse')} ${localInfo.pid} <span class="detail-sep">|</span> ${ci('server-process')} :${localInfo.serverPort} <span class="detail-sep">|</span> ${ci('terminal')} :${localInfo.sshPort}</span>`;
-                    if (localInfo.tunnelId) {
-                        localLine2 = `<span class="session-detail">${ci('cloud')} ${escapeHtml(localInfo.tunnelId)}${localInfo.tunnelUrl ? ` <button class="copy-btn" data-copy="${escapeHtml(localInfo.tunnelUrl)}" title="Copy tunnel URL">${ci('copy')}</button>` : ''}</span>`;
-                    }
-                } else if (!this._isRemoteWindow) {
-                    localLine1 = `<span class="session-detail">Linkspan is stopped. Start it to enable remote access.</span>`;
-                }
+                let localStatusLeft = '';
                 const localBtns: string[] = [];
-                if (this._isRemoteWindow && !isThisWindowRuntime) {
-                    localBtns.push(`<button class="session-action-main action-switch switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local"><i class="codicon codicon-arrow-swap"></i>Activate</button>`);
-                }
-                if (!this._isRemoteWindow && localInfo) {
-                    localBtns.push(`<button class="session-action-main action-stop-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-stop"></i>Stop</button>`);
-                    localBtns.push(`<button class="session-action-main action-restart-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-restart"></i>Restart</button>`);
-                }
-                if (!this._isRemoteWindow && !localInfo) {
-                    localBtns.push(`<button class="session-action-main action-start-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-play"></i>Start</button>`);
-                }
-                const localTunnelLeft = localLine2 || '';
-                const localBtnsRight = localBtns.length > 0 ? `<span class="session-action-btns">${localBtns.join('')}</span>` : '';
-                const localActionRow = (localTunnelLeft || localBtnsRight) ? `<div class="session-action-row">${localTunnelLeft}${localBtnsRight}</div>` : '';
-                const localDetailInner = localLine1 + localActionRow;
-                if (localDetailInner) {
-                    detailHtml = `<div class="runtime-details">${localDetailInner}</div>`;
+                if (localInfo) {
+                    // Line 1: process stats
+                    const statsHtml = `<span class="session-detail">${ci('pulse')} ${localInfo.pid} <span class="detail-sep">|</span> ${ci('server-process')} :${localInfo.serverPort} <span class="detail-sep">|</span> ${ci('terminal')} :${localInfo.sshPort}</span>`;
+                    // Status left: tunnel info if available, otherwise stats
+                    if (localInfo.tunnelId) {
+                        localStatusLeft = `<span class="session-status-text">${ci('cloud')} ${escapeHtml(localInfo.tunnelId)}${localInfo.tunnelUrl ? ` <button class="copy-btn" data-copy="${escapeHtml(localInfo.tunnelUrl)}" title="Copy tunnel URL">${ci('copy')}</button>` : ''}</span>`;
+                    }
+                    // Buttons
+                    if (!this._isRemoteWindow) {
+                        localBtns.push(`<button class="session-action-main action-stop-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-stop"></i>Stop</button>`);
+                        localBtns.push(`<button class="session-action-main action-restart-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-restart"></i>Restart</button>`);
+                    }
+                    const btnsRight = localBtns.length > 0 ? `<span class="session-action-btns">${localBtns.join('')}</span>` : '';
+                    const actionRow = `<div class="session-action-row">${localStatusLeft}${btnsRight}</div>`;
+                    detailHtml = `<div class="runtime-details">${statsHtml}${actionRow}</div>`;
+                } else if (this._linkspanStartingPath === wsPath) {
+                    // Linkspan is starting — show spinner
+                    localStatusLeft = `<span class="session-status-text"><span class="spinner"></span> Starting linkspan...</span>`;
+                    detailHtml = `<div class="runtime-details"><div class="session-action-row">${localStatusLeft}</div></div>`;
+                } else {
+                    // Linkspan not running
+                    if (!this._isRemoteWindow) {
+                        localStatusLeft = `<span class="session-status-text">Linkspan is stopped. Start it to enable remote access.</span>`;
+                        localBtns.push(`<button class="session-action-main action-start-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-play"></i>Start</button>`);
+                    }
+                    if (this._isRemoteWindow && !isThisWindowRuntime) {
+                        localBtns.push(`<button class="session-action-main action-switch switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local"><i class="codicon codicon-arrow-swap"></i>Activate</button>`);
+                    }
+                    const btnsRight = localBtns.length > 0 ? `<span class="session-action-btns">${localBtns.join('')}</span>` : '';
+                    const actionRow = (localStatusLeft || btnsRight) ? `<div class="session-action-row">${localStatusLeft}${btnsRight}</div>` : '';
+                    if (actionRow) {
+                        detailHtml = `<div class="runtime-details">${actionRow}</div>`;
+                    }
                 }
             }
 
@@ -5136,7 +5151,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
                     </div>
                     <div class="host-picker-form" id="host-form-${escapeHtml(ws.id)}-${escapeHtml(host.name)}" style="display:none;">
-                        <div class="job-form-loading" style="display:none;"><div class="spinner"></div>Fetching partitions...</div>
+                        <div class="job-form-loading" style="display:none;"><span class="spinner"></span>Fetching partitions...</div>
                         <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
                         <div class="job-form-fields" style="display:none;">
                             <div class="resource-tabs" data-host="${escapeHtml(host.name)}">
@@ -5191,16 +5206,21 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     if (sa !== sb) { return sa - sb; }
                     return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
                 });
-                const runtimeRows = sortedRuntimes.map(rt => buildRuntimeRow(rt, ws.directoryPath)).join('');
+                // Split runtimes into active (this window) vs others
+                const activeRuntimes = sortedRuntimes.filter(rt => rt.isLocal || (activeSession && rt.id === activeSession.id));
+                const otherRuntimes = sortedRuntimes.filter(rt => !rt.isLocal && !(activeSession && rt.id === activeSession.id));
+                const activeRows = activeRuntimes.map(rt => buildRuntimeRow(rt, ws.directoryPath)).join('');
+                const otherRows = otherRuntimes.map(rt => buildRuntimeRow(rt, ws.directoryPath)).join('');
                 const hostPickerHtml = buildHostPickerHtml(ws);
                 const displayPath = ws.directoryPath.startsWith(os.homedir())
                     ? '~' + ws.directoryPath.slice(os.homedir().length)
                     : ws.directoryPath;
+                const activeSection = activeRows ? `<div class="session-group"><div class="session-group-label">Active Session</div><div class="workspace-runtimes">${activeRows}</div></div>` : '';
+                const otherSection = otherRows ? `<div class="session-group"><div class="session-group-label">Other Sessions</div><div class="workspace-runtimes">${otherRows}</div></div>` : '';
                 return `
                 <div class="workspace-section" data-workspace-id="${escapeHtml(ws.id)}">
-                    <div class="workspace-runtimes">
-                        ${runtimeRows}
-                    </div>
+                    ${activeSection}
+                    ${otherSection}
                     <div class="add-session-placeholder" data-workspace-id="${escapeHtml(ws.id)}">
                         <i class="codicon codicon-add"></i> Add Session
                     </div>
@@ -5524,6 +5544,27 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
         attachCloseHandlers();
 
+        // Linkspan button handlers — event delegation for dynamically created buttons
+        document.addEventListener('click', function (e) {
+            var btn = e.target.closest('.action-start-linkspan, .action-stop-linkspan, .action-restart-linkspan');
+            if (!btn || btn.disabled) { return; }
+            var sessionId = btn.getAttribute('data-session-id');
+            btn.disabled = true;
+            if (btn.classList.contains('action-start-linkspan')) {
+                btn.innerHTML = '<span class="spinner"></span> Starting...';
+                btn.classList.add('btn-loading');
+                vscode.postMessage({ type: 'startLinkspan', sessionId: sessionId });
+            } else if (btn.classList.contains('action-stop-linkspan')) {
+                btn.innerHTML = '<span class="spinner"></span> Stopping...';
+                btn.classList.add('btn-loading');
+                vscode.postMessage({ type: 'stopLinkspan', sessionId: sessionId });
+            } else if (btn.classList.contains('action-restart-linkspan')) {
+                btn.innerHTML = '<span class="spinner"></span> Restarting...';
+                btn.classList.add('btn-loading');
+                vscode.postMessage({ type: 'restartLinkspan', sessionId: sessionId });
+            }
+        });
+
         // Add click handlers to workspace delete buttons
         function attachWorkspaceDeleteHandlers() {
             document.querySelectorAll('.workspace-delete-btn').forEach(btn => {
@@ -5805,7 +5846,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         breadcrumbsEl.innerHTML = '<span class="skeleton skeleton-text" style="width:120px"></span>';
                     }
                     statusEl.className = 'file-status';
-                    statusEl.innerHTML = '<div class="spinner"></div>Loading...<button class="file-stop-btn" data-host="' + host + '">Stop</button>';
+                    statusEl.innerHTML = '<span class="spinner"></span>Loading...<button class="file-stop-btn" data-host="' + host + '">Stop</button>';
                     listEl.innerHTML = '';
                     // Attach stop button handler
                     const stopBtn = statusEl.querySelector('.file-stop-btn');
@@ -6000,12 +6041,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                                     var fmt = function(b) { return b < 1024 ? b + 'B' : b < 1048576 ? (b / 1024).toFixed(1) + 'KB' : (b / 1048576).toFixed(1) + 'MB'; };
                                     line2 = ci('cloud-upload') + ' syncing ' + fmt(rt.syncProgress.transferred) + ' / ' + fmt(rt.syncProgress.total);
                                 } else {
-                                    line2 = '<div class="spinner"></div> submitting job...';
+                                    line2 = '<span class="spinner"></span> submitting job...';
                                 }
                             } else if (rt.status === 'Submitting') {
-                                line2 = '<div class="spinner"></div> submitting job...';
+                                line2 = '<span class="spinner"></span> submitting job...';
                             } else if (rt.status === 'Pending') {
-                                line2 = '<div class="spinner"></div> queued, waiting for resources...';
+                                line2 = '<span class="spinner"></span> queued, waiting for resources...';
                             } else if (rt.status === 'Failed') {
                                 line2 = rt.errorMessage ? ci('error') + ' failed: ' + escapeHtml(rt.errorMessage) : ci('error') + ' failed';
                             } else if (rt.status === 'Completed') {
@@ -6202,7 +6243,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 if (msg.loading) {
                     statusEl.className = 'file-status loading';
                     const pathDisplay = msg.path || '~';
-                    statusEl.innerHTML = '<div class="spinner"></div> <span class="loading-path">' + esc(pathDisplay) + '</span>';
+                    statusEl.innerHTML = '<span class="spinner"></span> <span class="loading-path">' + esc(pathDisplay) + '</span>';
                     listEl.innerHTML = '';
                     return;
                 }

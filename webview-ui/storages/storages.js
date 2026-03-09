@@ -59,7 +59,7 @@ window.addEventListener('message', event => {
         if (msg.loading) {
             statusEl.className = 'storage-status loading';
             const pathDisplay = msg.path || '~';
-            statusEl.innerHTML = '<div class="spinner"></div> <span class="loading-path">' + esc(pathDisplay) + '</span>';
+            statusEl.innerHTML = '<span class="spinner"></span> <span class="loading-path">' + esc(pathDisplay) + '</span>';
             clearEntries();
             return;
         }
