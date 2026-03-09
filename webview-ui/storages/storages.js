@@ -32,7 +32,7 @@ document.querySelectorAll('.breadcrumb-seg').forEach(seg => {
 });
 
 // SSH host list clicks (root view)
-document.querySelectorAll('#storages-host-list .storage-entry.dir').forEach(entry => {
+document.querySelectorAll('#storages-host-list .file-entry.dir').forEach(entry => {
     entry.addEventListener('click', () => {
         const host = entry.getAttribute('data-host');
         if (host) {
@@ -57,7 +57,7 @@ window.addEventListener('message', event => {
         }
 
         if (msg.loading) {
-            statusEl.className = 'storage-status loading';
+            statusEl.className = 'file-status loading';
             const pathDisplay = msg.path || '~';
             statusEl.innerHTML = '<span class="spinner"></span> <span class="loading-path">' + esc(pathDisplay) + '</span>';
             clearEntries();
@@ -65,13 +65,13 @@ window.addEventListener('message', event => {
         }
 
         if (msg.error) {
-            statusEl.className = 'storage-status error';
+            statusEl.className = 'file-status error';
             statusEl.textContent = msg.error;
             clearEntries();
             return;
         }
 
-        statusEl.className = 'storage-status';
+        statusEl.className = 'file-status';
         statusEl.textContent = '';
         clearEntries();
 
@@ -82,21 +82,21 @@ window.addEventListener('message', event => {
 
         listEl.insertAdjacentHTML('beforeend', msg.entries.map(e => {
             if (e.isDir) {
-                return '<div class="storage-entry dir" data-path="' + esc(msg.path + '/' + e.name) + '">'
+                return '<div class="file-entry dir" data-path="' + esc(msg.path + '/' + e.name) + '">'
                     + '<i class="codicon codicon-folder"></i>'
-                    + '<span class="storage-name">' + esc(e.name) + '</span>'
-                    + '<span class="storage-size">' + esc(e.size) + '</span>'
+                    + '<span class="file-name">' + esc(e.name) + '</span>'
+                    + '<span class="file-size">' + esc(e.size) + '</span>'
                     + '</div>';
             } else {
-                return '<div class="storage-entry file" data-path="' + esc(msg.path + '/' + e.name) + '">'
+                return '<div class="file-entry file" data-path="' + esc(msg.path + '/' + e.name) + '">'
                     + '<i class="codicon codicon-file"></i>'
-                    + '<span class="storage-name">' + esc(e.name) + '</span>'
-                    + '<span class="storage-size">' + esc(e.size) + '</span>'
+                    + '<span class="file-name">' + esc(e.name) + '</span>'
+                    + '<span class="file-size">' + esc(e.size) + '</span>'
                     + '</div>';
             }
         }).join(''));
 
-        listEl.querySelectorAll('.storage-entry.dir').forEach(entry => {
+        listEl.querySelectorAll('.file-entry.dir').forEach(entry => {
             entry.addEventListener('click', () => {
                 const p = entry.getAttribute('data-path');
                 if (p && BROWSE_HOST) {
@@ -104,7 +104,7 @@ window.addEventListener('message', event => {
                 }
             });
         });
-        listEl.querySelectorAll('.storage-entry.file').forEach(entry => {
+        listEl.querySelectorAll('.file-entry.file').forEach(entry => {
             entry.addEventListener('click', () => {
                 const p = entry.getAttribute('data-path');
                 if (p && BROWSE_HOST) {

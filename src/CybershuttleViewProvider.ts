@@ -6037,22 +6037,25 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const commonCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'common.css'));
         const storagesCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'storages', 'storages.css'));
 
+        const storagesJsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'storages', 'storages.js'));
+
         const sshHosts = this.getSshHosts();
+        const browseHost = this._storageBrowser.browseHost;
 
         // Build breadcrumbs and determine view state
         let breadcrumbsHtml: string;
         let bodyHtml: string;
 
-        if (this._filesBrowseHost) {
+        if (browseHost) {
             // Browsing inside a host — show breadcrumbs: home / host-name / path / ...
-            const current = this._filesBrowseHistory[this._filesBrowseCursor];
+            const current = this._storageBrowser.browseHistory[this._storageBrowser.browseCursor];
             const currentPath = current?.path || '~';
             const segments = currentPath.split('/').filter(Boolean);
 
             const crumbs = [
                 `<span class="breadcrumb-seg breadcrumb-home" data-action="home" title="All hosts">&#x2302;</span>`,
                 `<span class="breadcrumb-sep">/</span>`,
-                `<span class="breadcrumb-seg breadcrumb-host" data-action="host-root" title="${escapeHtml(this._filesBrowseHost)}">${escapeHtml(this._filesBrowseHost)}</span>`,
+                `<span class="breadcrumb-seg breadcrumb-host" data-action="host-root" title="${escapeHtml(browseHost)}">${escapeHtml(browseHost)}</span>`,
             ];
             for (let i = 0; i < segments.length; i++) {
                 const segPath = '/' + segments.slice(0, i + 1).join('/');
@@ -6064,8 +6067,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             breadcrumbsHtml = crumbs.join('');
 
             bodyHtml = `
-                <div class="file-status" id="files-status"></div>
-                <div class="file-list" id="files-list"></div>`;
+                <div class="file-list" id="storages-list">
+                    <div class="file-status" id="storages-status"></div>
+                </div>`;
         } else {
             // Root view — show SSH hosts as folder entries (like VS Code tunnels list)
             breadcrumbsHtml = `<span class="breadcrumb-seg breadcrumb-home breadcrumb-current" data-action="home">&#x2302;</span><span class="breadcrumb-sep">/</span>`;
@@ -6076,12 +6080,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         ? `${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}`
                         : '';
                     return `<div class="file-entry dir" data-host="${escapeHtml(host.name)}">
-                        <span class="file-icon">&#x1F5A5;</span>
+                        <i class="codicon codicon-server"></i>
                         <span class="file-name">${escapeHtml(host.name)}</span>
                         ${detail ? `<span class="file-size">${detail}</span>` : ''}
                     </div>`;
                 }).join('');
-                bodyHtml = `<div class="file-list" id="files-host-list">${entriesHtml}</div>`;
+                bodyHtml = `<div class="file-list" id="storages-host-list">${entriesHtml}</div>`;
             } else {
                 bodyHtml = `<div class="file-list"><p class="empty-message">No SSH hosts found in ~/.ssh/config</p></div>`;
             }
@@ -6101,117 +6105,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         ${this._getCommonStyles(codiconsFontUri)}
     </style>
 </head>
-<body>
+<body data-browse-host="${browseHost ? escapeHtml(browseHost) : ''}">
     <div class="file-breadcrumbs">${breadcrumbsHtml}</div>
     ${bodyHtml}
 
-    <script nonce="${nonce}">
-        const vscode = acquireVsCodeApi();
-        try {
-
-        const BROWSE_HOST = ${this._filesBrowseHost ? `'${escapeHtml(this._filesBrowseHost)}'` : 'null'};
-
-        function esc(s) {
-            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-        }
-
-        // Breadcrumb clicks
-        document.querySelectorAll('.breadcrumb-seg').forEach(seg => {
-            seg.addEventListener('click', () => {
-                const action = seg.getAttribute('data-action');
-                if (action === 'home') {
-                    vscode.postMessage({ type: 'filesGoHome' });
-                    return;
-                }
-                if (action === 'host-root' && BROWSE_HOST) {
-                    vscode.postMessage({ type: 'filesBrowseDir', host: BROWSE_HOST, path: '~' });
-                    return;
-                }
-                const p = seg.getAttribute('data-path');
-                if (p && BROWSE_HOST) {
-                    vscode.postMessage({ type: 'filesBrowseDir', host: BROWSE_HOST, path: p });
-                }
-            });
-        });
-
-        // SSH host list clicks (root view)
-        document.querySelectorAll('#files-host-list .file-entry.dir').forEach(entry => {
-            entry.addEventListener('click', () => {
-                const host = entry.getAttribute('data-host');
-                if (host) {
-                    vscode.postMessage({ type: 'filesBrowseDir', host: host, path: '~' });
-                }
-            });
-        });
-
-        // File listing messages (when browsing inside a host)
-        window.addEventListener('message', event => {
-            const msg = event.data;
-            if (msg.type === 'filesListing') {
-                const statusEl = document.getElementById('files-status');
-                const listEl = document.getElementById('files-list');
-                if (!statusEl || !listEl) { return; }
-
-                if (msg.loading) {
-                    statusEl.className = 'file-status loading';
-                    const pathDisplay = msg.path || '~';
-                    statusEl.innerHTML = '<span class="spinner"></span> <span class="loading-path">' + esc(pathDisplay) + '</span>';
-                    listEl.innerHTML = '';
-                    return;
-                }
-
-                if (msg.error) {
-                    statusEl.className = 'file-status error';
-                    statusEl.textContent = msg.error;
-                    listEl.innerHTML = '';
-                    return;
-                }
-
-                statusEl.className = 'file-status';
-                statusEl.textContent = '';
-
-                if (msg.entries.length === 0) {
-                    listEl.innerHTML = '<p class="empty-message">Empty directory</p>';
-                    return;
-                }
-
-                listEl.innerHTML = msg.entries.map(e => {
-                    if (e.isDir) {
-                        return '<div class="file-entry dir" data-path="' + esc(msg.path + '/' + e.name) + '">'
-                            + '<span class="file-icon">&#x1F4C1;</span>'
-                            + '<span class="file-name">' + esc(e.name) + '</span>'
-                            + '<span class="file-size">' + esc(e.size) + '</span>'
-                            + '</div>';
-                    } else {
-                        return '<div class="file-entry file" data-path="' + esc(msg.path + '/' + e.name) + '">'
-                            + '<span class="file-icon">&#x1F4C4;</span>'
-                            + '<span class="file-name">' + esc(e.name) + '</span>'
-                            + '<span class="file-size">' + esc(e.size) + '</span>'
-                            + '</div>';
-                    }
-                }).join('');
-
-                listEl.querySelectorAll('.file-entry.dir').forEach(entry => {
-                    entry.addEventListener('click', () => {
-                        const p = entry.getAttribute('data-path');
-                        if (p && BROWSE_HOST) {
-                            vscode.postMessage({ type: 'filesBrowseDir', host: BROWSE_HOST, path: p });
-                        }
-                    });
-                });
-                listEl.querySelectorAll('.file-entry.file').forEach(entry => {
-                    entry.addEventListener('click', () => {
-                        const p = entry.getAttribute('data-path');
-                        if (p && BROWSE_HOST) {
-                            vscode.postMessage({ type: 'filesOpenFile', host: BROWSE_HOST, path: p });
-                        }
-                    });
-                });
-            }
-        });
-
-        } catch (err) { console.error('[cybershuttle] Files webview init error:', err); }
-    </script>
+    <script nonce="${nonce}" src="${storagesJsUri}"></script>
 </body>
 </html>`;
     }
