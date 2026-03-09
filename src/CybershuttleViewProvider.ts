@@ -110,12 +110,29 @@ interface Runtime {
     sshPort?: number;
     connectedRemotePath?: string;
     localWorkspaceFolder?: string;
+    localWorkdir?: string;
+    computeNode?: string;
+    // FUSE mount fields (still referenced in cleanup paths)
+    fuseMountPid?: number;
+    localMountPath?: string;
+    remoteMountPath?: string;
+    localFuseTunnelUrl?: string;
+    remoteFusePort?: number;
+    fuseTunnelPid?: number;
+    localFuseServerPid?: number;
+    localFuseTunnelId?: string;
+    localFuseConnectToken?: string;
+    localFusePort?: number;
     // Tunnel connection state (ephemeral / Tier 3 — not persisted)
     connectionId?: string;
     _portMap?: Map<number, number>; // transient: remotePort → localPort
     // SSH tunnel to compute node (for remote switch)
     sshTunnelPid?: number;
     sshTunnelLocalPort?: number;
+    /** @deprecated — old devtunnel CLI connect PID */
+    devtunnelConnectPid?: number;
+    /** @deprecated — old devtunnel CLI port map */
+    _devtunnelPortMap?: Map<number, number>;
     noSlurm?: boolean;
     // Log port from linkspan workflow
     logPort?: number;
