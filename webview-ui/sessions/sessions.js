@@ -225,7 +225,6 @@ document.addEventListener('click', function (e) {
         vscode.postMessage({ type: 'restartLinkspan', sessionId: sessionId });
     }
 });
-function attachLinkspanHandlers() { /* now handled by event delegation above */ }
 
 // Add click handlers to copy-to-clipboard buttons
 function attachCopyHandlers() {
@@ -738,7 +737,6 @@ window.addEventListener('message', event => {
         attachStartHandlers();
         attachStopHandlers();
         attachCloseHandlers();
-        attachLinkspanHandlers();
         attachCopyHandlers();
     }
 });

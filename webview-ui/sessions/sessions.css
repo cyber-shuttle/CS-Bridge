@@ -22,58 +22,6 @@
     padding-top: 0;
 }
 
-.file-browser {
-    border-top: 1px solid var(--vscode-panel-border);
-}
-
-.file-nav-bar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.file-nav-btn {
-    padding: 0 4px;
-    font-size: 14px;
-    line-height: 18px;
-    flex-shrink: 0;
-    background: none;
-    color: var(--vscode-descriptionForeground);
-    border: none;
-    border-radius: 2px;
-    cursor: pointer;
-}
-
-.file-nav-btn:hover:not(:disabled) {
-    color: var(--vscode-foreground);
-    background: var(--vscode-list-hoverBackground);
-}
-
-.file-nav-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-}
-
-.file-stop-btn {
-    padding: 2px 6px;
-    font-size: 10px;
-    flex-shrink: 0;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-errorForeground);
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-}
-
-.file-stop-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
-}
-
-/* Sessions: override file-list height for inline file browser */
-.file-list {
-    max-height: 260px;
-}
-
 .tab-header {
     display: flex;
     justify-content: flex-end;
