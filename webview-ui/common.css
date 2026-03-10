@@ -25,18 +25,25 @@ h2 {
 }
 
 button {
-    padding: 8px 12px;
-    margin: 8px 0;
+    padding: 3px 12px;
+    margin: 0;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
 }
 
 button:hover {
     background: var(--vscode-button-hoverBackground);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 .full-width {
@@ -121,10 +128,7 @@ button:hover {
 .resource-tab {
     flex: 1;
     padding: 4px 0;
-    font-size: 11px;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
+    border-radius: 0;
     background: transparent;
     color: var(--vscode-descriptionForeground);
     transition: background 0.15s, color 0.15s;
@@ -174,8 +178,7 @@ button:hover {
 .submit-job-btn {
     width: 100%;
     margin: 6px 0 0 0;
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 5px 12px;
 }
 
 .job-form-loading {
@@ -197,21 +200,17 @@ button:hover {
 }
 
 .job-form-retry-btn {
-    margin: 0;
     padding: 2px 8px;
-    font-size: 11px;
+    font-size: 10px;
     flex-shrink: 0;
 }
 
 .job-form-stop-btn {
-    padding: 2px 6px;
+    padding: 2px 8px;
     font-size: 10px;
     flex-shrink: 0;
     background: var(--vscode-button-secondaryBackground);
     color: var(--vscode-errorForeground);
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
     margin-left: auto;
 }
 
@@ -299,8 +298,7 @@ button:hover {
 
 .refresh-btn {
     padding: 2px 8px;
-    font-size: 11px;
-    margin: 0;
+    font-size: 10px;
 }
 
 /* File browser — shared across sessions and storages */

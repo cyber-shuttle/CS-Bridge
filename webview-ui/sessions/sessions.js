@@ -516,6 +516,16 @@ window.addEventListener('message', event => {
                 const entry = document.querySelector('.runtime-entry[data-session-id="' + rt.id + '"]');
                 if (!entry) { continue; }
 
+                // Fingerprint: skip detail rebuild if session data hasn't changed
+                var fp = rt.status + '|' + rt.host + '|' + (rt.tunnelUrl || '') + '|' + (rt.tunnelId || '')
+                    + '|' + (rt.errorMessage || '') + '|' + (rt.switching ? '1' : '0')
+                    + '|' + (rt.isActiveInThisWindow ? '1' : '0') + '|' + (rt.isThisWindow ? '1' : '0')
+                    + '|' + (rt.linkspanInfo ? rt.linkspanInfo.pid + ':' + rt.linkspanInfo.tunnelId : '')
+                    + '|' + (rt.connectedRemotePath || '') + '|' + (rt.localWorkdir || '');
+                var prevFp = entry.getAttribute('data-fp');
+                var dataChanged = fp !== prevFp;
+                if (dataChanged) { entry.setAttribute('data-fp', fp); }
+
                 // Toggle disabled state on remote sessions when linkspan is stopped
                 if (!rt.isLocal) {
                     entry.classList.toggle('linkspan-stopped', !linkspanRunning);
@@ -607,6 +617,9 @@ window.addEventListener('message', event => {
                 if (headerRight) {
                     headerRight.innerHTML = '';
                 }
+
+                // Skip detail rebuild if session data hasn't changed (prevents countdown/path flicker)
+                if (!dataChanged) { continue; }
 
                 // Update detail / action section
                 const existingDetails = entry.querySelector('.runtime-details');

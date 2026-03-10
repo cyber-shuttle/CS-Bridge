@@ -296,12 +296,10 @@
 
 .copy-btn {
     background: none;
-    border: none;
-    cursor: pointer;
     padding: 0 2px;
-    margin: 0;
     color: var(--vscode-descriptionForeground);
     font-size: inherit;
+    font-weight: normal;
     line-height: 1;
     vertical-align: middle;
     display: inline-flex;
@@ -342,14 +340,6 @@
 }
 
 .session-action-main {
-    font-size: 11px;
-    padding: 3px 12px;
-    border-radius: 3px;
-    border: none;
-    cursor: pointer;
-    font-weight: 500;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -453,14 +443,14 @@
 
 .script-preview-actions button {
     flex: 1;
-    margin: 0;
+    padding: 6px 12px;
 }
 
 .cancel-preview-btn {
-    background: var(--vscode-button-secondaryBackground) !important;
-    color: var(--vscode-button-secondaryForeground) !important;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
 }
 
 .cancel-preview-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground) !important;
+    background: var(--vscode-button-secondaryHoverBackground);
 }

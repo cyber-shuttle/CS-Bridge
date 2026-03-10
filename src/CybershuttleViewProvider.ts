@@ -4924,9 +4924,10 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
             // Determine display name + working directory (same line)
             const runtimeLabel = rt.status === 'Local' ? 'Local' : escapeHtml(rt.host);
-            const workDir = rt.status === 'Local'
+            const rawWorkDir = rt.status === 'Local'
                 ? (wsPath || '')
                 : (rt.connectedRemotePath || rt.localWorkdir || '');
+            const workDir = displayWorkDir(rawWorkDir);
             const displayName = runtimeLabel;
             const workDirHtml = workDir ? `<span class="runtime-workdir">${escapeHtml(workDir)}</span>` : '';
 
@@ -5306,4 +5307,11 @@ function escapeHtml(text: string): string {
 
 function ci(name: string): string {
     return `<i class="codicon codicon-${name}"></i>`;
+}
+
+function displayWorkDir(rawPath: string): string {
+    if (rawPath === '~' || rawPath.startsWith('~/')) {
+        return rawPath === '~' ? '$CS_HOME' : '$CS_HOME/' + rawPath.slice(2);
+    }
+    return rawPath;
 }
