@@ -230,9 +230,12 @@ export class LocalLinkspanManager {
                         sshPort = parseInt(sshMatch[1], 10);
                         continue;
                     }
-                    const listenMatch = line.match(/listening on [\d.]+:(\d+)/);
-                    if (listenMatch) {
-                        serverPort = parseInt(listenMatch[1], 10);
+                    // Match HTTP server port but skip SSH and log-stream lines
+                    if (!line.includes('SSH server') && !line.includes('log stream')) {
+                        const listenMatch = line.match(/listening on [\d.]+:(\d+)/);
+                        if (listenMatch) {
+                            serverPort = parseInt(listenMatch[1], 10);
+                        }
                     }
                     const capMatch = line.match(/workflow: captured (\S+) = (.+)/);
                     if (capMatch) {
@@ -420,7 +423,8 @@ export class LocalLinkspanManager {
             const count = (this._metadataFailures.get(failKey) || 0) + 1;
             this._metadataFailures.set(failKey, count);
             if (count === 1) {
-                this._outputChannel.appendLine(`[linkspan-local] Failed to set metadata ${key}: ${err.message}`);
+                const cause = err.cause ? ` (cause: ${err.cause?.message || err.cause?.code || err.cause})` : '';
+                this._outputChannel.appendLine(`[linkspan-local] Failed to set metadata ${key}: ${err.message}${cause}`);
             }
         }
     }

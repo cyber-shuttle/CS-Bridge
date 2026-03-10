@@ -121,8 +121,10 @@ export class DataCache {
     ): Promise<void> {
         const remoteDir = `~/sessions/${sessionId}/`;
         this._outputChannel.appendLine(`[sync] Syncing back from ${host}:${remoteDir}`);
+        // No --delete: we must never remove local files that weren't in the
+        // remote session directory (the remote is a subset of the workspace).
         await this._runRsync([
-            '-az', '--delete',
+            '-az',
             '-e', 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
             `${host}:${remoteDir}`, `${localDir}/`,
         ]);

@@ -12,7 +12,7 @@ import { StorageBrowserManager } from './StorageBrowserManager.js';
 import { DataCache } from './vfs/DataCache.js';
 import { SyncProvider } from './vfs/SyncProvider.js';
 import { MountProvider } from './vfs/MountProvider.js';
-import { LocalLinkspanManager } from './LocalLinkspan.js';
+import { LocalLinkspanManager, type LocalLinkspanInfo } from './LocalLinkspan.js';
 
 /**
  * Generate the linkspan workflow YAML for a given tunnel name.
@@ -2193,20 +2193,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return session._portMap;
         }
 
-        // Find or recover the local linkspan
+        // Find or recover the local linkspan (ensure() does health check + restart if needed)
         const workspacePath = session.localWorkdir || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        let localInfo = workspacePath ? this._localLinkspan.get(workspacePath) : undefined;
-        if (!localInfo && workspacePath) {
-            // Auto-recover: try to start linkspan if it's not running
-            this._outputChannel.appendLine('[tunnel] Local linkspan not running, attempting auto-recovery...');
+        let localInfo: LocalLinkspanInfo | undefined;
+        if (workspacePath) {
             try {
                 await this.ensureLocalLinkspan();
-                const info = await this._localLinkspan.ensure(workspacePath);
-                localInfo = info;
-                this._outputChannel.appendLine('[tunnel] Auto-recovered local linkspan');
+                localInfo = await this._localLinkspan.ensure(workspacePath);
                 this._sendRuntimeUpdates();
             } catch (err: any) {
-                this._outputChannel.appendLine(`[tunnel] Auto-recovery failed: ${err.message}`);
+                this._outputChannel.appendLine(`[tunnel] Linkspan ensure failed: ${err.message}`);
             }
         }
 
@@ -2217,7 +2213,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         const provider = this.tunnelManager.getProvider();
         const baseUrl = `http://127.0.0.1:${localInfo.serverPort}`;
-        this._outputChannel.appendLine(`[tunnel] Connecting to tunnel ${session.tunnelId} via linkspan REST (provider=${provider})`);
+        this._outputChannel.appendLine(`[tunnel] Connecting to tunnel ${session.tunnelId} via linkspan REST (provider=${provider}, port=${localInfo.serverPort}, pid=${localInfo.pid})`);
 
         try {
             const controller = new AbortController();
@@ -2253,7 +2249,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             this._outputChannel.appendLine(`[tunnel] Connected (connectionId=${result.connectionId})`);
             return portMap;
         } catch (err: any) {
-            this._outputChannel.appendLine(`[tunnel] Connect failed: ${err.message}`);
+            const cause = err.cause ? ` (cause: ${err.cause?.message || err.cause?.code || err.cause})` : '';
+            this._outputChannel.appendLine(`[tunnel] Connect failed: ${err.message}${cause}`);
             return undefined;
         }
     }
