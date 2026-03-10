@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync, spawn } from 'child_process';
+import { spawnSync, spawn } from 'child_process';
 import { DataCache } from './DataCache.js';
 
 interface MountSession {
@@ -47,7 +47,7 @@ export class MountProvider {
         }
         // Fall back to `which sshfs`
         try {
-            const result = execSync('which sshfs', { encoding: 'utf-8', timeout: 5_000 }).trim();
+            const result = (spawnSync('which', ['sshfs'], { encoding: 'utf-8', timeout: 5_000, stdio: 'pipe' }).stdout || '').trim();
             if (result && fs.existsSync(result)) {
                 this._sshfsBin = result;
                 return result;
@@ -120,7 +120,7 @@ export class MountProvider {
             await new Promise(resolve => setTimeout(resolve, 2_000));
             // Verify mount
             try {
-                const mountOutput = execSync('mount', { encoding: 'utf-8', timeout: 5_000 });
+                const mountOutput = spawnSync('mount', [], { encoding: 'utf-8', timeout: 5_000, stdio: 'pipe' }).stdout || '';
                 if (mountOutput.includes(mountDir)) {
                     this._outputChannel.appendLine(`[sshfs] Mount verified at ${mountDir}`);
                     return true;
@@ -155,17 +155,20 @@ export class MountProvider {
         try {
             const mutagenBin = await this._dataCache.ensureMutagen();
             const sessionName = `cs-cache-${session.id}`;
-            const mutagenCmd = [
-                `"${mutagenBin}"`, 'sync', 'create',
+            const mutagenArgs = [
+                'sync', 'create',
                 mountDir,
                 `${hostAlias}:${remoteDir}`,
                 `--name=${sessionName}`,
                 '--label=cs-bridge=true',
                 '--sync-mode=two-way-safe',
                 '--ignore-vcs',
-            ].join(' ');
+            ];
             this._outputChannel.appendLine(`[mutagen] Starting cache-warmer: ${sessionName}`);
-            execSync(mutagenCmd, { timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'] });
+            const cacheResult = spawnSync(mutagenBin, mutagenArgs, { timeout: 30_000, stdio: 'pipe' });
+            if (cacheResult.status !== 0) {
+                throw new Error(cacheResult.stderr?.toString() || 'unknown error');
+            }
             session.mutagenSessionName = sessionName;
             this._outputChannel.appendLine(`[mutagen] Cache-warmer started: ${sessionName}`);
         } catch (err: unknown) {
@@ -185,10 +188,10 @@ export class MountProvider {
             const mutagenBin = this._dataCache.resolveMutagenBin();
             if (mutagenBin) {
                 try {
-                    execSync(`"${mutagenBin}" sync flush ${session.mutagenSessionName} 2>/dev/null`, { timeout: 30_000 });
+                    spawnSync(mutagenBin, ['sync', 'flush', session.mutagenSessionName], { timeout: 30_000, stdio: 'pipe' });
                 } catch { /* best-effort flush */ }
                 try {
-                    execSync(`"${mutagenBin}" sync terminate ${session.mutagenSessionName} 2>/dev/null`, { timeout: 5_000 });
+                    spawnSync(mutagenBin, ['sync', 'terminate', session.mutagenSessionName], { timeout: 5_000, stdio: 'pipe' });
                     this._outputChannel.appendLine(`[mutagen] Terminated cache-warmer: ${session.mutagenSessionName}`);
                 } catch { /* ok */ }
             }
@@ -223,7 +226,7 @@ export class MountProvider {
             const bin = this._dataCache.resolveMutagenBin();
             if (bin) {
                 try {
-                    execSync(`"${bin}" sync terminate ${session.mutagenSessionName} 2>/dev/null`, { timeout: 5_000 });
+                    spawnSync(bin, ['sync', 'terminate', session.mutagenSessionName], { timeout: 5_000, stdio: 'pipe' });
                 } catch { }
             }
             session.mutagenSessionName = undefined;
@@ -251,24 +254,22 @@ export class MountProvider {
      */
     private _unmountAndCleanup(mountDir: string): void {
         // Graceful unmount
-        try {
-            if (process.platform === 'darwin') {
-                execSync(`umount "${mountDir}" 2>/dev/null`, { timeout: 10_000 });
-            } else {
-                execSync(`fusermount -u "${mountDir}" 2>/dev/null`, { timeout: 10_000 });
-            }
+        const unmountCmd = process.platform === 'darwin'
+            ? { bin: 'umount', args: [mountDir] }
+            : { bin: 'fusermount', args: ['-u', mountDir] };
+        const graceful = spawnSync(unmountCmd.bin, unmountCmd.args, { timeout: 10_000, stdio: 'pipe' });
+        if (graceful.status === 0) {
             this._outputChannel.appendLine(`[sshfs] Unmounted ${mountDir}`);
-        } catch {
+        } else {
             // Graceful unmount failed — try force unmount
             this._outputChannel.appendLine(`[sshfs] Graceful unmount failed for ${mountDir}, trying force unmount`);
-            try {
-                if (process.platform === 'darwin') {
-                    execSync(`diskutil unmount force "${mountDir}" 2>/dev/null`, { timeout: 10_000 });
-                } else {
-                    execSync(`fusermount -uz "${mountDir}" 2>/dev/null`, { timeout: 10_000 });
-                }
+            const forceCmd = process.platform === 'darwin'
+                ? { bin: 'diskutil', args: ['unmount', 'force', mountDir] }
+                : { bin: 'fusermount', args: ['-uz', mountDir] };
+            const forced = spawnSync(forceCmd.bin, forceCmd.args, { timeout: 10_000, stdio: 'pipe' });
+            if (forced.status === 0) {
                 this._outputChannel.appendLine(`[sshfs] Force-unmounted ${mountDir}`);
-            } catch {
+            } else {
                 this._outputChannel.appendLine(`[sshfs] Warning: Could not unmount ${mountDir}`);
             }
         }

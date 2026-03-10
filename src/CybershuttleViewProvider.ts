@@ -4,7 +4,7 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import { MetricsCollector } from './instrumentation/index.js';
 import { SshManager } from './SshManager.js';
 import { TunnelManager, TunnelCredentials } from './TunnelManager.js';
@@ -1079,6 +1079,37 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             '-o', `ControlPath=${socketPath}`,
             '-o', `ControlPersist=600`,
         ];
+    }
+
+    /**
+     * Execute a command on a remote host via SSH using spawnSync with proper
+     * argument arrays. This avoids all shell quoting issues — the command
+     * string is passed as a single SSH argument so the remote shell interprets
+     * it directly, with no intermediate local shell expansion.
+     */
+    private _sshExec(
+        host: string,
+        command: string,
+        opts?: { timeout?: number; input?: string },
+    ): { stdout: string; ok: boolean } {
+        const args = [
+            '-o', 'ConnectTimeout=5',
+            '-o', 'StrictHostKeyChecking=no',
+            '-o', 'UserKnownHostsFile=/dev/null',
+            ...this._ssh.getControlMasterArgs(host),
+            host,
+            command,
+        ];
+        const result = spawnSync('ssh', args, {
+            encoding: 'utf-8',
+            timeout: opts?.timeout ?? 10_000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            input: opts?.input,
+        });
+        return {
+            stdout: (result.stdout || '').trim(),
+            ok: result.status === 0,
+        };
     }
 
     /**
@@ -3523,17 +3554,22 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      */
     private async _checkLinkspanHealth(session: Runtime): Promise<boolean> {
         if (!session.tunnelUrl) { return false; }
+        const baseUrl = session.tunnelUrl.replace(/\/$/, '');
+        const url = `${baseUrl}/api/v1/health`;
         try {
-            const baseUrl = session.tunnelUrl.replace(/\/$/, '');
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 5000);
-            const resp = await fetch(`${baseUrl}/api/v1/health`, {
+            const timeout = setTimeout(() => controller.abort(), 10_000);
+            const resp = await fetch(url, {
                 signal: controller.signal,
                 headers: session.tunnelToken ? { Authorization: `Bearer ${session.tunnelToken}` } : {},
             });
             clearTimeout(timeout);
+            if (!resp.ok) {
+                this._outputChannel.appendLine(`[health] ${url} returned ${resp.status}`);
+            }
             return resp.ok;
-        } catch {
+        } catch (err: any) {
+            this._outputChannel.appendLine(`[health] ${url} failed: ${err.message}`);
             return false;
         }
     }
@@ -3985,7 +4021,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         // Prefer tunnel-based health check
                         if (session.tunnelUrl) {
                             const healthy = await this._checkLinkspanHealth(session);
-                            if (!healthy) {
+                            if (healthy) {
+                                this._outputChannel.appendLine(`[preflight] Linkspan is healthy`);
+                            } else {
                                 this._outputChannel.appendLine(`[preflight] Linkspan health check failed, falling back to SSH`);
                                 await this._checkJobViaSsh(session);
                                 if (session.status === 'Failed' || session.status === 'Completed') {
@@ -3993,7 +4031,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                                     return;
                                 }
                             }
-                            this._outputChannel.appendLine(`[preflight] Linkspan is healthy`);
                         } else {
                             try {
                                 await this._checkJobViaSsh(session);
@@ -4036,75 +4073,57 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     if (!this._writeSshConfigEntry(sessionId, hostAlias, '127.0.0.1', session.sshTunnelLocalPort!, 'user')) {
                         return;
                     }
-                    // --- SSH options reused across all preflight commands ---
-                    const sshOpts = `-o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`;
-                    // Use ControlMaster to multiplex all preflight SSH over one TCP connection
-                    const ctlArgs = this._ssh.getControlMasterArgs(hostAlias).join(' ');
                     // --- Verify SSH + resolve ~ in a single round trip ---
                     progress.report({ message: 'Verifying SSH to compute node...' });
-                    try {
-                        const combined = execSync(
-                            `ssh ${sshOpts} ${ctlArgs} ${hostAlias} "echo __CS_SSH_OK__ && echo HOME_IS=\\$HOME"`,
-                            { encoding: 'utf-8', timeout: 15_000, stdio: ['pipe', 'pipe', 'pipe'] }
-                        ).trim();
-                        if (!combined.includes('__CS_SSH_OK__')) {
-                            this._outputChannel.appendLine(`[preflight] SSH check returned unexpected output: ${combined}`);
-                            vscode.window.showErrorMessage('SSH to compute node responded but returned unexpected output. Check the output channel.');
-                            return;
-                        }
-                        this._outputChannel.appendLine('[preflight] SSH to compute node verified');
-                        const homeMatch = combined.match(/HOME_IS=(.+)/);
-                        if (homeMatch && homeMatch[1].startsWith('/') && remotePath!.startsWith('~')) {
-                            remotePath = remotePath!.replace(/^~/, homeMatch[1].trim());
-                            session.connectedRemotePath = remotePath;
-                            this._saveSessions();
-                        }
-                    } catch (err: any) {
-                        this._outputChannel.appendLine(`[preflight] SSH check failed: ${err.message}`);
+                    const sshCheck = this._sshExec(hostAlias, 'echo __CS_SSH_OK__ && echo HOME_IS=$HOME', { timeout: 15_000 });
+                    if (!sshCheck.ok || !sshCheck.stdout.includes('__CS_SSH_OK__')) {
+                        this._outputChannel.appendLine(`[preflight] SSH check failed: ${sshCheck.stdout}`);
                         vscode.window.showErrorMessage('Cannot SSH to compute node through tunnel. The remote session may have ended or SSH is not ready yet.');
                         return;
+                    }
+                    this._outputChannel.appendLine('[preflight] SSH to compute node verified');
+                    const homeMatch = sshCheck.stdout.match(/HOME_IS=(.+)/);
+                    if (homeMatch && homeMatch[1].startsWith('/') && remotePath!.startsWith('~')) {
+                        remotePath = remotePath!.replace(/^~/, homeMatch[1].trim());
+                        session.connectedRemotePath = remotePath;
+                        this._saveSessions();
                     }
                     // --- Wait for remote linkspan + verify workspace in single poll ---
                     if (session.slurmJobId) {
                         progress.report({ message: 'Waiting for remote workspace...' });
-                        const logPrefix = session.noSlurm ? 'linkspan-plain-' : 'linkspan-session-';
-                        const logId = session.noSlurm ? session.slurmJobId.replace('pid-', '') : session.slurmJobId;
+                        const logPrefix = 'linkspan-session-';
+                        const logId = session.noSlurm ? sessionId : session.slurmJobId;
                         const logFile = `$HOME/.cybershuttle/logs/${logPrefix}${logId}.err`;
+                        const pollCmd = [
+                            `OK=$(grep -c 'finished successfully' ${logFile} 2>/dev/null || echo 0)`,
+                            `ERR=$(grep -c 'workflow step' ${logFile} 2>/dev/null || echo 0)`,
+                            `DIR=$(test -d '${remotePath}' && echo Y || echo N)`,
+                            `echo OK=$OK ERR=$ERR DIR=$DIR`,
+                        ].join('; ');
                         const maxWait = 60;
                         let linkspanReady = false;
                         for (let i = 0; i < maxWait; i++) {
-                            // Single SSH command checks success, errors, and workspace dir
-                            try {
-                                const pollScript = `OK=\$(grep -c 'finished successfully' ${logFile} 2>/dev/null || echo 0); ERR=\$(grep -c 'workflow step' ${logFile} 2>/dev/null || echo 0); DIR=\$(test -d '${remotePath}' && echo Y || echo N); echo OK=\$OK ERR=\$ERR DIR=\$DIR`;
-                                const poll = execSync(
-                                    `ssh ${sshOpts} ${ctlArgs} ${hostAlias} "${pollScript}"`,
-                                    { encoding: 'utf-8', timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] }
-                                ).trim();
-                                this._outputChannel.appendLine(`[switch] Poll: ${poll}`);
-                                const okMatch = poll.match(/OK=(\d+)/);
-                                const errMatch = poll.match(/ERR=(\d+)/);
-                                if (okMatch && parseInt(okMatch[1], 10) > 0) {
-                                    this._outputChannel.appendLine(`[switch] Remote linkspan finished after ${i * 2}s`);
-                                    linkspanReady = true;
-                                    // Check workspace dir from the same response
-                                    if (poll.includes('DIR=N')) {
-                                        this._outputChannel.appendLine(`[preflight] Remote workspace directory ${remotePath} does not exist`);
-                                        vscode.window.showErrorMessage(`Remote workspace directory does not exist: ${remotePath}`);
-                                        return;
-                                    }
-                                    break;
+                            const poll = this._sshExec(hostAlias, pollCmd);
+                            this._outputChannel.appendLine(`[switch] Poll: ${poll.stdout}`);
+                            const okMatch = poll.stdout.match(/OK=(\d+)/);
+                            const errMatch = poll.stdout.match(/ERR=(\d+)/);
+                            if (okMatch && parseInt(okMatch[1], 10) > 0) {
+                                this._outputChannel.appendLine(`[switch] Remote linkspan finished after ${i * 2}s`);
+                                linkspanReady = true;
+                                if (poll.stdout.includes('DIR=N')) {
+                                    this._outputChannel.appendLine(`[preflight] Remote workspace directory ${remotePath} does not exist`);
+                                    vscode.window.showErrorMessage(`Remote workspace directory does not exist: ${remotePath}`);
+                                    return;
                                 }
-                                if (errMatch && parseInt(errMatch[1], 10) > 0) {
-                                    this._outputChannel.appendLine('[switch] Remote linkspan has errors');
-                                    try {
-                                        const tail = execSync(
-                                            `ssh ${sshOpts} ${ctlArgs} ${hostAlias} "tail -5 ${logFile} 2>/dev/null"`,
-                                            { encoding: 'utf-8', timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] }
-                                        ).trim();
-                                        this._outputChannel.appendLine(`[switch] Remote linkspan tail:\n${tail}`);
-                                    } catch { /* ignore */ }
+                                break;
+                            }
+                            if (errMatch && parseInt(errMatch[1], 10) > 0) {
+                                this._outputChannel.appendLine('[switch] Remote linkspan has errors');
+                                const tail = this._sshExec(hostAlias, `tail -5 ${logFile} 2>/dev/null`);
+                                if (tail.stdout) {
+                                    this._outputChannel.appendLine(`[switch] Remote linkspan tail:\n${tail.stdout}`);
                                 }
-                            } catch { /* not ready yet */ }
+                            }
                             if (i === maxWait - 1) {
                                 this._outputChannel.appendLine('[switch] Timed out waiting for remote linkspan');
                             }
@@ -4135,12 +4154,16 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             'typescript.disableAutomaticTypeAcquisition': true,
                             'npm.autoDetect': 'off',
                         }, null, 2);
-                        // Single SSH: mkdir + write settings in one connection
-                        execSync(
-                            `ssh ${sshOpts} ${ctlArgs} ${hostAlias} sh -c ${JSON.stringify(`mkdir -p '${remotePath}/.vscode' && cat > '${remotePath}/.vscode/settings.json'`)}`,
-                            { input: remoteSettings, timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] }
+                        const inject = this._sshExec(
+                            hostAlias,
+                            `mkdir -p '${remotePath}/.vscode' && cat > '${remotePath}/.vscode/settings.json'`,
+                            { input: remoteSettings },
                         );
-                        this._outputChannel.appendLine('[switch] Injected remote .vscode/settings.json');
+                        if (inject.ok) {
+                            this._outputChannel.appendLine('[switch] Injected remote .vscode/settings.json');
+                        } else {
+                            this._outputChannel.appendLine(`[switch] Failed to inject remote settings`);
+                        }
                     } catch (err: any) {
                         this._outputChannel.appendLine(`[switch] Failed to inject remote settings: ${err.message}`);
                     }
@@ -5097,8 +5120,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
                 });
                 // Split runtimes into active (this window) vs others
-                const activeRuntimes = sortedRuntimes.filter(rt => rt.isLocal || (activeSession && rt.id === activeSession.id));
-                const otherRuntimes = sortedRuntimes.filter(rt => !rt.isLocal && !(activeSession && rt.id === activeSession.id));
+                // When activeSession is detected, only that session is "active"; everything else is "other".
+                // When no activeSession (e.g. fresh local window), fall back to putting the local session in active.
+                const activeRuntimes = activeSession
+                    ? sortedRuntimes.filter(rt => rt.id === activeSession.id)
+                    : sortedRuntimes.filter(rt => rt.isLocal);
+                const otherRuntimes = activeSession
+                    ? sortedRuntimes.filter(rt => rt.id !== activeSession.id)
+                    : sortedRuntimes.filter(rt => !rt.isLocal);
                 const activeRows = activeRuntimes.map(rt => buildRuntimeRow(rt, ws.directoryPath)).join('');
                 const otherRows = otherRuntimes.map(rt => buildRuntimeRow(rt, ws.directoryPath)).join('');
                 const hostPickerHtml = buildHostPickerHtml(ws);

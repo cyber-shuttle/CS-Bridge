@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { MetricsCollector } from './instrumentation/index.js';
 
 export interface TunnelCredentials {
@@ -191,10 +191,13 @@ export class TunnelManager {
         this._outputChannel.appendLine(`[devtunnel] Downloading from ${downloadUrl}`);
 
         fs.mkdirSync(binDir, { recursive: true });
-        execSync(`curl -fsSL -o "${binPath}" "${downloadUrl}" && chmod +x "${binPath}"`, {
-            timeout: 60_000,
-            stdio: ['pipe', 'pipe', 'pipe'],
+        const dl = spawnSync('curl', ['-fsSL', '-o', binPath, downloadUrl], {
+            timeout: 60_000, stdio: 'pipe',
         });
+        if (dl.status !== 0) {
+            throw new Error(`curl download failed: ${dl.stderr?.toString() || 'unknown error'}`);
+        }
+        fs.chmodSync(binPath, 0o755);
 
         this._outputChannel.appendLine(`[devtunnel] Downloaded to ${binPath}`);
         return binPath;
