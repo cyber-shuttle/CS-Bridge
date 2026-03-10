@@ -463,16 +463,23 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private _mergeDebounceTimer?: ReturnType<typeof setTimeout>;
+
     private _watchSessionsFile() {
-        fs.watchFile(this._sessionsFilePath, { interval: 1000 }, () => {
-            // Skip reload if this window was the last writer (within 2s window)
-            if (Date.now() - this._lastWriteTime < 2000) {
+        fs.watchFile(this._sessionsFilePath, { interval: 2000 }, () => {
+            // Skip if this window wrote recently (within 5s)
+            if (Date.now() - this._lastWriteTime < 5000) {
                 return;
             }
-            this._outputChannel.appendLine('[sessions] Sessions file changed externally, merging');
-            this._mergeSessionsFromFile();
-            this._sendRuntimeUpdates();
-            this._updateStatusBar();
+            // Debounce rapid external changes into a single merge
+            if (this._mergeDebounceTimer) { clearTimeout(this._mergeDebounceTimer); }
+            this._mergeDebounceTimer = setTimeout(() => {
+                this._mergeDebounceTimer = undefined;
+                this._outputChannel.appendLine('[sessions] Sessions file changed externally, merging');
+                this._mergeSessionsFromFile();
+                this._sendRuntimeUpdates();
+                this._updateStatusBar();
+            }, 1000);
         });
     }
 
@@ -4401,6 +4408,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             session._portMap = undefined;
             session.sshTunnelLocalPort = undefined;
             try {
+                // Verify remote tunnel is still alive before connecting
+                const healthy = await this._checkLinkspanHealth(session);
+                if (!healthy) {
+                    this._outputChannel.appendLine(`[linkspan-local] Remote linkspan unreachable for ${session.id} (${session.host}), skipping reconnect`);
+                    continue;
+                }
                 const portMap = await this._connectViaTunnel(session.id, session);
                 if (portMap) {
                     this._outputChannel.appendLine(`[linkspan-local] Reconnected session ${session.id} (${session.host})`);
