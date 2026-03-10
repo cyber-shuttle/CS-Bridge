@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
@@ -61,10 +61,46 @@ export class LocalLinkspanManager {
             } catch {
                 // Already dead, nothing to do
             }
+            // Clean up the stale tunnel (best-effort)
+            if (info.tunnelId) {
+                this._deleteTunnel(info.tunnelId);
+            }
         }
         // Clear state file
         this._instances.clear();
         this._saveState();
+    }
+
+    /**
+     * Delete a devtunnel by ID (best-effort, non-blocking).
+     */
+    private _deleteTunnel(tunnelId: string): void {
+        const devtunnelBin = this._resolveDevTunnelBin();
+        if (!devtunnelBin) { return; }
+        try {
+            const result = spawnSync(devtunnelBin, ['delete', tunnelId, '-f'], {
+                encoding: 'utf-8',
+                timeout: 10_000,
+            });
+            if (result.status === 0) {
+                this._outputChannel.appendLine(`[linkspan-local] Deleted stale tunnel ${tunnelId}`);
+            }
+        } catch {
+            // Best-effort
+        }
+    }
+
+    private _resolveDevTunnelBin(): string | undefined {
+        const candidates = [
+            path.join(os.homedir(), '.cybershuttle', 'bin', 'devtunnel'),
+            path.join(os.homedir(), '.linkspan', 'bin', 'devtunnel'),
+            '/opt/homebrew/bin/devtunnel',
+            '/usr/local/bin/devtunnel',
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) { return p; }
+        }
+        return undefined;
     }
 
     /**
@@ -151,7 +187,7 @@ export class LocalLinkspanManager {
             `      provider: "${creds.provider}"`,
             `      tunnel_name: "${tunnelName}"`,
             `      expiration: "1d"`,
-            `      auth_token: "{{.TunnelAuthToken}}"${serverUrlLine}`,
+            `      auth_token: "${creds.authToken}"${serverUrlLine}`,
             `      server_port: "{{.ServerPort}}"`,
             `      ssh_port: "{{.SshPort}}"`,
             `      log_port: "{{.LogPort}}"`,
@@ -165,24 +201,17 @@ export class LocalLinkspanManager {
         this._outputChannel.appendLine(`[linkspan-local] Starting for ${workspacePath}`);
         const proc = spawn(linkspanBin, [
             '--port', '0',
-            '--tunnel-auth-token', creds.authToken,
             '--workflow', '-',
         ], {
             cwd: workspacePath,
             stdio: ['pipe', 'pipe', 'pipe'],
-            detached: true, // Keep running after VS Code exits
         });
-
-        // Unref so the child process doesn't prevent VS Code from exiting
-        proc.unref();
-        proc.stdin!.write(workflowYaml);
-        proc.stdin!.end();
+        // Attach output listeners BEFORE writing stdin to avoid missing early output
+        const captures: Record<string, string> = {};
+        let serverPort = 0;
+        let sshPort = 0;
 
         const info = await new Promise<LocalLinkspanInfo>((resolve, reject) => {
-            const captures: Record<string, string> = {};
-            let serverPort = 0;
-            let sshPort = 0;
-
             const timeout = setTimeout(() => {
                 const missing: string[] = [];
                 if (!sshPort) { missing.push('ssh_port'); }
@@ -214,6 +243,10 @@ export class LocalLinkspanManager {
                 const text = data.toString();
                 // Process line-by-line to handle multiple signals in one chunk
                 for (const line of text.split('\n')) {
+                    // Log non-sensitive lines (skip HTTP debug with auth tokens)
+                    if (line.trim() && !line.includes('Authorization:') && !line.includes('access-token') && !line.includes('sdk HTTP:')) {
+                        this._outputChannel.appendLine(`[linkspan-local] ${line}`);
+                    }
                     const sshMatch = line.match(/SSH server listening on [\d.]+:(\d+)/);
                     if (sshMatch) {
                         sshPort = parseInt(sshMatch[1], 10);
@@ -226,9 +259,27 @@ export class LocalLinkspanManager {
                             serverPort = parseInt(listenMatch[1], 10);
                         }
                     }
+                    // Capture from workflow outputs (preferred)
                     const capMatch = line.match(/workflow: captured (\S+) = (.+)/);
                     if (capMatch) {
                         captures[capMatch[1]] = capMatch[2].trim();
+                    }
+                    // Fallback: capture from background tunnel output
+                    const idMatch = line.match(/DevTunnel ID:\s*(.+)/);
+                    if (idMatch && !captures.tunnel_id) {
+                        captures.tunnel_id = idMatch[1].trim();
+                    }
+                    const urlMatch = line.match(/Connect to agent using the URL:\s*(.+)/);
+                    if (urlMatch && !captures.tunnel_url) {
+                        captures.tunnel_url = urlMatch[1].trim();
+                    }
+                    const tokenMatch = line.match(/DevTunnel Token:\s*(.+)/);
+                    if (tokenMatch && !captures.tunnel_token) {
+                        captures.tunnel_token = tokenMatch[1].trim();
+                    }
+                    const logMatch = line.match(/log stream listening on [\d.]+:(\d+)/);
+                    if (logMatch && !captures.log_port) {
+                        captures.log_port = logMatch[1];
                     }
                 }
                 checkComplete();
@@ -246,6 +297,10 @@ export class LocalLinkspanManager {
                     reject(new Error(`Local linkspan exited with code ${code}`));
                 }
             });
+
+            // Write workflow YAML to stdin after listeners are attached
+            proc.stdin!.write(workflowYaml);
+            proc.stdin!.end();
         });
 
         this._processes.set(workspacePath, proc);
@@ -336,6 +391,10 @@ export class LocalLinkspanManager {
         const info = this._instances.get(workspacePath);
         if (info?.pid) {
             try { process.kill(info.pid, 'SIGTERM'); } catch { /* dead */ }
+        }
+        // Clean up the tunnel
+        if (info?.tunnelId) {
+            this._deleteTunnel(info.tunnelId);
         }
 
         const proc = this._processes.get(workspacePath);

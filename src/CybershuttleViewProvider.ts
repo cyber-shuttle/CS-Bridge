@@ -191,7 +191,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
     private static readonly HOST_PREFS_KEY = 'cybershuttle.hostPrefs';
     private static readonly TIER3_FIELDS: (keyof Runtime)[] = [
-        'connectionId', '_portMap', 'sshTunnelLocalPort', 'syncProgress',
+        'connectionId', '_portMap', 'syncProgress',
     ];
 
     private _allRuntimes(): Runtime[] {
@@ -332,11 +332,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         // --- Startup Reconciliation ---
-        // 1. Strip ALL Tier 3 fields (processes are dead after extension reload)
+        // 1. Strip ephemeral process state (processes are dead after extension reload).
+        //    Preserve sshTunnelLocalPort — the tunnel connection (managed by the linkspan)
+        //    survives VS Code reloads, and Remote-SSH needs the SSH config entry to stay valid.
         for (const session of this._allRuntimes()) {
             session.connectionId = undefined;
             session._portMap = undefined;
-            session.sshTunnelLocalPort = undefined;
             session.syncProgress = undefined;
         }
         // 2. Clean SSH config — remove entries for terminal or nonexistent sessions
