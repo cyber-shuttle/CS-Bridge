@@ -350,6 +350,9 @@
     font-weight: 500;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .session-action-main:hover {
