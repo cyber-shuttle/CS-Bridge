@@ -1490,7 +1490,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const script = this.generateSlurmScript({ cpus, memory, gpu, wallTime, queue, allocation, authToken: creds.authToken, provider: creds.provider, serverUrl: creds.serverUrl });
+        const script = this.generateSlurmScript({ cpus, memory, gpu, wallTime, queue, allocation, authToken: creds.authToken, provider: creds.provider, serverUrl: creds.serverUrl, sessionId, host: hostName });
 
         // Prefer workspace identified by workspaceId (from host picker); fall back to current folder
         let ws = workspaceId ? this._workspaces.find(w => w.id === workspaceId) : undefined;
@@ -1635,7 +1635,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // Build the workflow YAML that will be passed to linkspan via stdin.
         const hostSlug = (params.host || 'unknown').replace(/[^a-zA-Z0-9-]/g, '-');
-        const workflowYaml = generateLinkspanWorkflow(`ls-${hostSlug}-$SLURM_JOB_ID`, params.provider, params.serverUrl);
+        const workflowYaml = generateLinkspanWorkflow(`ls-${hostSlug}-${sessionId || 'unknown'}`, params.provider, params.serverUrl);
 
         const script = [
             `#!/bin/bash`,
@@ -1670,6 +1670,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         authToken: string;
         provider: string;
         serverUrl?: string;
+        host?: string;
         sessionId?: string;
         localTunnelId?: string;
         localTunnelToken?: string;
@@ -1677,7 +1678,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         localWorkspace?: string;
     }): string {
         const { authToken, sessionId } = params;
-        const workflowYaml = generateLinkspanWorkflow('ls-plain-$$', params.provider, params.serverUrl);
+        const hostSlug = (params.host || 'plain').replace(/[^a-zA-Z0-9-]/g, '-');
+        const workflowYaml = generateLinkspanWorkflow(`ls-${hostSlug}-${sessionId || 'unknown'}`, params.provider, params.serverUrl);
 
         const script = [
             `#!/bin/bash`,
@@ -1685,7 +1687,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             `# --- Set up log files using $HOME ---`,
             `LOG_DIR="$HOME/.cybershuttle/logs"`,
             `mkdir -p "$LOG_DIR"`,
-            `exec > "$LOG_DIR/linkspan-plain-$$.out" 2> "$LOG_DIR/linkspan-plain-$$.err"`,
+            `exec > "$LOG_DIR/linkspan-session-${sessionId || '$$'}.out" 2> "$LOG_DIR/linkspan-session-${sessionId || '$$'}.err"`,
             ``,
             `# --- Local linkspan overlay variables ---`,
             `export CS_LOCAL_TUNNEL_ID='${params.localTunnelId || ''}'`,
@@ -1749,7 +1751,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         localWorkspace: localWorkdir,
                     };
                     if (session.noSlurm) {
-                        session.script = this.generatePlainScript({ authToken: creds.authToken, provider: creds.provider, serverUrl: creds.serverUrl, sessionId: session.id, ...localParams });
+                        session.script = this.generatePlainScript({ authToken: creds.authToken, provider: creds.provider, serverUrl: creds.serverUrl, host: session.host, sessionId: session.id, ...localParams });
                     } else {
                         session.script = this.generateSlurmScript({
                             cpus: session.cpus, memory: session.memory, gpu: session.gpu,
@@ -2009,7 +2011,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 localWorkspace: session.localWorkdir,
             };
             if (session.noSlurm) {
-                session.script = this.generatePlainScript({ authToken: creds.authToken, provider: creds.provider, serverUrl: creds.serverUrl, sessionId: session.id, ...localParams });
+                session.script = this.generatePlainScript({ authToken: creds.authToken, provider: creds.provider, serverUrl: creds.serverUrl, host: session.host, sessionId: session.id, ...localParams });
             } else {
                 session.script = this.generateSlurmScript({
                     cpus: session.cpus, memory: session.memory, gpu: session.gpu,
@@ -2067,7 +2069,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const tunnelName = `ls-${sessionId}`;
+        const tunnelName = `ls-local-${sessionId}`;
         const localWorkdir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
         const workflowYaml = generateLinkspanWorkflow(tunnelName, creds.provider, creds.serverUrl);
 
@@ -2493,13 +2495,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Fallback: devtunnel CLI (only works for devtunnel provider)
-        if (provider === 'devtunnel' && session.slurmJobId) {
+        if (provider === 'devtunnel') {
             const dtBin = this.tunnelManager.resolveDevTunnelBin();
             if (!dtBin) { return; }
             const hostSlug = (session.host || 'unknown').replace(/[^a-zA-Z0-9-]/g, '-');
-            const tunnelName = session.noSlurm
-                ? `ls-plain-${session.slurmJobId.replace('pid-', '')}`
-                : `ls-${hostSlug}-${session.slurmJobId}`;
+            const tunnelName = session.isLocal
+                ? `ls-local-${session.id}`
+                : `ls-${hostSlug}-${session.id}`;
             try {
                 await new Promise<void>((resolve) => {
                     const proc = spawn(dtBin, ['delete', tunnelName, '-f'], {
@@ -4073,9 +4075,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         for (let i = 0; i < maxWait; i++) {
                             // Single SSH command checks success, errors, and workspace dir
                             try {
-                                const pollScript = `OK=$(grep -c 'finished successfully' ${logFile} 2>/dev/null || echo 0); ERR=$(grep -c 'workflow step' ${logFile} 2>/dev/null || echo 0); DIR=$(test -d '${remotePath}' && echo Y || echo N); echo OK=$OK ERR=$ERR DIR=$DIR`;
+                                const pollScript = `OK=\$(grep -c 'finished successfully' ${logFile} 2>/dev/null || echo 0); ERR=\$(grep -c 'workflow step' ${logFile} 2>/dev/null || echo 0); DIR=\$(test -d '${remotePath}' && echo Y || echo N); echo OK=\$OK ERR=\$ERR DIR=\$DIR`;
                                 const poll = execSync(
-                                    `ssh ${sshOpts} ${ctlArgs} ${hostAlias} sh -c ${JSON.stringify(pollScript)}`,
+                                    `ssh ${sshOpts} ${ctlArgs} ${hostAlias} "${pollScript}"`,
                                     { encoding: 'utf-8', timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] }
                                 ).trim();
                                 this._outputChannel.appendLine(`[switch] Poll: ${poll}`);
@@ -4096,7 +4098,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                                     this._outputChannel.appendLine('[switch] Remote linkspan has errors');
                                     try {
                                         const tail = execSync(
-                                            `ssh ${sshOpts} ${ctlArgs} ${hostAlias} sh -c ${JSON.stringify(`tail -5 ${logFile} 2>/dev/null`)}`,
+                                            `ssh ${sshOpts} ${ctlArgs} ${hostAlias} "tail -5 ${logFile} 2>/dev/null"`,
                                             { encoding: 'utf-8', timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] }
                                         ).trim();
                                         this._outputChannel.appendLine(`[switch] Remote linkspan tail:\n${tail}`);
@@ -4295,7 +4297,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
         try {
             await this.ensureLocalLinkspan();
-            await this._localLinkspan.ensure(workspacePath);
+            const localSession = this._allRuntimes().find(r => r.isLocal && r.status === 'Local');
+            const tunnelName = localSession ? `ls-local-${localSession.id}` : undefined;
+            await this._localLinkspan.ensure(workspacePath, tunnelName);
             this._outputChannel.appendLine('[linkspan-local] Auto-started successfully');
             this._sendRuntimeUpdates();
         } catch (err: any) {
@@ -4325,7 +4329,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 progress.report({ message: 'Downloading latest linkspan...' });
                 await this.ensureLocalLinkspan();
                 progress.report({ message: 'Starting...' });
-                await this._localLinkspan.ensure(workspacePath);
+                const localSession = this._allRuntimes().find(r => r.isLocal && r.status === 'Local');
+                const tunnelName = localSession ? `ls-local-${localSession.id}` : undefined;
+                await this._localLinkspan.ensure(workspacePath, tunnelName);
                 const info = this._localLinkspan.get(workspacePath);
                 if (info) {
                     this._outputChannel.appendLine(`[linkspan-local] Started: tunnel=${info.tunnelId}, ssh=${info.sshPort}, http=${info.serverPort}`);
@@ -4366,7 +4372,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 progress.report({ message: 'Stopping current instance...' });
                 this._localLinkspan.stop(workspacePath);
                 progress.report({ message: 'Starting fresh instance...' });
-                await this._localLinkspan.ensure(workspacePath);
+                const localSession = this._allRuntimes().find(r => r.isLocal && r.status === 'Local');
+                const tunnelName = localSession ? `ls-local-${localSession.id}` : undefined;
+                await this._localLinkspan.ensure(workspacePath, tunnelName);
                 const info = this._localLinkspan.get(workspacePath);
                 if (info) {
                     this._outputChannel.appendLine(`[linkspan-local] Restarted: tunnel=${info.tunnelId}, ssh=${info.sshPort}, http=${info.serverPort}`);
@@ -4407,26 +4415,24 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             session.connectionId = undefined;
             session._portMap = undefined;
             session.sshTunnelLocalPort = undefined;
+        }
+
+        // Step 1: Announce new local linkspan to all remote linkspans via their
+        // tunnel URLs (public HTTPS, no local tunnel connection needed).
+        // This tells each remote linkspan about the new local tunnel endpoints.
+        for (const session of activeSessions) {
             try {
-                // Verify remote tunnel is still alive before connecting
-                const healthy = await this._checkLinkspanHealth(session);
-                if (!healthy) {
-                    this._outputChannel.appendLine(`[linkspan-local] Remote linkspan unreachable for ${session.id} (${session.host}), skipping reconnect`);
-                    continue;
-                }
-                const portMap = await this._connectViaTunnel(session.id, session);
-                if (portMap) {
-                    this._outputChannel.appendLine(`[linkspan-local] Reconnected session ${session.id} (${session.host})`);
-                    // Announce the new local linkspan tunnel to the remote linkspan
-                    // so it can update its back-connection for FUSE/storage overlay
-                    await this._announceLocalLinkspan(session, info);
-                } else {
-                    this._outputChannel.appendLine(`[linkspan-local] Failed to reconnect session ${session.id} (${session.host})`);
-                }
+                await this._announceLocalLinkspan(session, info);
             } catch (err: any) {
-                this._outputChannel.appendLine(`[linkspan-local] Reconnect error for ${session.id}: ${err.message}`);
+                this._outputChannel.appendLine(`[linkspan-local] Announce error for ${session.id} (${session.host}): ${err.message}`);
             }
         }
+
+        // Tunnel connections (SSH port forwarding) are NOT re-established eagerly.
+        // They will be created on-demand when the user connects to a session or
+        // when the next poll cycle discovers the tunnel URL. No point creating
+        // extra tunnels when the remote linkspans are already reachable via their
+        // public tunnel URLs.
         this._saveSessions();
         this._sendRuntimeUpdates();
     }

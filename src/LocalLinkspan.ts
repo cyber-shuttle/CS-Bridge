@@ -71,13 +71,13 @@ export class LocalLinkspanManager {
      * Ensure a local linkspan is running for the given workspace.
      * Returns the tunnel info for remote sessions to connect to.
      */
-    async ensure(workspacePath: string): Promise<LocalLinkspanInfo> {
+    async ensure(workspacePath: string, tunnelName?: string): Promise<LocalLinkspanInfo> {
         // Serialize concurrent calls for the same workspace to prevent double-start
         const pending = this._ensureLocks.get(workspacePath);
         if (pending) {
             return pending;
         }
-        const promise = this._ensureImpl(workspacePath);
+        const promise = this._ensureImpl(workspacePath, tunnelName);
         this._ensureLocks.set(workspacePath, promise);
         try {
             return await promise;
@@ -86,7 +86,7 @@ export class LocalLinkspanManager {
         }
     }
 
-    private async _ensureImpl(workspacePath: string): Promise<LocalLinkspanInfo> {
+    private async _ensureImpl(workspacePath: string, tunnelName?: string): Promise<LocalLinkspanInfo> {
         const existing = this._instances.get(workspacePath);
         if (existing) {
             // Check if process is still alive
@@ -97,7 +97,7 @@ export class LocalLinkspanManager {
                 this._instances.delete(workspacePath);
                 this._processes.delete(workspacePath);
                 this._saveState();
-                return this._start(workspacePath);
+                return this._start(workspacePath, tunnelName);
             }
             // PID alive — verify the HTTP server is actually responding
             if (await this._isHealthy(existing)) {
@@ -112,9 +112,9 @@ export class LocalLinkspanManager {
             // Still unhealthy — kill and restart
             this._outputChannel.appendLine(`[linkspan-local] ${workspacePath}: still unhealthy after retry, restarting`);
             this.stop(workspacePath);
-            return this._start(workspacePath);
+            return this._start(workspacePath, tunnelName);
         }
-        return this._start(workspacePath);
+        return this._start(workspacePath, tunnelName);
     }
 
     /**
@@ -135,10 +135,10 @@ export class LocalLinkspanManager {
         }
     }
 
-    private async _start(workspacePath: string): Promise<LocalLinkspanInfo> {
+    private async _start(workspacePath: string, tunnelName?: string): Promise<LocalLinkspanInfo> {
         const linkspanBin = await this._getLinkspanBin();
         const creds = await this._getCredentials();
-        const tunnelName = `ls-local-${Date.now()}`;
+        if (!tunnelName) { tunnelName = `ls-local-${Date.now()}`; }
         const serverUrlLine = creds.serverUrl ? `\n      server_url: "${creds.serverUrl}"` : '';
 
         const workflowYaml = [
