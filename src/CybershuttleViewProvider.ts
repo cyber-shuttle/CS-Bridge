@@ -92,7 +92,7 @@ interface Runtime {
     wallTime: string;
     queue: string;
     allocation: string;
-    status: 'Local' | 'Pending' | 'Active' | 'Submitting' | 'Deploying agent' | 'Failed' | 'Completed' | 'Idle';
+    status: 'Local' | 'Pending' | 'Active' | 'Submitting' | 'Deploying agent' | 'Stopping' | 'Failed' | 'Completed' | 'Idle';
     switchOnReady?: boolean;
     submittedAt: Date;
     type: 'local' | 'remote';
@@ -181,6 +181,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private _statusBarItem: vscode.StatusBarItem;
     private _countdownTimer?: ReturnType<typeof setInterval>;
     private _disposing = false;
+    private _tearingDown = new Set<string>();
     private _metrics: MetricsCollector;
     private _windowId: string = '';
     private _heartbeatTimer?: ReturnType<typeof setInterval>;
@@ -287,7 +288,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (Array.isArray(rawData) && rawData.length > 0 && rawData[0].runtimes !== undefined) {
-            const validStatuses = new Set(['Local', 'Pending', 'Active', 'Submitting', 'Failed', 'Completed', 'Idle']);
+            const validStatuses = new Set(['Local', 'Pending', 'Active', 'Submitting', 'Deploying agent', 'Stopping', 'Failed', 'Completed', 'Idle']);
             this._workspaces = rawData
                 .filter((ws: any) => {
                     if (!ws || typeof ws.id !== 'string' || typeof ws.directoryPath !== 'string' || !Array.isArray(ws.runtimes)) {
@@ -2317,6 +2318,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * delete tunnel, clear session fields. Caller sets session.status first.
      */
     private async _teardownSession(session: Runtime, sessionId: string, logTag: string): Promise<void> {
+        if (this._tearingDown.has(sessionId)) {
+            this._outputChannel.appendLine(`[${logTag}] Teardown already in progress for ${sessionId}, skipping`);
+            return;
+        }
+        this._tearingDown.add(sessionId);
+        try {
         // 0. Stop continuous sync (flush + terminate mutagen)
         if ((session as any).mutagenSessionName) {
             try {
@@ -2354,6 +2361,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // 4. Clear Tier 2 + Tier 3 fields and credentials
         this._clearSessionFields(session);
+        } finally {
+            this._tearingDown.delete(sessionId);
+        }
     }
 
     /**
@@ -2412,7 +2422,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 ? `ls-plain-${session.slurmJobId.replace('pid-', '')}`
                 : `ls-${hostSlug}-${session.slurmJobId}`;
             try {
-                execSync(`"${dtBin}" delete "${tunnelName}" -f 2>/dev/null`, { timeout: 10_000 });
+                await new Promise<void>((resolve) => {
+                    const proc = spawn(dtBin, ['delete', tunnelName, '-f'], {
+                        stdio: 'ignore',
+                        timeout: 10_000,
+                    });
+                    proc.on('close', () => resolve());
+                    proc.on('error', () => resolve());
+                });
             } catch { /* already gone */ }
         }
     }
@@ -3091,7 +3108,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }, async (progress) => {
             // 1. Teardown: sync-back, cleanup connections, delete tunnel, clear fields
             progress.report({ message: 'Syncing remote changes back...' });
-            session.status = 'Completed';
+            session.status = 'Stopping';
+            this._saveSessions();
+            this._sendRuntimeUpdates();
             await this._teardownSession(session, sessionId, 'stop');
 
             // 2. Cancel SLURM job
@@ -3114,6 +3133,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 await this._ssh.runRemoteCommand(session.host, `rm -rf ~/sessions/${sessionId} ~/overlay/${sessionId}`);
             } catch { /* best-effort */ }
 
+            session.status = 'Completed';
             this.stopSessionLogStream(sessionId);
             this._saveSessions();
             this.refresh();
@@ -3139,8 +3159,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         this._outputChannel.appendLine(`[session] Session ${sessionId} expired, cleaning up`);
 
         // 1. Full teardown: sync-back, cleanup connections, delete tunnel, clear fields
-        session.status = 'Completed';
+        session.status = 'Stopping';
+        this._saveSessions();
+        this._sendRuntimeUpdates();
         await this._teardownSession(session, sessionId, 'expire');
+        session.status = 'Completed';
 
         // 2. Clean remote session dir (best-effort)
         if (session.host && !session.isLocal) {
@@ -3256,8 +3279,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 // Poll linkspan workflow status to capture variables
                 // (tunnel_url, tunnel_token, ssh_port) regardless of job state.
                 await this.pollLinkspanWorkflow(session);
-            } catch {
-                // SSH error — leave session in its current state
+            } catch (err: any) {
+                this._outputChannel.appendLine(`[poll] Error checking session ${session.id}: ${err.message}`);
             }
         }
 
@@ -4561,6 +4584,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * Refresh the Sessions webview content.
      */
     refreshSessionsView() {
+        if (this._disposing) { return; }
         if (this._sessionsView) {
             try {
                 this._sessionsView.webview.html = this._getSessionsHtml(this._sessionsView.webview);
@@ -4589,6 +4613,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      * form values, and scroll position.
      */
     private _sendRuntimeUpdates() {
+        if (this._disposing) { return; }
         const activeSession = this._detectActiveSession();
         const visibleWorkspaces = this._getVisibleWorkspaces(activeSession);
         const updates = visibleWorkspaces.map(ws => ({

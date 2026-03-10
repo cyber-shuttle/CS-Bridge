@@ -93,6 +93,9 @@ document.querySelectorAll('.submit-job-btn').forEach(btn => {
         const wsId = btn.getAttribute('data-workspace-id');
         const form = btn.closest('.host-picker-form');
         if (!form) { return; }
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Submitting...';
+        btn.classList.add('btn-loading');
         const noSlurm = btn.hasAttribute('data-no-slurm');
         const syncModeEl = form.querySelector('[data-field="syncMode"]');
         const syncMode = syncModeEl ? syncModeEl.value : 'stage';
@@ -537,11 +540,15 @@ window.addEventListener('message', event => {
                 const isLive = localLinkspanUp || (!rt.isLocal && rt.isActiveInThisWindow) || isRemoteReady;
                 const isLiveNow = isRemoteReady || localLinkspanUp;
                 const isActivatingNow = rt.status === 'Starting local anchor' || rt.status === 'Deploying agent' || rt.status === 'Submitting' || rt.status === 'Pending' || (rt.status === 'Active' && !rt.tunnelUrl);
+                const isStoppingNow = rt.status === 'Stopping';
                 const isRemoteActiveNow = rt.status === 'Active' && !rt.isLocal;
                 const isRunningNow = isRemoteActiveNow && !isExpiredNow;
                 const isSwitching = !!rt.switching;
                 let dotClass = 'dot-idle';
                 if (isSwitching) {
+                    entry.classList.add('status-activating');
+                    dotClass = 'dot-activating';
+                } else if (isStoppingNow) {
                     entry.classList.add('status-activating');
                     dotClass = 'dot-activating';
                 } else if (isLive && !isExpiredNow) {
@@ -560,7 +567,7 @@ window.addEventListener('message', event => {
                 const dotWrap = entry.querySelector('.dot-action-wrap');
                 let dotBtnHtml = '';
                 if (!rt.isLocal) {
-                    const canClose = !isRunningNow && !isActivatingNow && !isLiveNow && !isSwitching;
+                    const canClose = !isRunningNow && !isActivatingNow && !isLiveNow && !isSwitching && !isStoppingNow;
                     dotBtnHtml = '<button class="dot-action-btn close-session-btn" data-session-id="' + rt.id + '"' + (canClose ? '' : ' disabled') + '>' + ci('close') + '</button>';
                 }
                 const newDotHtml = '<span class="dot-action-wrap"><span class="status-dot ' + dotClass + '"></span>' + dotBtnHtml + '</span>';
@@ -701,6 +708,8 @@ window.addEventListener('message', event => {
                             else { queuedStr = ' (' + elapsed + 's)'; }
                         }
                         line2 = '<span class="session-detail"><span class="spinner"></span> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + rt.submittedAt + '">' + queuedStr + '</span></span>';
+                    } else if (rt.status === 'Stopping') {
+                        line2 = '<span class="session-detail"><span class="spinner"></span> stopping session...</span>';
                     } else if (rt.status === 'Failed') {
                         line2 = '<span class="session-detail">' + (rt.errorMessage ? ci('error') + ' failed: ' + escapeHtml(rt.errorMessage) : ci('error') + ' failed') + '</span>';
                     } else if (rt.status === 'Completed') {
@@ -709,7 +718,7 @@ window.addEventListener('message', event => {
                     const incActionBtns = [];
                     if (isSwitching) {
                         incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
-                    } else if (isRunningNow || isActivatingNow) {
+                    } else if ((isRunningNow || isActivatingNow) && !isStoppingNow) {
                         incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + rt.id + '">' + ci('debug-stop') + ' Stop</button>');
                         if (!isThisWin) {
                             const activateDisabled = !isLiveNow;
