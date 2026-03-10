@@ -521,7 +521,8 @@ window.addEventListener('message', event => {
                     + '|' + (rt.errorMessage || '') + '|' + (rt.switching ? '1' : '0')
                     + '|' + (rt.isActiveInThisWindow ? '1' : '0') + '|' + (rt.isThisWindow ? '1' : '0')
                     + '|' + (rt.linkspanInfo ? rt.linkspanInfo.pid + ':' + rt.linkspanInfo.tunnelId : '')
-                    + '|' + (rt.connectedRemotePath || '') + '|' + (rt.localWorkdir || '');
+                    + '|' + (rt.connectedRemotePath || '') + '|' + (rt.localWorkdir || '')
+                    + '|' + (rt.linkspanStarting ? '1' : '0');
                 var prevFp = entry.getAttribute('data-fp');
                 var dataChanged = fp !== prevFp;
                 if (dataChanged) { entry.setAttribute('data-fp', fp); }
@@ -624,54 +625,49 @@ window.addEventListener('message', event => {
                 // Update detail / action section
                 const existingDetails = entry.querySelector('.runtime-details');
                 if (rt.status === 'Local') {
-                    // Local card: show linkspan status + action buttons
-                    var detailInner = '';
-                    if (rt.linkspanInfo) {
-                        var statsHtml = '<span class="session-detail">'
-                            + ci('pulse') + ' ' + rt.linkspanInfo.pid
-                            + ' <span class="detail-sep">|</span> ' + ci('server-process') + ' :' + rt.linkspanInfo.serverPort
-                            + ' <span class="detail-sep">|</span> ' + ci('terminal') + ' :' + rt.linkspanInfo.sshPort
-                            + '</span>';
-                        var statusLeft = '';
-                        if (rt.linkspanInfo.tunnelId) {
-                            statusLeft = '<span class="session-status-text">'
-                                + ci('cloud') + ' ' + escapeHtml(rt.linkspanInfo.tunnelId)
-                                + (rt.linkspanInfo.tunnelUrl ? ' <button class="copy-btn" data-copy="' + escapeHtml(rt.linkspanInfo.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button>' : '')
-                                + '</span>';
+                    // Local card: stats row (always) + status/action row
+                    var portPlaceholder = '<span style="display:inline-block;min-width:4ch;text-align:left">---</span>';
+                    var httpPort = rt.linkspanInfo ? ':' + rt.linkspanInfo.serverPort : portPlaceholder;
+                    var sshPortVal = rt.linkspanInfo ? ':' + rt.linkspanInfo.sshPort : portPlaceholder;
+                    var tunnelPart = (rt.linkspanInfo && rt.linkspanInfo.tunnelId)
+                        ? ' <span class="detail-sep">|</span> ' + ci('cloud') + ' ' + escapeHtml(rt.linkspanInfo.tunnelId)
+                          + (rt.linkspanInfo.tunnelUrl ? ' <button class="copy-btn" data-copy="' + escapeHtml(rt.linkspanInfo.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button>' : '')
+                        : '';
+                    var statsHtml = '<span class="session-detail">' + ci('server-process') + ' ' + httpPort + ' <span class="detail-sep">|</span> ' + ci('terminal') + ' ' + sshPortVal + tunnelPart + '</span>';
+
+                    var localStatusLeft = '';
+                    var localBtns = [];
+                    if (rt.linkspanInfo || rt.linkspanStarting) {
+                        // Running or starting — same buttons, disabled when starting
+                        var dis = rt.linkspanStarting ? ' disabled' : '';
+                        if (rt.linkspanStarting) {
+                            localStatusLeft = '<span class="session-status-text"><span class="spinner"></span> Downloading linkspan binary...</span>';
                         }
-                        var localBtns = [];
                         if (!isRemoteWindow) {
-                            localBtns.push('<button class="session-action-main action-stop-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-debug-stop"></i>Stop</button>');
-                            localBtns.push('<button class="session-action-main action-restart-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-debug-restart"></i>Restart</button>');
+                            localBtns.push('<button class="session-action-main action-stop-linkspan" data-session-id="' + rt.id + '"' + dis + '><i class="codicon codicon-debug-stop"></i>Stop</button>');
+                            localBtns.push('<button class="session-action-main action-restart-linkspan" data-session-id="' + rt.id + '"' + dis + '><i class="codicon codicon-debug-restart"></i>Restart</button>');
                         }
-                        var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
-                        var actionRow = '<div class="session-action-row">' + statusLeft + btnsRight + '</div>';
-                        detailInner = statsHtml + actionRow;
                     } else {
-                        var statusLeft = '';
-                        var localBtns = [];
+                        // Stopped
                         if (!isRemoteWindow) {
-                            statusLeft = '<span class="session-status-text">Linkspan is stopped. Start it to enable remote access.</span>';
+                            localStatusLeft = '<span class="session-status-text">' + ci('debug-disconnect') + ' Stopped</span>';
                             localBtns.push('<button class="session-action-main action-start-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-play"></i>Start</button>');
                         }
                         if (isRemoteWindow && !isThisWin && !isSwitching) {
                             localBtns.push('<button class="session-action-main action-switch switch-btn" data-session-id="' + rt.id + '" data-direction="local"><i class="codicon codicon-arrow-swap"></i>Activate</button>');
                         }
-                        var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
-                        var actionRow = (statusLeft || btnsRight) ? '<div class="session-action-row">' + statusLeft + btnsRight + '</div>' : '';
-                        detailInner = actionRow;
                     }
-                    if (detailInner) {
-                        if (existingDetails) {
-                            existingDetails.innerHTML = detailInner;
-                        } else {
-                            var div = document.createElement('div');
-                            div.className = 'runtime-details';
-                            div.innerHTML = detailInner;
-                            entry.appendChild(div);
-                        }
-                    } else if (existingDetails) {
-                        existingDetails.remove();
+                    var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
+                    var actionRow = (localStatusLeft || btnsRight) ? '<div class="session-action-row">' + localStatusLeft + btnsRight + '</div>' : '';
+                    var detailInner = statsHtml + actionRow;
+
+                    if (existingDetails) {
+                        existingDetails.innerHTML = detailInner;
+                    } else {
+                        var div = document.createElement('div');
+                        div.className = 'runtime-details';
+                        div.innerHTML = detailInner;
+                        entry.appendChild(div);
                     }
                 } else {
                     const wtParts = rt.wallTime.split(':').map(Number);

@@ -401,6 +401,13 @@
     margin: 0 1px;
 }
 
+.session-loading-placeholder {
+    color: var(--vscode-descriptionForeground);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .script-preview-overlay {
     display: none;
     position: fixed;

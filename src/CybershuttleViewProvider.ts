@@ -1199,6 +1199,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
         // Route messages from all views into the same handler
         webviewView.webview.onDidReceiveMessage((data) => this._onMessage(data));
+
+        // Immediately push real data to replace loading skeletons
+        if (isSessions) {
+            this._sendRuntimeUpdates();
+        }
     }
 
     /**
@@ -4697,6 +4702,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         if (this._sessionsView) {
             try {
                 this._sessionsView.webview.html = this._getSessionsHtml(this._sessionsView.webview);
+                // Immediately push real data to replace loading skeletons
+                this._sendRuntimeUpdates();
             } catch (err: any) {
                 this._outputChannel.appendLine(`[webview] Failed to render sessions: ${err.message}`);
             }
@@ -4753,6 +4760,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         };
                     }
                 }
+                // Detect if linkspan is currently starting for this workspace
+                const linkspanStarting = rt.status === 'Local' && ws.directoryPath
+                    ? this._linkspanStartingPath === ws.directoryPath
+                    : false;
+
                 return {
                     id: rt.id,
                     status: rt.status,
@@ -4777,6 +4789,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     localWorkdir: rt.localWorkdir,
                     switching: rt.id === this._switchingSessionId || !!rt.switchOnReady,
                     linkspanInfo,
+                    linkspanStarting,
                 };
             }),
         }));
@@ -4978,195 +4991,21 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
 
 
 
-        // Helper: build runtime row HTML for one Runtime
-        const buildRuntimeRow = (rt: Runtime, wsPath?: string): string => {
-            const isActiveInThisWindow = activeSession?.id === rt.id;
+        // Helper: build runtime row HTML — renders a loading skeleton.
+        // Real data is populated immediately via _sendRuntimeUpdates() + JS incremental handler.
+        const buildRuntimeRow = (rt: Runtime, _wsPath?: string): string => {
             const isLocal = !!rt.isLocal;
-
-            // Determine status class for the card
-            let statusClass: string;
-            const isRemoteReady = rt.status === 'Active' && !!rt.tunnelUrl;
-            const localLinkspanUp = rt.status === 'Local' && wsPath ? !!this._localLinkspan.get(wsPath) : false;
-            if (rt.status === 'Local' && localLinkspanUp) {
-                statusClass = 'status-live';
-            } else if (rt.status === 'Local' && this._linkspanStartingPath === wsPath) {
-                statusClass = 'status-activating';
-            } else if (rt.status === 'Local') {
-                statusClass = 'status-idle';
-            } else if (isActiveInThisWindow) {
-                statusClass = 'status-live';
-            } else if (isRemoteReady) {
-                statusClass = 'status-live';
-            } else if (rt.status === 'Active' && !rt.tunnelUrl) {
-                statusClass = 'status-activating';
-            } else if (rt.status === 'Submitting' || rt.status === 'Pending') {
-                statusClass = 'status-activating';
-            } else if (rt.status === 'Failed') {
-                statusClass = 'status-failed';
-            } else {
-                statusClass = 'status-idle';
-            }
-
-            // Determine this-window indicator
-            const isThisWindowRuntime = (rt.status === 'Local' && rt.windowId === this._windowId) || isActiveInThisWindow;
-
-            // Determine action buttons
-            const isActivating = rt.status === 'Submitting' || rt.status === 'Pending' || (rt.status === 'Active' && !rt.tunnelUrl);
-            const isRemoteActive = rt.status === 'Active' && !rt.isLocal;
-
-            // Check if session is expired (walltime elapsed)
-            let isExpired = false;
-            if (isRemoteActive && rt.submittedAt && rt.wallTime) {
-                const wtParts = rt.wallTime.split(':').map(Number);
-                const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
-                const deadlineMs = new Date(rt.submittedAt).getTime() + wtTotalMin * 60000;
-                isExpired = Date.now() >= deadlineMs;
-            }
-            if (isExpired) {
-                statusClass = 'status-idle';
-            }
-
-            const isCompleted = rt.status === 'Completed' || rt.status === 'Failed';
-            const isLive = !isCompleted && !isExpired && (isRemoteReady || localLinkspanUp);
-            const isRunning = isRemoteActive && !isExpired;
-
-
-            // Determine display name + working directory (same line)
-            const runtimeLabel = rt.status === 'Local' ? 'Local' : escapeHtml(rt.host);
-            const rawWorkDir = rt.status === 'Local'
-                ? (wsPath || '')
-                : (rt.connectedRemotePath || rt.localWorkdir || '');
-            const workDir = displayWorkDir(rawWorkDir);
-            const displayName = runtimeLabel;
-            const workDirHtml = workDir ? `<span class="runtime-workdir">${escapeHtml(workDir)}</span>` : '';
-
-            // Build detail section
-            let detailHtml = '';
-            let progressBarHtml = '';
-            if (rt.status !== 'Local') {
-                const wtParts = rt.wallTime.split(':').map(Number);
-                const wtTotalMin = (wtParts[0] || 0) * 60 + (wtParts[1] || 0);
-                const wallTimeShort = wtTotalMin >= 1440 ? `${Math.floor(wtTotalMin / 1440)}d` : wtTotalMin >= 60 ? `${Math.floor(wtTotalMin / 60)}hr` : `${wtTotalMin}min`;
-                // Time display: remaining countdown if active, chosen walltime otherwise
-                let timePart: string;
-                if (isRemoteActive && rt.submittedAt) {
-                    const deadlineMs = new Date(rt.submittedAt).getTime() + wtTotalMin * 60000;
-                    const totalMs = wtTotalMin * 60000;
-                    timePart = `<span class="session-countdown-badge" data-deadline="${deadlineMs}" data-total="${totalMs}">${ci('watch')}</span>`;
-                    const remaining = Math.max(0, deadlineMs - Date.now());
-                    const pct = totalMs > 0 ? (remaining / totalMs) * 100 : 0;
-                    progressBarHtml = `<div class="session-progress-bar"><div class="session-progress-fill" data-deadline="${deadlineMs}" data-total="${totalMs}" style="width:${pct.toFixed(1)}%"></div></div>`;
-                } else {
-                    timePart = `${ci('watch')} ${wallTimeShort}`;
-                }
-                // Line 1: resource specs with icons and | separators
-                const gpuPart = rt.gpu !== 'None' ? ` <span class="detail-sep">|</span> ${ci('circuit-board')} ${escapeHtml(rt.gpu)}` : '';
-                const line1 = `${ci('server-environment')} ${escapeHtml(rt.queue)} <span class="detail-sep">|</span> ${ci('account')} ${escapeHtml(rt.allocation)} <span class="detail-sep">|</span> ${ci('vm')} ${escapeHtml(rt.cpus)} <span class="detail-sep">|</span> ${ci('database')} ${escapeHtml(rt.memory)}${gpuPart} <span class="detail-sep">|</span> ${timePart}`;
-                // Line 2: status + tunnel
-                let line2 = '';
-                if (rt.status === 'Active') {
-                    if (rt.tunnelUrl) {
-                        line2 = `${ci('cloud')} ${escapeHtml(rt.tunnelId || '')} <button class="copy-btn" data-copy="${escapeHtml(rt.tunnelUrl)}" title="Copy tunnel URL">${ci('copy')}</button>`;
-                    } else if (rt.syncProgress) {
-                        const fmt = (b: number) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(1)}MB`;
-                        line2 = `${ci('cloud-upload')} syncing ${fmt(rt.syncProgress.transferred)} / ${fmt(rt.syncProgress.total)}`;
-                    } else {
-                        line2 = `<span class="spinner"></span> submitting job...`;
-                    }
-                } else if (rt.status === 'Submitting') {
-                    line2 = `<span class="spinner"></span> submitting job...`;
-                } else if (rt.status === 'Pending') {
-                    line2 = `<span class="spinner"></span> queued, waiting for resources...`;
-                } else if (rt.status === 'Failed') {
-                    line2 = rt.errorMessage ? `${ci('error')} failed: ${escapeHtml(rt.errorMessage)}` : `${ci('error')} failed`;
-                } else if (rt.status === 'Completed') {
-                    if (rt.syncProgress) {
-                        const fmt = (b: number) => b < 1024 ? `${b}B` : b < 1048576 ? `${(b / 1024).toFixed(1)}KB` : `${(b / 1048576).toFixed(1)}MB`;
-                        line2 = `${ci('cloud-download')} syncing back ${fmt(rt.syncProgress.transferred)} / ${fmt(rt.syncProgress.total)}`;
-                    } else {
-                        line2 = `${ci('pass')} completed`;
-                    }
-                }
-                // Action buttons based on state
-                const actionBtns: string[] = [];
-                if (isRunning) {
-                    actionBtns.push(`<button class="session-action-main action-stop stop-btn" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-stop"></i>Stop</button>`);
-                }
-                if (isLive && !isThisWindowRuntime) {
-                    actionBtns.push(`<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="${escapeHtml(rt.id)}" data-direction="remote"><i class="codicon codicon-arrow-swap"></i>Activate</button>`);
-                }
-                if (isActivating) {
-                    actionBtns.push(`<button class="session-action-main action-stop stop-btn" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-stop"></i>Cancel</button>`);
-                }
-                if (!isRunning && !isActivating && !isLive && !isLocal) {
-                    const hasRun = rt.status === 'Completed' || rt.status === 'Failed';
-                    const label = hasRun ? '<i class="codicon codicon-debug-restart"></i>Restart' : '<i class="codicon codicon-play"></i>Start';
-                    actionBtns.push(`<button class="session-action-main action-start start-btn" data-session-id="${escapeHtml(rt.id)}">${label}</button>`);
-                }
-                const statusLeft = line2 ? `<span class="session-detail" style="flex:1;min-width:0">${line2}</span>` : '';
-                const btnsRight = actionBtns.length > 0 ? `<span class="session-action-btns">${actionBtns.join('')}</span>` : '';
-                const actionRowHtml = (statusLeft || btnsRight) ? `<div class="session-action-row">${statusLeft}${btnsRight}</div>` : '';
-                detailHtml = `
-                    <div class="runtime-details">
-                        <span class="session-detail">${line1}</span>
-                        ${actionRowHtml}
-                    </div>`;
-            } else {
-                // Local session: show linkspan stats + status/action row
-                const localInfo = wsPath ? this._localLinkspan.get(wsPath) : undefined;
-                const isStarting = this._linkspanStartingPath === wsPath;
-                const httpPort = localInfo ? `:${localInfo.serverPort}` : '-';
-                const sshPortVal = localInfo ? `:${localInfo.sshPort}` : '-';
-                const tunnelPart = localInfo?.tunnelId
-                    ? ` <span class="detail-sep">|</span> ${ci('cloud')} ${escapeHtml(localInfo.tunnelId)}${localInfo.tunnelUrl ? ` <button class="copy-btn" data-copy="${escapeHtml(localInfo.tunnelUrl)}" title="Copy tunnel URL">${ci('copy')}</button>` : ''}`
-                    : '';
-                const statsHtml = `<span class="session-detail">${ci('server-process')} ${httpPort} <span class="detail-sep">|</span> ${ci('terminal')} ${sshPortVal}${tunnelPart}</span>`;
-
-                // Status + action buttons on same row
-                let localStatusLeft = '';
-                const localBtns: string[] = [];
-                if (localInfo) {
-                    if (!this.isRemoteWindow) {
-                        localBtns.push(`<button class="session-action-main action-stop-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-stop"></i>Stop</button>`);
-                        localBtns.push(`<button class="session-action-main action-restart-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-debug-restart"></i>Restart</button>`);
-                    }
-                } else if (isStarting) {
-                    localStatusLeft = `<span class="session-status-text"><span class="spinner"></span> Starting...</span>`;
-                } else {
-                    if (!this.isRemoteWindow) {
-                        localStatusLeft = `<span class="session-status-text">${ci('debug-disconnect')} Stopped</span>`;
-                        localBtns.push(`<button class="session-action-main action-start-linkspan" data-session-id="${escapeHtml(rt.id)}"><i class="codicon codicon-play"></i>Start</button>`);
-                    }
-                    if (this.isRemoteWindow && !isThisWindowRuntime) {
-                        localBtns.push(`<button class="session-action-main action-switch switch-btn" data-session-id="${escapeHtml(rt.id)}" data-direction="local"><i class="codicon codicon-arrow-swap"></i>Activate</button>`);
-                    }
-                }
-                const btnsRight = localBtns.length > 0 ? `<span class="session-action-btns">${localBtns.join('')}</span>` : '';
-                const actionRow = (localStatusLeft || btnsRight) ? `<div class="session-action-row">${localStatusLeft}${btnsRight}</div>` : '';
-                detailHtml = `<div class="runtime-details">${statsHtml}${actionRow}</div>`;
-            }
-
-            const statusDotClass = `status-dot ${statusClass.replace('status-', 'dot-')}`;
-            // Dot-action: on hover, dot becomes an action button for remote runtimes
-            let dotBtnHtml = '';
-            if (!isLocal) {
-                const canClose = !isRunning && !isActivating && !isLive;
-                dotBtnHtml = `<button class="dot-action-btn close-session-btn" data-session-id="${escapeHtml(rt.id)}"${canClose ? '' : ' disabled'}><i class="codicon codicon-close"></i></button>`;
-            }
-            const dotHtml = `<span class="dot-action-wrap"><span class="${statusDotClass}"></span>${dotBtnHtml}</span>`;
-
-            // Mark remote sessions as disabled when linkspan is not running
-            const linkspanStopped = !isLocal && wsPath ? !this._localLinkspan.get(wsPath) : false;
-
+            const displayName = isLocal ? 'Local' : escapeHtml(rt.host);
             return `
-                <div class="runtime-entry ${statusClass}${isThisWindowRuntime ? ' active-session' : ''}${linkspanStopped ? ' linkspan-stopped' : ''}" data-session-id="${escapeHtml(rt.id)}">
-                    ${progressBarHtml}
+                <div class="runtime-entry status-idle" data-session-id="${escapeHtml(rt.id)}">
                     <div class="runtime-header">
                         <span class="runtime-name">${displayName}</span>
-                        ${workDirHtml}
                         <div class="runtime-header-right"></div>
-                        ${dotHtml}
-                    </div>${detailHtml}
+                        <span class="dot-action-wrap"><span class="status-dot dot-idle"></span></span>
+                    </div>
+                    <div class="runtime-details">
+                        <span class="session-detail session-loading-placeholder"><span class="spinner"></span> Loading...</span>
+                    </div>
                 </div>`;
         };
 
