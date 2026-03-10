@@ -2070,15 +2070,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Cancel a pending job preview (remove the session that was created during preview).
+     * Cancel a pending job preview — revert the session to Idle so the card stays.
      */
     private cancelJobPreview(sessionId: string) {
         const found = this._findRuntime(sessionId);
         if (found) {
-            found.workspace.runtimes = found.workspace.runtimes.filter(r => r.id !== sessionId);
-            if (found.workspace.runtimes.length === 0) {
-                this._workspaces = this._workspaces.filter(w => w.id !== found.workspace.id);
-            }
+            found.runtime.status = 'Idle';
+            found.runtime.script = undefined;
         }
         this._saveSessions();
         this._postSessionsMessage({ type: 'scriptPreviewDismissed' });
