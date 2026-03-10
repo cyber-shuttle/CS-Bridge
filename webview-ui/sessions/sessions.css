@@ -176,6 +176,16 @@
     background: var(--vscode-list-inactiveSelectionBackground, rgba(0, 120, 212, 0.08));
 }
 
+.runtime-entry.linkspan-stopped {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.runtime-entry.linkspan-stopped .status-dot {
+    background: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.3));
+    animation: none;
+}
+
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }

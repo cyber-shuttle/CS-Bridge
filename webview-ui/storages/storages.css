@@ -1,1 +1,52 @@
 /* Storages panel styles — shared file-browser styles are in common.css */
+
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+.file-breadcrumbs {
+    flex: none;
+    flex-wrap: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--vscode-input-background, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    margin-bottom: 6px;
+    color: var(--vscode-foreground);
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.file-breadcrumbs .breadcrumb-sep {
+    color: var(--vscode-foreground);
+    opacity: 0.5;
+}
+
+.file-breadcrumbs .breadcrumb-seg {
+    color: var(--vscode-foreground);
+}
+
+.file-breadcrumbs .breadcrumb-seg:hover {
+    color: var(--vscode-textLink-foreground);
+}
+
+.file-breadcrumbs .breadcrumb-current {
+    color: var(--vscode-foreground);
+}
+
+.file-list {
+    flex: 1;
+    min-height: 0;
+}

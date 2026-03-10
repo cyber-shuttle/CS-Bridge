@@ -47,35 +47,24 @@ export class LocalLinkspanManager {
     }
 
     /**
-     * Recover running linkspan instances from a previous VS Code session.
-     * Called once during activation.
+     * Kill any linkspan processes left over from a previous VS Code session.
+     * Called once during activation to ensure a clean slate.
      */
-    recover(): void {
+    killStaleProcesses(): void {
         const saved = this._loadState();
         for (const info of saved) {
-            // Check if the process is still alive
             try {
                 process.kill(info.pid, 0);
+                // Process is alive — kill it
+                this._outputChannel.appendLine(`[linkspan-local] Killing stale linkspan pid=${info.pid} for ${info.workspacePath}`);
+                process.kill(info.pid, 'SIGTERM');
             } catch {
-                this._outputChannel.appendLine(`[linkspan-local] Stale instance for ${info.workspacePath} (pid ${info.pid} dead), removing`);
-                continue;
+                // Already dead, nothing to do
             }
-            this._outputChannel.appendLine(`[linkspan-local] Recovered: ${info.workspacePath} (pid=${info.pid}, tunnel=${info.tunnelId}, ssh=${info.sshPort}, log=${info.logPort})`);
-            this._instances.set(info.workspacePath, info);
-            // Reconnect log stream
-            this._connectLogStream(info.workspacePath, info.logPort);
-            // Async health check — kill stale instances where PID was recycled by OS
-            this._isHealthy(info).then(healthy => {
-                if (!healthy) {
-                    this._outputChannel.appendLine(`[linkspan-local] Recovered instance ${info.workspacePath} failed health check, removing`);
-                    this.stop(info.workspacePath);
-                }
-            });
         }
-        // Clean up dead entries from state file
-        if (saved.length !== this._instances.size) {
-            this._saveState();
-        }
+        // Clear state file
+        this._instances.clear();
+        this._saveState();
     }
 
     /**

@@ -273,8 +273,9 @@ button:disabled {
     padding: 16px 0;
 }
 
-.breadcrumb-home {
-    font-size: 13px;
+.breadcrumb-home .codicon {
+    font-size: 12px;
+    vertical-align: text-bottom;
 }
 
 .breadcrumb-current {
