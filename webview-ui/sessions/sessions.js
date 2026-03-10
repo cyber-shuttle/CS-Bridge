@@ -275,9 +275,30 @@ document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
     previewSessionId = null;
 });
 
-// Handle messages from the extension (e.g. associations data, script preview)
+// Add click handlers to workspace delete buttons
+function attachWorkspaceDeleteHandlers() {
+    document.querySelectorAll('.workspace-delete-btn').forEach(btn => {
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+        newBtn.addEventListener('click', () => {
+            const workspaceId = newBtn.getAttribute('data-workspace-id');
+            vscode.postMessage({ type: 'removeWorkspace', workspaceId: workspaceId });
+        });
+    });
+}
+attachWorkspaceDeleteHandlers();
+
+// Handle messages from the extension (e.g. associations data, script preview, toggle host picker)
 window.addEventListener('message', event => {
     const msg = event.data;
+
+    if (msg.type === 'toggleHostPicker') {
+        const picker = document.querySelector('.workspace-host-picker');
+        if (picker) {
+            picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+        }
+        return;
+    }
 
     if (msg.type === 'scriptPreview') {
         previewSessionId = msg.sessionId;
@@ -738,6 +759,7 @@ window.addEventListener('message', event => {
         attachStopHandlers();
         attachCloseHandlers();
         attachCopyHandlers();
+        attachWorkspaceDeleteHandlers();
     }
 });
 } catch (err) { console.error('[cybershuttle] Webview init error:', err); }
