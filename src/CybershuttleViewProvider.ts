@@ -1145,7 +1145,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Central message handler — receives messages from both the Workspaces and Servers webviews.
+     * Central message handler — receives messages from both the Sessions and Storages webviews.
      */
     private async _onMessage(data: any) {
         switch (data.type) {
@@ -1227,8 +1227,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 this.relaunchSession(data.sessionId);
                 break;
             }
-            case 'closeSession':
-            case 'removeSession': {
+            case 'closeSession': {
                 const found = this._findRuntime(data.sessionId);
                 if (found) {
                     const rt = found.runtime;
@@ -1429,7 +1428,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         };
         ws.runtimes.push(session);
 
-        // Store the session (not yet submitted) and send preview to the Workspaces webview
+        // Store the session (not yet submitted) and send preview to the Sessions webview
         this._saveSessions();
         this._postSessionsMessage({ type: 'scriptPreview', sessionId: session.id, host: hostName, script });
     }
@@ -4560,12 +4559,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    /**
-     * Refresh the Workspaces webview content.
-     */
-    public refreshWorkspaces() {
-        this.refreshSessionsView();
-    }
 
     /**
      * Refresh the Sessions webview content.
