@@ -175,6 +175,7 @@ export class LocalLinkspanManager {
         const linkspanBin = await this._getLinkspanBin();
         const creds = await this._getCredentials();
         if (!tunnelName) { tunnelName = `ls-local-${Date.now()}`; }
+
         const serverUrlLine = creds.serverUrl ? `\n      server_url: "${creds.serverUrl}"` : '';
 
         const workflowYaml = [

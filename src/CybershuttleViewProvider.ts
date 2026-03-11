@@ -265,6 +265,8 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Auto-register this window as a Local session
         this._registerWindow();
 
+        // Auto-start local linkspan (non-blocking, with retry)
+        this._autoStartLinkspan();
 
         // Heartbeat every 30s to keep this window's session alive
         this._heartbeatTimer = setInterval(() => this._heartbeat(), 30_000);
@@ -1775,6 +1777,12 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     if (!localInfo?.tunnelId) {
                         throw new Error('Local linkspan is not running. Start it first via the Sessions panel or "CyberShuttle: Start Linkspan" command.');
                     }
+
+                    // Pre-delete any stale remote tunnel so linkspan creates a fresh one
+                    const hostSlug = (session.host || 'unknown').replace(/[^a-zA-Z0-9-]/g, '-');
+                    const remoteTunnelName = `ls-${hostSlug}-${session.id}`;
+                    this._deleteDevTunnel(remoteTunnelName);
+
                     const creds = await this.tunnelManager.getCredentials();
                     const localParams = {
                         localTunnelId: localInfo.tunnelId,
@@ -4317,19 +4325,29 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         if (!workspacePath) {
             return;
         }
+        // Show starting state on the card
+        this._linkspanStartingPath = workspacePath;
+        this.refreshSessionsView();
         try {
             await this.ensureLocalLinkspan();
             const localSession = this._allRuntimes().find(r => r.isLocal && r.status === 'Local');
             const tunnelName = localSession ? `ls-local-${localSession.id}` : undefined;
+            // Pre-delete stale tunnel so linkspan creates a fresh one
+            if (tunnelName) { this._deleteDevTunnel(tunnelName); }
             await this._localLinkspan.ensure(workspacePath, tunnelName);
             this._outputChannel.appendLine('[linkspan-local] Auto-started successfully');
             this._sendRuntimeUpdates();
+            // Announce the new local linkspan to any active remote sessions
+            await this._reconnectActiveSessions(workspacePath);
         } catch (err: any) {
             this._outputChannel.appendLine(`[linkspan-local] Auto-start failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err.message}`);
             if (attempt < MAX_RETRIES) {
                 const delay = 5000 * Math.pow(2, attempt); // 5s, 10s, 20s
                 setTimeout(() => this._autoStartLinkspan(attempt + 1), delay);
             }
+        } finally {
+            this._linkspanStartingPath = undefined;
+            this.refreshSessionsView();
         }
     }
 
@@ -4353,6 +4371,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 progress.report({ message: 'Starting...' });
                 const localSession = this._allRuntimes().find(r => r.isLocal && r.status === 'Local');
                 const tunnelName = localSession ? `ls-local-${localSession.id}` : undefined;
+                if (tunnelName) { this._deleteDevTunnel(tunnelName); }
                 await this._localLinkspan.ensure(workspacePath, tunnelName);
                 const info = this._localLinkspan.get(workspacePath);
                 if (info) {
@@ -4396,6 +4415,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 progress.report({ message: 'Starting fresh instance...' });
                 const localSession = this._allRuntimes().find(r => r.isLocal && r.status === 'Local');
                 const tunnelName = localSession ? `ls-local-${localSession.id}` : undefined;
+                if (tunnelName) { this._deleteDevTunnel(tunnelName); }
                 await this._localLinkspan.ensure(workspacePath, tunnelName);
                 const info = this._localLinkspan.get(workspacePath);
                 if (info) {
@@ -4423,12 +4443,19 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
     private async _reconnectActiveSessions(workspacePath: string): Promise<void> {
         const info = this._localLinkspan.get(workspacePath);
         if (!info) {
+            this._outputChannel.appendLine(`[linkspan-local] _reconnectActiveSessions: no local linkspan info for ${workspacePath}`);
             return;
         }
-        const activeSessions = this._allRuntimes().filter(
+        const allRemote = this._allRuntimes().filter(rt => !rt.isLocal);
+        this._outputChannel.appendLine(`[linkspan-local] _reconnectActiveSessions: ${allRemote.length} remote session(s), checking for workspace=${workspacePath}`);
+        for (const rt of allRemote) {
+            this._outputChannel.appendLine(`[linkspan-local]   session ${rt.id}: status=${rt.status}, localWorkdir=${rt.localWorkdir}, hasTunnelId=${!!rt.tunnelId}, hasTunnelToken=${!!rt.tunnelToken}`);
+        }
+        const activeSessions = allRemote.filter(
             rt => rt.localWorkdir === workspacePath && rt.status === 'Active' && rt.tunnelId && rt.tunnelToken
         );
         if (activeSessions.length === 0) {
+            this._outputChannel.appendLine(`[linkspan-local] _reconnectActiveSessions: no matching active sessions`);
             return;
         }
         this._outputChannel.appendLine(`[linkspan-local] Reconnecting ${activeSessions.length} active session(s) through new linkspan`);
@@ -4442,19 +4469,29 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         // Step 1: Announce new local linkspan to all remote linkspans via their
         // tunnel URLs (public HTTPS, no local tunnel connection needed).
         // This tells each remote linkspan about the new local tunnel endpoints.
+        // If announce fails, fall back to verifying the session is still alive.
         for (const session of activeSessions) {
             try {
                 await this._announceLocalLinkspan(session, info);
             } catch (err: any) {
                 this._outputChannel.appendLine(`[linkspan-local] Announce error for ${session.id} (${session.host}): ${err.message}`);
             }
+
+            // Verify session is still alive via health check + SSH fallback
+            const healthy = await this._checkLinkspanHealth(session);
+            if (healthy) {
+                this._outputChannel.appendLine(`[linkspan-local] Remote ${session.id} health OK`);
+            } else {
+                this._outputChannel.appendLine(`[linkspan-local] Remote ${session.id} health failed, checking job via SSH...`);
+                try {
+                    await this._checkJobViaSsh(session);
+                    this._outputChannel.appendLine(`[linkspan-local] Remote ${session.id} job status: ${session.status}`);
+                } catch (err: any) {
+                    this._outputChannel.appendLine(`[linkspan-local] SSH check failed for ${session.id}: ${err.message}`);
+                }
+            }
         }
 
-        // Tunnel connections (SSH port forwarding) are NOT re-established eagerly.
-        // They will be created on-demand when the user connects to a session or
-        // when the next poll cycle discovers the tunnel URL. No point creating
-        // extra tunnels when the remote linkspans are already reachable via their
-        // public tunnel URLs.
         this._saveSessions();
         this._sendRuntimeUpdates();
     }
@@ -4494,6 +4531,87 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             }
         } catch (err: any) {
             this._outputChannel.appendLine(`[linkspan-local] Announce failed for ${session.id}: ${err.message}`);
+        }
+    }
+
+    /**
+     * Pre-create a devtunnel from the local side and issue a manage-scoped token.
+     * The remote linkspan can then host on this tunnel using the manage token,
+     * avoiding Entra ID auth token scoping issues.
+     * Returns { tunnelId, manageToken } or undefined on failure.
+     */
+    /** Extract JSON from devtunnel CLI output (may contain a welcome banner before the JSON). */
+    private _parseDevTunnelJson(output: string): any {
+        // Find the first '{' which starts the JSON object
+        const jsonStart = output.indexOf('{');
+        if (jsonStart < 0) { throw new Error('No JSON object in output'); }
+        return JSON.parse(output.slice(jsonStart));
+    }
+
+    private _preCreateRemoteTunnel(tunnelName: string, expiration = '1d'): { tunnelId: string; manageToken: string } | undefined {
+        const devtunnelBin = this.tunnelManager.resolveDevTunnelBin();
+        if (!devtunnelBin) {
+            this._outputChannel.appendLine(`[tunnel] Cannot pre-create tunnel: devtunnel binary not found`);
+            return undefined;
+        }
+
+        // Delete any existing tunnel with this name first
+        this._deleteDevTunnel(tunnelName);
+
+        // Create the tunnel
+        try {
+            const createResult = spawnSync(devtunnelBin, ['create', tunnelName, '-e', expiration, '-j'], {
+                encoding: 'utf-8',
+                timeout: 30_000,
+            });
+            if (createResult.status !== 0) {
+                this._outputChannel.appendLine(`[tunnel] Failed to create tunnel ${tunnelName}: ${createResult.stderr || createResult.stdout}`);
+                return undefined;
+            }
+            const createData = this._parseDevTunnelJson(createResult.stdout);
+            const tunnelId = createData?.tunnel?.tunnelId || tunnelName;
+            this._outputChannel.appendLine(`[tunnel] Pre-created tunnel ${tunnelId}`);
+
+            // Issue a manage-scoped token (allows adding ports + hosting)
+            const tokenResult = spawnSync(devtunnelBin, ['token', tunnelName, '--scopes', 'manage', '-j'], {
+                encoding: 'utf-8',
+                timeout: 15_000,
+            });
+            if (tokenResult.status !== 0) {
+                this._outputChannel.appendLine(`[tunnel] Failed to issue manage token for ${tunnelName}: ${tokenResult.stderr || tokenResult.stdout}`);
+                return undefined;
+            }
+            const tokenData = this._parseDevTunnelJson(tokenResult.stdout);
+            const manageToken = tokenData?.token;
+            if (!manageToken) {
+                this._outputChannel.appendLine(`[tunnel] No token in response for ${tunnelName}`);
+                return undefined;
+            }
+            this._outputChannel.appendLine(`[tunnel] Issued manage token for ${tunnelId} (expires: ${tokenData.expiration})`);
+            return { tunnelId, manageToken };
+        } catch (err: any) {
+            this._outputChannel.appendLine(`[tunnel] Pre-create error for ${tunnelName}: ${err.message}`);
+            return undefined;
+        }
+    }
+
+    /**
+     * Delete a devtunnel by name (best-effort, synchronous).
+     * Used to pre-cleanup stale tunnels before creating new ones.
+     */
+    private _deleteDevTunnel(tunnelName: string): void {
+        const devtunnelBin = this.tunnelManager.resolveDevTunnelBin();
+        if (!devtunnelBin) { return; }
+        try {
+            const result = spawnSync(devtunnelBin, ['delete', tunnelName, '-f'], {
+                encoding: 'utf-8',
+                timeout: 10_000,
+            });
+            if (result.status === 0) {
+                this._outputChannel.appendLine(`[tunnel] Deleted stale tunnel ${tunnelName}`);
+            }
+        } catch {
+            // Best-effort
         }
     }
 
