@@ -511,10 +511,17 @@ window.addEventListener('message', event => {
         const isRemoteWindow = !!msg.isRemoteWindow;
         const linkspanRunning = !!msg.linkspanRunning;
         const updates = msg.updates;
+        // Hide panel-level loading spinner and reveal workspace sections
+        var panelLoader = document.getElementById('sessions-loading');
+        if (panelLoader) { panelLoader.style.display = 'none'; }
+        document.querySelectorAll('.workspace-section').forEach(function(ws) { ws.style.display = ''; });
+
         for (const wsUpdate of updates) {
             for (const rt of wsUpdate.runtimes) {
                 const entry = document.querySelector('.runtime-entry[data-session-id="' + rt.id + '"]');
                 if (!entry) { continue; }
+                // Reveal hidden placeholder card
+                entry.style.display = '';
 
                 // Fingerprint: skip detail rebuild if session data hasn't changed
                 var fp = rt.status + '|' + rt.host + '|' + (rt.tunnelUrl || '') + '|' + (rt.tunnelId || '')
@@ -780,6 +787,9 @@ window.addEventListener('message', event => {
         attachWorkspaceDeleteHandlers();
     }
 });
+// Signal extension that webview JS is ready to receive messages
+vscode.postMessage({ type: 'webviewReady' });
+
 } catch (err) { console.error('[cybershuttle] Webview init error:', err); }
 
 })();

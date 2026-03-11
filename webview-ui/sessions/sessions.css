@@ -401,11 +401,12 @@
     margin: 0 1px;
 }
 
-.session-loading-placeholder {
-    color: var(--vscode-descriptionForeground);
+.panel-loading {
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    padding: 24px 0;
+    color: var(--vscode-descriptionForeground);
 }
 
 .script-preview-overlay {

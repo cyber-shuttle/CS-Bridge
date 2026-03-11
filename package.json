@@ -180,6 +180,11 @@
 					"type": "string",
 					"default": "",
 					"description": "API key for the FRP relay server. Required when tunnelProvider is 'frp'."
+				},
+				"cybershuttle.enableFilesystemSync": {
+					"type": "boolean",
+					"default": true,
+					"markdownDescription": "**Experimental.** When enabled, CS-Bridge sets up overlay filesystems, FUSE mounts, and mutagen sync between local and remote workspaces. When disabled, sessions open a plain Remote-SSH window without any filesystem mounting or sync — the user browses remote files directly."
 				}
 			}
 		}
