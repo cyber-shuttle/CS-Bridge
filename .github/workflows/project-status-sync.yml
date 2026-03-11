@@ -1,0 +1,78 @@
+name: Sync PR status to project
+
+on:
+  pull_request:
+    types: [opened, reopened, closed, ready_for_review, converted_to_draft]
+
+jobs:
+  update-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update project item status
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+          script: |
+            const pr = context.payload.pull_request;
+            const projectId = "PVT_kwDOBa9-UM4ApBgm";
+            const statusFieldId = "PVTSSF_lADOBa9-UM4ApBgmzgggAKY";
+            const statusOptions = {
+              "Backlog": "558f5162",
+              "Todo": "6b029af1",
+              "In Progress": "2c5afb50",
+              "In Review": "6c721920",
+              "Blocked": "90d338b2",
+              "Done": "21877bf4",
+            };
+
+            let targetStatus;
+            if (pr.merged) {
+              targetStatus = "Done";
+            } else if (pr.state === "closed") {
+              return;
+            } else if (pr.draft) {
+              targetStatus = "In Progress";
+            } else {
+              targetStatus = "In Review";
+            }
+
+            const query = `query($id: ID!) {
+              node(id: $id) {
+                ... on ProjectV2 {
+                  items(first: 100) {
+                    nodes {
+                      id
+                      content {
+                        ... on PullRequest { number repository { name owner { login } } }
+                      }
+                    }
+                  }
+                }
+              }
+            }`;
+            const result = await github.graphql(query, { id: projectId });
+            const item = result.node.items.nodes.find(n =>
+              n.content?.number === pr.number &&
+              n.content?.repository?.name === context.repo.repo &&
+              n.content?.repository?.owner?.login === context.repo.owner
+            );
+            if (!item) {
+              console.log("PR not found in project, skipping");
+              return;
+            }
+
+            const mutation = `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $projectId
+                itemId: $itemId
+                fieldId: $fieldId
+                value: { singleSelectOptionId: $optionId }
+              }) { projectV2Item { id } }
+            }`;
+            await github.graphql(mutation, {
+              projectId,
+              itemId: item.id,
+              fieldId: statusFieldId,
+              optionId: statusOptions[targetStatus],
+            });
+            console.log("Updated PR #" + pr.number + " to " + targetStatus);
