@@ -1615,8 +1615,28 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         const assetName = `linkspan_${osName}_${archName}.tar.gz`;
         const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/${assetName}`;
 
-        this._outputChannel.appendLine(`Downloading linkspan from ${downloadUrl}`);
         fs.mkdirSync(binDir, { recursive: true });
+
+        // Check if local binary is already at the latest version
+        if (fs.existsSync(binPath)) {
+            try {
+                const localVersion = spawnSync(binPath, ['--version'], { timeout: 5000 }).stdout?.toString().trim();
+                // Resolve /latest/ redirect to get the actual release tag
+                const latestTag = spawnSync('curl', ['-fsSLI', '-o', '/dev/null', '-w', '%{url_effective}', 'https://github.com/cyber-shuttle/linkspan/releases/latest'], { timeout: 10000 }).stdout?.toString().trim();
+                const remoteVersion = latestTag?.split('/').pop(); // e.g. "v0.3.1"
+                if (localVersion && remoteVersion && localVersion.includes(remoteVersion)) {
+                    this._outputChannel.appendLine(`linkspan is up to date (${localVersion})`);
+                    this._linkspanDownloaded = true;
+                    this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'local', skipped: 'up_to_date' }, Date.now() - deployStart);
+                    return binPath;
+                }
+                this._outputChannel.appendLine(`linkspan update available: local=${localVersion}, remote=${remoteVersion}`);
+            } catch {
+                // Version check failed — fall through to download
+            }
+        }
+
+        this._outputChannel.appendLine(`Downloading linkspan from ${downloadUrl}`);
 
         try {
             await new Promise<void>((resolve, reject) => {
@@ -1936,9 +1956,6 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
      */
     private async deployLinkspan(hostName: string, token?: vscode.CancellationToken): Promise<void> {
         const deployStart = Date.now();
-        // Always re-deploy to ensure the latest release is running.
-        // The download URL points to /latest/download/ which resolves
-        // to the newest GitHub release automatically.
         this._metrics.record('linkspan_deploy', 'in_progress', { deploy_type: 'remote', target_host: hostName });
         try {
             // Detect remote architecture
@@ -1949,9 +1966,26 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             let arch = archResult.stdout.trim();
             if (arch === 'aarch64') { arch = 'arm64'; }
 
-            // Download latest release from GitHub directly on the remote host
             const assetName = `linkspan_Linux_${arch}.tar.gz`;
             const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/${assetName}`;
+
+            // Check if remote binary is already at the latest version
+            const versionCheck = await this._ssh.runRemoteCommand(hostName, [
+                `LOCAL_VER=$(~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo "")`,
+                `REMOTE_VER=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | grep -oP '[^/]+$' || echo "")`,
+                `echo "LOCAL=$LOCAL_VER REMOTE=$REMOTE_VER"`,
+                `if [ -n "$LOCAL_VER" ] && [ -n "$REMOTE_VER" ] && echo "$LOCAL_VER" | grep -q "$REMOTE_VER"; then echo "UP_TO_DATE"; fi`,
+            ].join(' && '), token);
+
+            if (versionCheck.code === 0 && versionCheck.stdout.includes('UP_TO_DATE')) {
+                const verLine = versionCheck.stdout.split('\n')[0];
+                this._outputChannel.appendLine(`linkspan on ${hostName} is up to date (${verLine})`);
+                this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'remote', target_host: hostName, skipped: 'up_to_date' }, Date.now() - deployStart);
+                return;
+            }
+
+            // Download latest release from GitHub directly on the remote host
+            this._outputChannel.appendLine(`Downloading linkspan to ${hostName} from ${downloadUrl}`);
             await this._ssh.runRemoteCommand(hostName, `mkdir -p ~/.cybershuttle/bin && curl -fsSL "${downloadUrl}" | tar -xz -C ~/.cybershuttle/bin linkspan && chmod +x ~/.cybershuttle/bin/linkspan`, token);
             this._outputChannel.appendLine('linkspan deployed to ' + hostName);
             this._metrics.record('linkspan_deploy', 'success', { deploy_type: 'remote', target_host: hostName }, Date.now() - deployStart);
