@@ -4034,21 +4034,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 }
                 // Resolve remote workspace path (~ is resolved later via SSH to the actual target)
                 let remotePath = session.connectedRemotePath;
-                if (!remotePath) {
+                if (!remotePath && this._filesystemSyncEnabled) {
                     if (session.isLocal && session.localWorkdir) {
                         remotePath = `${os.homedir()}/sessions/${sessionId}`;
-                    } else if (this._filesystemSyncEnabled) {
-                        remotePath = this._cachedRemoteHome.get(session.host) || '~/sessions/' + sessionId;
                     } else {
-                        // No filesystem sync — let user pick which folder to open
-                        const defaultPath = this._cachedRemoteHome.get(session.host) || '/';
-                        remotePath = await vscode.window.showInputBox({
-                            title: `Open folder on ${session.host}`,
-                            prompt: 'Enter the remote folder path to open',
-                            placeHolder: defaultPath,
-                            value: defaultPath,
-                        });
-                        if (!remotePath) { return; } // user cancelled
+                        remotePath = this._cachedRemoteHome.get(session.host) || '~/sessions/' + sessionId;
                     }
                     session.connectedRemotePath = remotePath;
                 }
@@ -4060,12 +4050,13 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     if (!this._writeSshConfigEntry(sessionId, hostAlias, '127.0.0.1', session.sshPort!, 'user')) {
                         return;
                     }
-                    this._outputChannel.appendLine(`[switch] Opening remote folder: scheme=vscode-remote, authority=ssh-remote+${hostAlias}, path=${remotePath}`);
+                    const openNewWindow = !this._filesystemSyncEnabled;
+                    this._outputChannel.appendLine(`[switch] Opening remote${openNewWindow ? ' (new window, no folder)' : ''}: authority=ssh-remote+${hostAlias}, path=${remotePath || '(none)'}`);
                     vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
                         scheme: 'vscode-remote',
                         authority: `ssh-remote+${hostAlias}`,
-                        path: remotePath,
-                    }), { forceNewWindow: false });
+                        path: remotePath || '/',
+                    }), openNewWindow ? { forceNewWindow: true } : { forceNewWindow: false });
                 } else if (session.sshPort && session.tunnelId && session.tunnelToken) {
                     // Remote sessions: forward SSH port via tunnel (bypasses compute node firewall)
                     const hostAlias = `cs-session-${sessionId}`;
@@ -4178,8 +4169,11 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                         session.connectedRemotePath = remotePath;
                         this._saveSessions();
                     }
+                    const openNewWindow = !this._filesystemSyncEnabled;
+
                     // --- Wait for remote linkspan + verify workspace in single poll ---
-                    if (session.slurmJobId) {
+                    // (only when filesystem sync is on — overlay dir must exist before opening)
+                    if (this._filesystemSyncEnabled && session.slurmJobId) {
                         progress.report({ message: 'Waiting for remote workspace...' });
                         const logPrefix = 'linkspan-session-';
                         const logId = session.noSlurm ? sessionId : session.slurmJobId;
@@ -4223,54 +4217,103 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             vscode.window.showErrorMessage('Remote workspace setup timed out. The remote linkspan may have failed. Check the Cybershuttle output channel.');
                             return;
                         }
-                    }
-                    // Inject .vscode/settings.json in a single SSH command
-                    progress.report({ message: 'Configuring remote workspace...' });
-                    try {
-                        const remoteSettings = JSON.stringify({
-                            'files.watcherExclude': { '**': true },
-                            'files.enableTrash': false,
-                            'search.followSymlinks': false,
-                            'search.exclude': {
-                                '**/node_modules': true,
-                                '**/.git': true,
-                                '**/dist': true,
-                                '**/build': true,
-                                '**/__pycache__': true,
-                            },
-                            'git.enabled': false,
-                            'git.autoRepositoryDetection': false,
-                            'extensions.autoUpdate': false,
-                            'typescript.disableAutomaticTypeAcquisition': true,
-                            'npm.autoDetect': 'off',
-                        }, null, 2);
-                        const inject = this._sshExec(
-                            hostAlias,
-                            `mkdir -p '${remotePath}/.vscode' && cat > '${remotePath}/.vscode/settings.json'`,
-                            { input: remoteSettings },
-                        );
-                        if (inject.ok) {
-                            this._outputChannel.appendLine('[switch] Injected remote .vscode/settings.json');
-                        } else {
-                            this._outputChannel.appendLine(`[switch] Failed to inject remote settings`);
+                    } else if (!this._filesystemSyncEnabled && session.slurmJobId) {
+                        // No filesystem sync — just wait for linkspan workflow to finish (tunnel ready)
+                        progress.report({ message: 'Waiting for remote session...' });
+                        const logPrefix = 'linkspan-session-';
+                        const logId = session.noSlurm ? sessionId : session.slurmJobId;
+                        const logFile = `$HOME/.cybershuttle/logs/${logPrefix}${logId}.err`;
+                        const pollCmd = [
+                            `OK=$(grep -c 'finished successfully' ${logFile} 2>/dev/null || echo 0)`,
+                            `ERR=$(grep -c 'workflow step' ${logFile} 2>/dev/null || echo 0)`,
+                            `echo OK=$OK ERR=$ERR`,
+                        ].join('; ');
+                        const maxWait = 60;
+                        for (let i = 0; i < maxWait; i++) {
+                            const poll = this._sshExec(hostAlias, pollCmd);
+                            this._outputChannel.appendLine(`[switch] Poll: ${poll.stdout}`);
+                            const okMatch = poll.stdout.match(/OK=(\d+)/);
+                            if (okMatch && parseInt(okMatch[1], 10) > 0) {
+                                this._outputChannel.appendLine(`[switch] Remote linkspan finished after ${i * 2}s`);
+                                break;
+                            }
+                            if (i === maxWait - 1) {
+                                this._outputChannel.appendLine('[switch] Timed out waiting for remote linkspan');
+                                vscode.window.showErrorMessage('Remote session setup timed out. Check the Cybershuttle output channel.');
+                                return;
+                            }
+                            await new Promise(r => setTimeout(r, 2000));
                         }
-                    } catch (err: any) {
-                        this._outputChannel.appendLine(`[switch] Failed to inject remote settings: ${err.message}`);
                     }
-                    this._outputChannel.appendLine(`[switch] Opening remote folder: scheme=vscode-remote, authority=ssh-remote+${hostAlias}, path=${remotePath}`);
-                    vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
-                        scheme: 'vscode-remote',
-                        authority: `ssh-remote+${hostAlias}`,
-                        path: remotePath!,
-                    }), { forceNewWindow: false });
+
+                    // Inject .vscode/settings.json (only when filesystem sync is on and we have a target path)
+                    if (this._filesystemSyncEnabled && remotePath) {
+                        progress.report({ message: 'Configuring remote workspace...' });
+                        try {
+                            const remoteSettings = JSON.stringify({
+                                'files.watcherExclude': { '**': true },
+                                'files.enableTrash': false,
+                                'search.followSymlinks': false,
+                                'search.exclude': {
+                                    '**/node_modules': true,
+                                    '**/.git': true,
+                                    '**/dist': true,
+                                    '**/build': true,
+                                    '**/__pycache__': true,
+                                },
+                                'git.enabled': false,
+                                'git.autoRepositoryDetection': false,
+                                'extensions.autoUpdate': false,
+                                'typescript.disableAutomaticTypeAcquisition': true,
+                                'npm.autoDetect': 'off',
+                            }, null, 2);
+                            const inject = this._sshExec(
+                                hostAlias,
+                                `mkdir -p '${remotePath}/.vscode' && cat > '${remotePath}/.vscode/settings.json'`,
+                                { input: remoteSettings },
+                            );
+                            if (inject.ok) {
+                                this._outputChannel.appendLine('[switch] Injected remote .vscode/settings.json');
+                            } else {
+                                this._outputChannel.appendLine(`[switch] Failed to inject remote settings`);
+                            }
+                        } catch (err: any) {
+                            this._outputChannel.appendLine(`[switch] Failed to inject remote settings: ${err.message}`);
+                        }
+                    }
+
+                    this._outputChannel.appendLine(`[switch] Opening remote${openNewWindow ? ' (new window, no folder)' : ''}: authority=ssh-remote+${hostAlias}, path=${remotePath || '(none)'}`);
+                    if (openNewWindow) {
+                        // No filesystem sync: open empty remote window — user picks folder themselves
+                        vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
+                            scheme: 'vscode-remote',
+                            authority: `ssh-remote+${hostAlias}`,
+                            path: '/',
+                        }), { forceNewWindow: true });
+                    } else {
+                        vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
+                            scheme: 'vscode-remote',
+                            authority: `ssh-remote+${hostAlias}`,
+                            path: remotePath!,
+                        }), { forceNewWindow: false });
+                    }
                 } else {
                     // Remote sessions without compute node: connect to login node
-                    this._outputChannel.appendLine(`[switch] Opening remote folder: scheme=vscode-remote, authority=ssh-remote+${session.host}, path=${remotePath}`);
-                    vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
-                        scheme: 'vscode-remote',
-                        authority: `ssh-remote+${session.host}`,
-                        path: remotePath!,
-                    }), { forceNewWindow: false });
+                    const openNewWindow = !this._filesystemSyncEnabled;
+                    this._outputChannel.appendLine(`[switch] Opening remote${openNewWindow ? ' (new window, no folder)' : ''}: authority=ssh-remote+${session.host}, path=${remotePath || '(none)'}`);
+                    if (openNewWindow) {
+                        vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
+                            scheme: 'vscode-remote',
+                            authority: `ssh-remote+${session.host}`,
+                            path: '/',
+                        }), { forceNewWindow: true });
+                    } else {
+                        vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.from({
+                            scheme: 'vscode-remote',
+                            authority: `ssh-remote+${session.host}`,
+                            path: remotePath!,
+                        }), { forceNewWindow: false });
+                    }
                 }
             });
         } finally {
