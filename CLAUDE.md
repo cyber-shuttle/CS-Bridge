@@ -2,6 +2,14 @@
 
 VS Code extension enabling local development with remote HPC computation. Mounts local workspace on remote machines via SSH tunneling, manages SLURM jobs, and orchestrates linkspan agents on compute nodes.
 
+## Prerequisites
+
+- Node.js 20.x, VS Code ^1.98.0, TypeScript ^5.7
+
+```bash
+npm install          # Install dependencies first
+```
+
 ## Commands
 
 ```bash
