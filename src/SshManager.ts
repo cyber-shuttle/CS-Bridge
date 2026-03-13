@@ -139,6 +139,7 @@ export class SshManager {
 
         const proc = spawn('ssh', [
             ...this.getControlMasterArgs(hostName),
+            '-o', 'ConnectTimeout=30',
             '-o', 'NumberOfPasswordPrompts=3',
             '-o', 'ServerAliveInterval=30',
             '-o', 'ServerAliveCountMax=3',
@@ -257,6 +258,7 @@ export class SshManager {
         proc.on('close', () => {
             disposed = true;
             clearInterval(pollInterval);
+            try { proc.kill(); } catch { /* already dead */ }
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch { }
             this._persistentShells.delete(hostName);
             if (!isReady) {
@@ -271,6 +273,7 @@ export class SshManager {
         proc.on('error', (err: Error) => {
             disposed = true;
             clearInterval(pollInterval);
+            try { proc.kill(); } catch { /* already dead */ }
             try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch { }
             this._persistentShells.delete(hostName);
             if (!isReady) {
@@ -297,14 +300,34 @@ export class SshManager {
         if (shell.process.killed) {
             throw new Error('SSH connection closed');
         }
+        // Serialize commands: wait for any pending command to finish first
+        while (shell.pending) {
+            await new Promise<void>(r => {
+                const orig = shell.pending;
+                if (!orig) { r(); return; }
+                const origResolve = orig.resolve;
+                const origReject = orig.reject;
+                orig.resolve = (result) => { origResolve(result); r(); };
+                orig.reject = (err) => { origReject(err); r(); };
+            });
+            // Re-check shell is still alive after waiting
+            if (shell.process.killed) {
+                throw new Error('SSH connection closed');
+            }
+        }
         const marker = crypto.randomBytes(6).toString('hex');
         return new Promise((resolve, reject) => {
             shell.pending = {
                 resolve, reject, marker,
                 stdout: '', gotExit: false, exitCode: 0, gotEnd: false,
             };
-            const wrapped = `${command}\necho "__CS_EXIT_${marker}:$?"\necho "__CS_END_${marker}__"\n`;
-            shell.process.stdin!.write(wrapped);
+            try {
+                const wrapped = `${command}\necho "__CS_EXIT_${marker}:$?"\necho "__CS_END_${marker}__"\n`;
+                shell.process.stdin!.write(wrapped);
+            } catch (err: any) {
+                shell.pending = undefined;
+                reject(new Error(`SSH shell write failed: ${err.message}`));
+            }
         });
     }
 
@@ -349,6 +372,7 @@ export class SshManager {
             const useStdin = stdinData !== undefined;
             const sshArgs = [
                 ...this.getControlMasterArgs(hostName),
+                '-o', 'ConnectTimeout=30',
                 '-o', 'NumberOfPasswordPrompts=3',
                 hostName,
                 ...(useStdin ? [] : [command]),

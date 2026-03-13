@@ -8,6 +8,7 @@
     text-rendering: auto;
     text-align: center;
     user-select: none;
+    vertical-align: text-bottom;
 }
 
 body {
@@ -24,18 +25,25 @@ h2 {
 }
 
 button {
-    padding: 8px 12px;
-    margin: 8px 0;
+    padding: 3px 12px;
+    margin: 0;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     cursor: pointer;
-    font-size: 13px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
 }
 
 button:hover {
     background: var(--vscode-button-hoverBackground);
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 .full-width {
@@ -120,10 +128,7 @@ button:hover {
 .resource-tab {
     flex: 1;
     padding: 4px 0;
-    font-size: 11px;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
+    border-radius: 0;
     background: transparent;
     color: var(--vscode-descriptionForeground);
     transition: background 0.15s, color 0.15s;
@@ -173,8 +178,7 @@ button:hover {
 .submit-job-btn {
     width: 100%;
     margin: 6px 0 0 0;
-    padding: 6px 10px;
-    font-size: 12px;
+    padding: 5px 12px;
 }
 
 .job-form-loading {
@@ -196,21 +200,17 @@ button:hover {
 }
 
 .job-form-retry-btn {
-    margin: 0;
     padding: 2px 8px;
-    font-size: 11px;
+    font-size: 10px;
     flex-shrink: 0;
 }
 
 .job-form-stop-btn {
-    padding: 2px 6px;
+    padding: 2px 8px;
     font-size: 10px;
     flex-shrink: 0;
     background: var(--vscode-button-secondaryBackground);
     color: var(--vscode-errorForeground);
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
     margin-left: auto;
 }
 
@@ -219,16 +219,25 @@ button:hover {
 }
 
 .spinner {
-    width: 14px;
-    height: 14px;
+    display: inline-block;
+    vertical-align: middle;
+    width: 1em;
+    height: 1em;
     border: 2px solid var(--vscode-descriptionForeground);
     border-top-color: transparent;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
 }
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+.btn-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .skeleton {
@@ -264,10 +273,130 @@ button:hover {
     padding: 16px 0;
 }
 
+.breadcrumb-home .codicon {
+    font-size: 12px;
+    vertical-align: text-bottom;
+}
+
+.breadcrumb-current {
+    color: var(--vscode-foreground);
+    cursor: default;
+    text-decoration: none;
+}
+
+.file-status.loading {
+    justify-content: center;
+}
+
+.loading-path {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .refresh-btn {
     padding: 2px 8px;
+    font-size: 10px;
+}
+
+/* File browser — shared across sessions and storages */
+
+.file-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
     font-size: 11px;
-    margin: 0;
+    flex: 1;
+    overflow: hidden;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 4px;
+}
+
+.breadcrumb-seg {
+    cursor: pointer;
+    color: var(--vscode-textLink-foreground);
+    padding: 1px 2px;
+    border-radius: 2px;
+}
+
+.breadcrumb-seg:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb-sep {
+    color: var(--vscode-descriptionForeground);
+}
+
+.file-list {
+    overflow-y: auto;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+}
+
+.file-entry {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    font-size: 11px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    gap: 6px;
+}
+
+.file-entry:last-child {
+    border-bottom: none;
+}
+
+.file-entry.dir {
+    cursor: pointer;
+}
+
+.file-entry.dir:hover,
+.file-entry.file:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.file-entry.file {
+    cursor: pointer;
+}
+
+.file-icon {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+}
+
+.file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-size {
+    flex-shrink: 0;
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+}
+
+.file-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.file-status.error {
+    color: var(--vscode-errorForeground);
+}
+
+.file-status:empty {
+    display: none;
 }
 
 .section {

@@ -260,6 +260,7 @@ export async function activate(context: vscode.ExtensionContext) {
         extension_version: context.extension?.packageJSON?.version ?? 'unknown',
     }, activationDuration);
 
+
     // 90-day TTL cleanup prompt
     setTimeout(() => {
         const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { execSync, spawn } from 'child_process';
+import { spawnSync, spawn } from 'child_process';
 
 interface OutputChannel {
     appendLine(line: string): void;
@@ -56,11 +56,10 @@ export class DataCache {
             throw new Error(`Unsupported platform for mutagen: ${process.platform}/${process.arch}`);
         }
         this._outputChannel.appendLine('[mutagen] Fetching latest release version...');
-        const versionOutput = execSync(
-            `curl -fsSL "https://api.github.com/repos/mutagen-io/mutagen/releases/latest" | grep '"tag_name"' | head -1`,
-            { encoding: 'utf-8', timeout: 15_000 },
-        );
-        const versionMatch = versionOutput.match(/"tag_name"\s*:\s*"(v[\d.]+)"/);
+        const curlResult = spawnSync('curl', ['-fsSL', 'https://api.github.com/repos/mutagen-io/mutagen/releases/latest'], {
+            encoding: 'utf-8', timeout: 15_000, stdio: 'pipe',
+        });
+        const versionMatch = (curlResult.stdout || '').match(/"tag_name"\s*:\s*"(v[\d.]+)"/);
         if (!versionMatch) {
             throw new Error('Failed to determine latest mutagen version');
         }
@@ -121,8 +120,10 @@ export class DataCache {
     ): Promise<void> {
         const remoteDir = `~/sessions/${sessionId}/`;
         this._outputChannel.appendLine(`[sync] Syncing back from ${host}:${remoteDir}`);
+        // No --delete: we must never remove local files that weren't in the
+        // remote session directory (the remote is a subset of the workspace).
         await this._runRsync([
-            '-az', '--delete',
+            '-az',
             '-e', 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
             `${host}:${remoteDir}`, `${localDir}/`,
         ]);
@@ -155,10 +156,10 @@ export class DataCache {
             `${host}:${remoteDir}`,
         ];
         this._outputChannel.appendLine(`[mutagen] Starting continuous sync: ${sessionName}`);
-        execSync(`"${mutagenBin}" ${args.map(a => JSON.stringify(a)).join(' ')}`, {
-            timeout: 30_000,
-            stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        const syncResult = spawnSync(mutagenBin, args, { timeout: 30_000, stdio: 'pipe' });
+        if (syncResult.status !== 0) {
+            throw new Error(`mutagen sync create failed: ${syncResult.stderr?.toString() || 'unknown error'}`);
+        }
         this._outputChannel.appendLine(`[mutagen] Continuous sync started: ${sessionName}`);
         return sessionName;
     }
@@ -174,10 +175,10 @@ export class DataCache {
         const sessionName = `cs-sync-${sessionId}`;
         this._outputChannel.appendLine(`[mutagen] Stopping continuous sync: ${sessionName}`);
         try {
-            execSync(`"${bin}" sync flush "${sessionName}" 2>/dev/null`, { timeout: 30_000 });
+            spawnSync(bin, ['sync', 'flush', sessionName], { timeout: 30_000, stdio: 'pipe' });
         } catch { /* session may already be gone */ }
         try {
-            execSync(`"${bin}" sync terminate "${sessionName}" 2>/dev/null`, { timeout: 5_000 });
+            spawnSync(bin, ['sync', 'terminate', sessionName], { timeout: 5_000, stdio: 'pipe' });
             this._outputChannel.appendLine(`[mutagen] Terminated continuous sync: ${sessionName}`);
         } catch { /* already gone */ }
     }

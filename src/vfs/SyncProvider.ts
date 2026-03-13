@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { DataCache } from './DataCache.js';
 
 interface SyncSession {
@@ -31,25 +31,31 @@ export class SyncProvider {
         const mutagenBin = await this._dataCache.ensureMutagen();
         const sessionName = `cs-sync-${session.id}`;
         const remoteDir = `~/sessions/${session.id}`;
-        // Best-effort: create remote directory
+        // Best-effort: create remote directory (spawnSync avoids shell quoting issues)
         try {
-            execSync(
-                `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${hostAlias} sh -c ${JSON.stringify(`mkdir -p ${remoteDir}`)}`,
-                { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] },
-            );
+            spawnSync('ssh', [
+                '-o', 'ConnectTimeout=5',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                hostAlias,
+                `mkdir -p ${remoteDir}`,
+            ], { timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'] });
         } catch { /* best-effort */ }
-        const mutagenCmd = [
-            `"${mutagenBin}"`, 'sync', 'create',
+        const mutagenArgs = [
+            'sync', 'create',
             '--name', sessionName,
             '--label', 'cs-bridge=true',
             '--sync-mode', 'two-way-safe',
             '--ignore-vcs',
-            `--ssh-flags=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null`,
-            `"${session.localWorkdir}"`,
+            '--ssh-flags=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
+            session.localWorkdir!,
             `${hostAlias}:${remoteDir}`,
-        ].join(' ');
+        ];
         this._outputChannel.appendLine(`[mutagen] Starting sync: ${sessionName}`);
-        execSync(mutagenCmd, { timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'] });
+        const mutagenResult = spawnSync(mutagenBin, mutagenArgs, { timeout: 30_000, stdio: ['pipe', 'pipe', 'pipe'] });
+        if (mutagenResult.status !== 0) {
+            throw new Error(`mutagen sync create failed: ${mutagenResult.stderr?.toString() || 'unknown error'}`);
+        }
         session.mutagenSessionName = sessionName;
         this._outputChannel.appendLine(`[mutagen] Sync session started: ${sessionName}`);
     }
@@ -67,10 +73,10 @@ export class SyncProvider {
             return;
         }
         try {
-            execSync(`"${bin}" sync flush ${session.mutagenSessionName} 2>/dev/null`, { timeout: 30_000 });
+            spawnSync(bin, ['sync', 'flush', session.mutagenSessionName], { timeout: 30_000, stdio: 'pipe' });
         } catch { /* ok -- session may already be terminated */ }
         try {
-            execSync(`"${bin}" sync terminate ${session.mutagenSessionName} 2>/dev/null`, { timeout: 5_000 });
+            spawnSync(bin, ['sync', 'terminate', session.mutagenSessionName], { timeout: 5_000, stdio: 'pipe' });
             this._outputChannel.appendLine(`[mutagen] Terminated sync session: ${session.mutagenSessionName}`);
         } catch { /* already gone */ }
         session.mutagenSessionName = undefined;
@@ -86,7 +92,7 @@ export class SyncProvider {
         const bin = this._dataCache.resolveMutagenBin();
         if (bin) {
             try {
-                execSync(`"${bin}" sync terminate ${session.mutagenSessionName} 2>/dev/null`, { timeout: 5_000 });
+                spawnSync(bin, ['sync', 'terminate', session.mutagenSessionName], { timeout: 5_000, stdio: 'pipe' });
             } catch { }
         }
         session.mutagenSessionName = undefined;
@@ -101,15 +107,16 @@ export class SyncProvider {
             return;
         }
         try {
-            const result = execSync(`"${bin}" sync list --label-selector=cs-bridge=true 2>/dev/null`, {
-                encoding: 'utf-8', timeout: 10_000,
+            const listResult = spawnSync(bin, ['sync', 'list', '--label-selector=cs-bridge=true'], {
+                encoding: 'utf-8', timeout: 10_000, stdio: 'pipe',
             });
+            const result = listResult.stdout || '';
             const nameRe = /Name:\s+(cs-sync-\S+)/g;
             let m: RegExpExecArray | null;
             while ((m = nameRe.exec(result)) !== null) {
                 const name = m[1];
                 try {
-                    execSync(`"${bin}" sync terminate ${name} 2>/dev/null`, { timeout: 5_000 });
+                    spawnSync(bin, ['sync', 'terminate', name], { timeout: 5_000, stdio: 'pipe' });
                     this._outputChannel.appendLine(`[startup] Terminated stale mutagen session: ${name}`);
                 } catch { /* already gone */ }
             }

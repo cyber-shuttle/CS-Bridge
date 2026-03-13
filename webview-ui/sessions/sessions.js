@@ -93,6 +93,9 @@ document.querySelectorAll('.submit-job-btn').forEach(btn => {
         const wsId = btn.getAttribute('data-workspace-id');
         const form = btn.closest('.host-picker-form');
         if (!form) { return; }
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Submitting...';
+        btn.classList.add('btn-loading');
         const noSlurm = btn.hasAttribute('data-no-slurm');
         const syncModeEl = form.querySelector('[data-field="syncMode"]');
         const syncMode = syncModeEl ? syncModeEl.value : 'stage';
@@ -150,7 +153,7 @@ function attachSwitchHandlers() {
             const sessionId = newBtn.getAttribute('data-session-id');
             const direction = newBtn.getAttribute('data-direction');
             disableSessionActions(sessionId);
-            newBtn.innerHTML = '<div class="spinner"></div> Activating...';
+            newBtn.innerHTML = '<span class="spinner"></span> Activating...';
             newBtn.classList.add('btn-loading');
             if (direction === 'local-window') {
                 vscode.postMessage({ type: 'switchToWindow', sessionId: sessionId });
@@ -205,42 +208,26 @@ function attachStopHandlers() {
 attachStopHandlers();
 
 // Add click handlers to restart-linkspan, start-linkspan, and stop-linkspan buttons
-function attachLinkspanHandlers() {
-    document.querySelectorAll('.action-restart-linkspan').forEach(btn => {
-        const newBtn = btn.cloneNode(true);
-        btn.parentNode.replaceChild(newBtn, btn);
-        newBtn.addEventListener('click', () => {
-            const sessionId = newBtn.getAttribute('data-session-id');
-            newBtn.disabled = true;
-            newBtn.innerHTML = '<div class="spinner"></div> Restarting...';
-            newBtn.classList.add('btn-loading');
-            vscode.postMessage({ type: 'restartLinkspan', sessionId: sessionId });
-        });
-    });
-    document.querySelectorAll('.action-start-linkspan').forEach(btn => {
-        const newBtn = btn.cloneNode(true);
-        btn.parentNode.replaceChild(newBtn, btn);
-        newBtn.addEventListener('click', () => {
-            const sessionId = newBtn.getAttribute('data-session-id');
-            newBtn.disabled = true;
-            newBtn.innerHTML = '<div class="spinner"></div> Starting...';
-            newBtn.classList.add('btn-loading');
-            vscode.postMessage({ type: 'startLinkspan', sessionId: sessionId });
-        });
-    });
-    document.querySelectorAll('.action-stop-linkspan').forEach(btn => {
-        const newBtn = btn.cloneNode(true);
-        btn.parentNode.replaceChild(newBtn, btn);
-        newBtn.addEventListener('click', () => {
-            const sessionId = newBtn.getAttribute('data-session-id');
-            newBtn.disabled = true;
-            newBtn.innerHTML = '<div class="spinner"></div> Stopping...';
-            newBtn.classList.add('btn-loading');
-            vscode.postMessage({ type: 'stopLinkspan', sessionId: sessionId });
-        });
-    });
-}
-attachLinkspanHandlers();
+// Linkspan button handlers — use event delegation so dynamically created buttons always work
+document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.action-start-linkspan, .action-stop-linkspan, .action-restart-linkspan');
+    if (!btn || btn.disabled) { return; }
+    var sessionId = btn.getAttribute('data-session-id');
+    btn.disabled = true;
+    if (btn.classList.contains('action-start-linkspan')) {
+        btn.innerHTML = '<span class="spinner"></span> Starting...';
+        btn.classList.add('btn-loading');
+        vscode.postMessage({ type: 'startLinkspan', sessionId: sessionId });
+    } else if (btn.classList.contains('action-stop-linkspan')) {
+        btn.innerHTML = '<span class="spinner"></span> Stopping...';
+        btn.classList.add('btn-loading');
+        vscode.postMessage({ type: 'stopLinkspan', sessionId: sessionId });
+    } else if (btn.classList.contains('action-restart-linkspan')) {
+        btn.innerHTML = '<span class="spinner"></span> Restarting...';
+        btn.classList.add('btn-loading');
+        vscode.postMessage({ type: 'restartLinkspan', sessionId: sessionId });
+    }
+});
 
 // Add click handlers to copy-to-clipboard buttons
 function attachCopyHandlers() {
@@ -291,9 +278,30 @@ document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
     previewSessionId = null;
 });
 
-// Handle messages from the extension (e.g. associations data, script preview)
+// Add click handlers to workspace delete buttons
+function attachWorkspaceDeleteHandlers() {
+    document.querySelectorAll('.workspace-delete-btn').forEach(btn => {
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+        newBtn.addEventListener('click', () => {
+            const workspaceId = newBtn.getAttribute('data-workspace-id');
+            vscode.postMessage({ type: 'removeWorkspace', workspaceId: workspaceId });
+        });
+    });
+}
+attachWorkspaceDeleteHandlers();
+
+// Handle messages from the extension (e.g. associations data, script preview, toggle host picker)
 window.addEventListener('message', event => {
     const msg = event.data;
+
+    if (msg.type === 'toggleHostPicker') {
+        const picker = document.querySelector('.workspace-host-picker');
+        if (picker) {
+            picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+        }
+        return;
+    }
 
     if (msg.type === 'scriptPreview') {
         previewSessionId = msg.sessionId;
@@ -503,10 +511,28 @@ window.addEventListener('message', event => {
         const isRemoteWindow = !!msg.isRemoteWindow;
         const linkspanRunning = !!msg.linkspanRunning;
         const updates = msg.updates;
+        // Hide panel-level loading spinner and reveal workspace sections
+        var panelLoader = document.getElementById('sessions-loading');
+        if (panelLoader) { panelLoader.style.display = 'none'; }
+        document.querySelectorAll('.workspace-section').forEach(function(ws) { ws.style.display = ''; });
+
         for (const wsUpdate of updates) {
             for (const rt of wsUpdate.runtimes) {
                 const entry = document.querySelector('.runtime-entry[data-session-id="' + rt.id + '"]');
                 if (!entry) { continue; }
+                // Reveal hidden placeholder card
+                entry.style.display = '';
+
+                // Fingerprint: skip detail rebuild if session data hasn't changed
+                var fp = rt.status + '|' + rt.host + '|' + (rt.tunnelUrl || '') + '|' + (rt.tunnelId || '')
+                    + '|' + (rt.errorMessage || '') + '|' + (rt.switching ? '1' : '0')
+                    + '|' + (rt.isActiveInThisWindow ? '1' : '0') + '|' + (rt.isThisWindow ? '1' : '0')
+                    + '|' + (rt.linkspanInfo ? rt.linkspanInfo.pid + ':' + rt.linkspanInfo.tunnelId : '')
+                    + '|' + (rt.connectedRemotePath || '') + '|' + (rt.localWorkdir || '')
+                    + '|' + (rt.linkspanStarting ? '1' : '0');
+                var prevFp = entry.getAttribute('data-fp');
+                var dataChanged = fp !== prevFp;
+                if (dataChanged) { entry.setAttribute('data-fp', fp); }
 
                 // Toggle disabled state on remote sessions when linkspan is stopped
                 if (!rt.isLocal) {
@@ -532,11 +558,15 @@ window.addEventListener('message', event => {
                 const isLive = localLinkspanUp || (!rt.isLocal && rt.isActiveInThisWindow) || isRemoteReady;
                 const isLiveNow = isRemoteReady || localLinkspanUp;
                 const isActivatingNow = rt.status === 'Starting local anchor' || rt.status === 'Deploying agent' || rt.status === 'Submitting' || rt.status === 'Pending' || (rt.status === 'Active' && !rt.tunnelUrl);
+                const isStoppingNow = rt.status === 'Stopping';
                 const isRemoteActiveNow = rt.status === 'Active' && !rt.isLocal;
                 const isRunningNow = isRemoteActiveNow && !isExpiredNow;
                 const isSwitching = !!rt.switching;
                 let dotClass = 'dot-idle';
                 if (isSwitching) {
+                    entry.classList.add('status-activating');
+                    dotClass = 'dot-activating';
+                } else if (isStoppingNow) {
                     entry.classList.add('status-activating');
                     dotClass = 'dot-activating';
                 } else if (isLive && !isExpiredNow) {
@@ -555,7 +585,7 @@ window.addEventListener('message', event => {
                 const dotWrap = entry.querySelector('.dot-action-wrap');
                 let dotBtnHtml = '';
                 if (!rt.isLocal) {
-                    const canClose = !isRunningNow && !isActivatingNow && !isLiveNow && !isSwitching;
+                    const canClose = !isRunningNow && !isActivatingNow && !isLiveNow && !isSwitching && !isStoppingNow;
                     dotBtnHtml = '<button class="dot-action-btn close-session-btn" data-session-id="' + rt.id + '"' + (canClose ? '' : ' disabled') + '>' + ci('close') + '</button>';
                 }
                 const newDotHtml = '<span class="dot-action-wrap"><span class="status-dot ' + dotClass + '"></span>' + dotBtnHtml + '</span>';
@@ -596,54 +626,55 @@ window.addEventListener('message', event => {
                     headerRight.innerHTML = '';
                 }
 
+                // Skip detail rebuild if session data hasn't changed (prevents countdown/path flicker)
+                if (!dataChanged) { continue; }
+
                 // Update detail / action section
                 const existingDetails = entry.querySelector('.runtime-details');
                 if (rt.status === 'Local') {
-                    // Local card: show linkspan status + action buttons
-                    var localLine1 = '';
-                    var localLine2 = '';
-                    if (rt.linkspanInfo) {
-                        localLine1 = '<span class="session-detail">'
-                            + ci('pulse') + ' ' + rt.linkspanInfo.pid
-                            + ' <span class="detail-sep">|</span> ' + ci('server-process') + ' :' + rt.linkspanInfo.serverPort
-                            + ' <span class="detail-sep">|</span> ' + ci('terminal') + ' :' + rt.linkspanInfo.sshPort
-                            + '</span>';
-                        if (rt.linkspanInfo.tunnelId) {
-                            localLine2 = '<span class="session-detail">'
-                                + ci('cloud') + ' ' + escapeHtml(rt.linkspanInfo.tunnelId)
-                                + (rt.linkspanInfo.tunnelUrl ? ' <button class="copy-btn" data-copy="' + escapeHtml(rt.linkspanInfo.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button>' : '')
-                                + '</span>';
-                        }
-                    } else if (!isRemoteWindow) {
-                        localLine1 = '<span class="session-detail">Linkspan is stopped. Start it to enable remote access.</span>';
-                    }
+                    // Local card: stats row (always) + status/action row
+                    var portPlaceholder = '<span style="display:inline-block;min-width:4ch;text-align:left">---</span>';
+                    var httpPort = rt.linkspanInfo ? ':' + rt.linkspanInfo.serverPort : portPlaceholder;
+                    var sshPortVal = rt.linkspanInfo ? ':' + rt.linkspanInfo.sshPort : portPlaceholder;
+                    var tunnelPart = (rt.linkspanInfo && rt.linkspanInfo.tunnelId)
+                        ? ' <span class="detail-sep">|</span> ' + ci('cloud') + ' ' + escapeHtml(rt.linkspanInfo.tunnelId)
+                          + (rt.linkspanInfo.tunnelUrl ? ' <button class="copy-btn" data-copy="' + escapeHtml(rt.linkspanInfo.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button>' : '')
+                        : '';
+                    var statsHtml = '<span class="session-detail">' + ci('server-process') + ' ' + httpPort + ' <span class="detail-sep">|</span> ' + ci('terminal') + ' ' + sshPortVal + tunnelPart + '</span>';
+
+                    var localStatusLeft = '';
                     var localBtns = [];
-                    if (isRemoteWindow && !isThisWin && !isSwitching) {
-                        localBtns.push('<button class="session-action-main action-switch switch-btn" data-session-id="' + rt.id + '" data-direction="local">' + ci('arrow-swap') + ' Activate</button>');
-                    }
-                    if (!isRemoteWindow && rt.linkspanInfo) {
-                        localBtns.push('<button class="session-action-main action-stop-linkspan" data-session-id="' + rt.id + '">' + ci('debug-stop') + ' Stop</button>');
-                        localBtns.push('<button class="session-action-main action-restart-linkspan" data-session-id="' + rt.id + '">' + ci('debug-restart') + ' Restart</button>');
-                    }
-                    if (!isRemoteWindow && !rt.linkspanInfo) {
-                        localBtns.push('<button class="session-action-main action-start-linkspan" data-session-id="' + rt.id + '">' + ci('play') + ' Start</button>');
-                    }
-                    // Build detail: line1 on top, then action row with tunnel info left + buttons right
-                    var tunnelLeft = localLine2 || '';
-                    var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
-                    var actionRowHtml = (tunnelLeft || btnsRight) ? '<div class="session-action-row">' + tunnelLeft + btnsRight + '</div>' : '';
-                    var detailInner = localLine1 + actionRowHtml;
-                    if (detailInner) {
-                        if (existingDetails) {
-                            existingDetails.innerHTML = detailInner;
-                        } else {
-                            var div = document.createElement('div');
-                            div.className = 'runtime-details';
-                            div.innerHTML = detailInner;
-                            entry.appendChild(div);
+                    if (rt.linkspanInfo || rt.linkspanStarting) {
+                        // Running or starting — same buttons, disabled when starting
+                        var dis = rt.linkspanStarting ? ' disabled' : '';
+                        if (rt.linkspanStarting) {
+                            localStatusLeft = '<span class="session-status-text"><span class="spinner"></span> Downloading linkspan binary...</span>';
                         }
-                    } else if (existingDetails) {
-                        existingDetails.remove();
+                        if (!isRemoteWindow) {
+                            localBtns.push('<button class="session-action-main action-stop-linkspan" data-session-id="' + rt.id + '"' + dis + '><i class="codicon codicon-debug-stop"></i>Stop</button>');
+                            localBtns.push('<button class="session-action-main action-restart-linkspan" data-session-id="' + rt.id + '"' + dis + '><i class="codicon codicon-debug-restart"></i>Restart</button>');
+                        }
+                    } else {
+                        // Stopped
+                        if (!isRemoteWindow) {
+                            localStatusLeft = '<span class="session-status-text">' + ci('debug-disconnect') + ' Stopped</span>';
+                            localBtns.push('<button class="session-action-main action-start-linkspan" data-session-id="' + rt.id + '"><i class="codicon codicon-play"></i>Start</button>');
+                        }
+                        if (isRemoteWindow && !isThisWin && !isSwitching) {
+                            localBtns.push('<button class="session-action-main action-switch switch-btn" data-session-id="' + rt.id + '" data-direction="local"><i class="codicon codicon-arrow-swap"></i>Activate</button>');
+                        }
+                    }
+                    var btnsRight = localBtns.length > 0 ? '<span class="session-action-btns">' + localBtns.join('') + '</span>' : '';
+                    var actionRow = (localStatusLeft || btnsRight) ? '<div class="session-action-row">' + localStatusLeft + btnsRight + '</div>' : '';
+                    var detailInner = statsHtml + actionRow;
+
+                    if (existingDetails) {
+                        existingDetails.innerHTML = detailInner;
+                    } else {
+                        var div = document.createElement('div');
+                        div.className = 'runtime-details';
+                        div.innerHTML = detailInner;
+                        entry.appendChild(div);
                     }
                 } else {
                     const wtParts = rt.wallTime.split(':').map(Number);
@@ -679,12 +710,12 @@ window.addEventListener('message', event => {
                         if (rt.tunnelUrl) {
                             line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(rt.tunnelId || '') + ' <button class="copy-btn" data-copy="' + escapeHtml(rt.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
                         } else {
-                            line2 = '<span class="session-detail"><div class="spinner"></div> setting up tunnel...</span>';
+                            line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
                         }
                     } else if (rt.status === 'Deploying agent') {
-                        line2 = '<span class="session-detail"><div class="spinner"></div> deploying agent to ' + escapeHtml(rt.host) + '...</span>';
+                        line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(rt.host) + '...</span>';
                     } else if (rt.status === 'Submitting') {
-                        line2 = '<span class="session-detail"><div class="spinner"></div> submitting job...</span>';
+                        line2 = '<span class="session-detail"><span class="spinner"></span> submitting job...</span>';
                     } else if (rt.status === 'Pending') {
                         var queuedStr = '';
                         if (rt.submittedAt) {
@@ -692,7 +723,9 @@ window.addEventListener('message', event => {
                             if (elapsed >= 60) { queuedStr = ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)'; }
                             else { queuedStr = ' (' + elapsed + 's)'; }
                         }
-                        line2 = '<span class="session-detail"><div class="spinner"></div> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + rt.submittedAt + '">' + queuedStr + '</span></span>';
+                        line2 = '<span class="session-detail"><span class="spinner"></span> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + rt.submittedAt + '">' + queuedStr + '</span></span>';
+                    } else if (rt.status === 'Stopping') {
+                        line2 = '<span class="session-detail"><span class="spinner"></span> stopping session...</span>';
                     } else if (rt.status === 'Failed') {
                         line2 = '<span class="session-detail">' + (rt.errorMessage ? ci('error') + ' failed: ' + escapeHtml(rt.errorMessage) : ci('error') + ' failed') + '</span>';
                     } else if (rt.status === 'Completed') {
@@ -700,8 +733,8 @@ window.addEventListener('message', event => {
                     }
                     const incActionBtns = [];
                     if (isSwitching) {
-                        incActionBtns.push('<button class="session-action-main btn-loading" disabled><div class="spinner"></div> Activating...</button>');
-                    } else if (isRunningNow || isActivatingNow) {
+                        incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
+                    } else if ((isRunningNow || isActivatingNow) && !isStoppingNow) {
                         incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + rt.id + '">' + ci('debug-stop') + ' Stop</button>');
                         if (!isThisWin) {
                             const activateDisabled = !isLiveNow;
@@ -750,10 +783,13 @@ window.addEventListener('message', event => {
         attachStartHandlers();
         attachStopHandlers();
         attachCloseHandlers();
-        attachLinkspanHandlers();
         attachCopyHandlers();
+        attachWorkspaceDeleteHandlers();
     }
 });
+// Signal extension that webview JS is ready to receive messages
+vscode.postMessage({ type: 'webviewReady' });
+
 } catch (err) { console.error('[cybershuttle] Webview init error:', err); }
 
 })();

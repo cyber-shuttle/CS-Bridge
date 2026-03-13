@@ -1,156 +1,25 @@
 /* Sessions panel styles */
 
-.file-browser {
-    border-top: 1px solid var(--vscode-panel-border);
+.session-group {
+    margin-bottom: 8px;
 }
 
-.file-nav-bar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+.session-group:last-child {
+    margin-bottom: 0;
 }
 
-.file-nav-btn {
-    padding: 0 4px;
-    font-size: 14px;
-    line-height: 18px;
-    flex-shrink: 0;
-    background: none;
-    color: var(--vscode-descriptionForeground);
-    border: none;
-    border-radius: 2px;
-    cursor: pointer;
-}
-
-.file-nav-btn:hover:not(:disabled) {
-    color: var(--vscode-foreground);
-    background: var(--vscode-list-hoverBackground);
-}
-
-.file-nav-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-}
-
-.file-stop-btn {
-    padding: 2px 6px;
+.session-group-label {
     font-size: 10px;
-    flex-shrink: 0;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-errorForeground);
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-}
-
-.file-stop-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.file-breadcrumbs {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px;
-    font-size: 11px;
-    flex: 1;
-    overflow: hidden;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     color: var(--vscode-descriptionForeground);
+    margin-bottom: 3px;
+    padding-top: 4px;
 }
 
-.breadcrumb-seg {
-    cursor: pointer;
-    color: var(--vscode-textLink-foreground);
-    padding: 1px 2px;
-    border-radius: 2px;
-}
-
-.breadcrumb-root {
-}
-
-.breadcrumb-seg:hover {
-    text-decoration: underline;
-}
-
-.breadcrumb-sep {
-    color: var(--vscode-descriptionForeground);
-}
-
-.file-list {
-    max-height: 260px;
-    overflow-y: auto;
-    border: 1px solid var(--vscode-panel-border);
-    border-radius: 4px;
-}
-
-.file-entry {
-    display: flex;
-    align-items: center;
-    padding: 3px 8px;
-    font-size: 11px;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    gap: 6px;
-}
-
-.file-entry:last-child {
-    border-bottom: none;
-}
-
-.file-entry.dir {
-    cursor: pointer;
-}
-
-.file-entry.dir:hover {
-    background: var(--vscode-list-hoverBackground);
-}
-
-.file-icon {
-    flex-shrink: 0;
-    width: 14px;
-    text-align: center;
-}
-
-.file-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.file-size {
-    flex-shrink: 0;
-    color: var(--vscode-descriptionForeground);
-    font-size: 10px;
-}
-
-.file-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 0;
-    font-size: 12px;
-    color: var(--vscode-descriptionForeground);
-}
-
-.file-status.error {
-    color: var(--vscode-errorForeground);
-}
-
-.file-status:empty {
-    display: none;
-}
-
-.empty-message {
-    color: var(--vscode-descriptionForeground);
-    font-style: italic;
-    text-align: center;
-    padding: 16px 0;
-}
-
-.refresh-btn {
-    padding: 2px 8px;
-    font-size: 11px;
-    margin: 0;
+.session-group:first-child .session-group-label {
+    padding-top: 0;
 }
 
 .tab-header {
@@ -203,7 +72,7 @@
 
 .runtime-workdir {
     font-weight: 400;
-    opacity: 0.7;
+    color: var(--vscode-descriptionForeground);
     font-family: var(--vscode-editor-font-family, monospace);
     font-size: 10px;
     white-space: nowrap;
@@ -239,16 +108,16 @@
 }
 
 .status-dot.dot-live {
-    background: #28a745;
+    background: var(--vscode-testing-iconPassed, #28a745);
 }
 
 .status-dot.dot-activating {
-    background: #cca700;
+    background: var(--vscode-editorWarning-foreground, #cca700);
     animation: pulse 2s ease-in-out infinite;
 }
 
 .status-dot.dot-failed {
-    background: #f44747;
+    background: var(--vscode-errorForeground, #f44747);
 }
 
 .status-dot.dot-idle {
@@ -286,7 +155,7 @@
     color: var(--vscode-foreground);
 }
 
-.runtime-entry:hover .dot-action-wrap .status-dot {
+.runtime-entry:hover .dot-action-wrap:has(.dot-action-btn) .status-dot {
     visibility: hidden;
 }
 
@@ -304,7 +173,17 @@
 }
 
 .runtime-entry.active-session {
-    background: rgba(0, 120, 212, 0.08);
+    background: var(--vscode-list-inactiveSelectionBackground, rgba(0, 120, 212, 0.08));
+}
+
+.runtime-entry.linkspan-stopped {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.runtime-entry.linkspan-stopped .status-dot {
+    background: var(--vscode-descriptionForeground, rgba(128, 128, 128, 0.3));
+    animation: none;
 }
 
 @keyframes pulse {
@@ -425,6 +304,26 @@
     color: var(--vscode-errorForeground);
 }
 
+.copy-btn {
+    background: none;
+    padding: 0 2px;
+    color: var(--vscode-descriptionForeground);
+    font-size: inherit;
+    font-weight: normal;
+    line-height: 1;
+    vertical-align: middle;
+    display: inline-flex;
+    align-items: center;
+}
+
+.copy-btn:hover {
+    color: var(--vscode-foreground);
+}
+
+.copy-btn .codicon {
+    font-size: inherit !important;
+}
+
 .session-action-row {
     display: flex;
     align-items: center;
@@ -447,17 +346,13 @@
     display: flex;
     gap: 6px;
     flex-shrink: 0;
+    margin-left: auto;
 }
 
 .session-action-main {
-    font-size: 11px;
-    padding: 3px 12px;
-    border-radius: 3px;
-    border: none;
-    cursor: pointer;
-    font-weight: 500;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .session-action-main:hover {
@@ -474,7 +369,7 @@
 
 .session-progress-fill {
     height: 100%;
-    background: #28a745;
+    background: var(--vscode-testing-iconPassed, #28a745);
     transition: width 1s linear;
 }
 
@@ -504,6 +399,14 @@
     color: var(--vscode-descriptionForeground);
     opacity: 0.4;
     margin: 0 1px;
+}
+
+.panel-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 0;
+    color: var(--vscode-descriptionForeground);
 }
 
 .script-preview-overlay {
@@ -558,14 +461,14 @@
 
 .script-preview-actions button {
     flex: 1;
-    margin: 0;
+    padding: 6px 12px;
 }
 
 .cancel-preview-btn {
-    background: var(--vscode-button-secondaryBackground) !important;
-    color: var(--vscode-button-secondaryForeground) !important;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
 }
 
 .cancel-preview-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground) !important;
+    background: var(--vscode-button-secondaryHoverBackground);
 }
