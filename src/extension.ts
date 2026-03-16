@@ -91,6 +91,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(CybershuttleViewProvider.storagesViewType, sidebarProvider),
     );
 
+    /*
     const auth = vscode.commands.registerCommand('cybershuttle.auth', async () => {
         if (sidebarProvider.tunnelManager.devTunnelAccount) {
             const choice = await vscode.window.showQuickPick(
@@ -107,7 +108,9 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     });
 
+
     context.subscriptions.push(auth);
+    */
 
     const openMetrics = vscode.commands.registerCommand('cybershuttle.openMetrics', async () => {
         try {

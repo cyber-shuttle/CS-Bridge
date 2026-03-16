@@ -4,6 +4,10 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import { TunnelCredentials } from './TunnelManager.js';
+import { Runtime } from './WorkspaceManager.js';
+import { CSExtensionContext } from './ExtensionContext.js';
+import { saveSessions } from './SessionManager.js';
+import * as vscode from 'vscode';
 
 export interface LocalLinkspanInfo {
     pid: number;
@@ -502,3 +506,5 @@ export class LocalLinkspanManager {
         }
     }
 }
+
+

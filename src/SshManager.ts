@@ -12,7 +12,7 @@ interface SshHost {
     user?: string;
 }
 
-interface PersistentShell {
+export interface PersistentShell {
     process: ChildProcess;
     host: string;
     ready: Promise<void>;

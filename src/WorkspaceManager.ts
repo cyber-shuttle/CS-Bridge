@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { CSExtensionContext } from './ExtensionContext';
 
 
 export interface Runtime {
@@ -67,6 +68,14 @@ export interface Workspace {
     directoryPath: string;
     directoryName: string;
     runtimes: Runtime[];
+}
+
+export function findRuntime(runtimeId: string, ctx: CSExtensionContext): { workspace: Workspace; runtime: Runtime } | undefined {
+    for (const ws of ctx.workspaces) {
+        const rt = ws.runtimes.find(r => r.id === runtimeId);
+        if (rt) { return { workspace: ws, runtime: rt }; }
+    }
+    return undefined;
 }
 
 export function allRuntimes(workspaces: Workspace[]): Runtime[] {
