@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { MetricsCollector } from './instrumentation';
 import { EventFilters } from './instrumentation/storage';
+import { getNonce } from './utils.js';
 
 export class DashboardPanel {
     public static readonly viewType = 'cybershuttle.metricsPanel';
@@ -143,6 +143,4 @@ export class DashboardPanel {
     }
 }
 
-function getNonce(): string {
-    return crypto.randomBytes(16).toString('hex');
-}
+
