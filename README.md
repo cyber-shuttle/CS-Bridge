@@ -20,15 +20,13 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
----
-
-CyberShuttle is a VS Code extension that lets you work locally while computation runs on a remote HPC cluster or VM. It automatically mounts your workspace on the remote machine through a secure Dev Tunnel with no file syncing and no manual setup. Select a target, launch a session, and your project is ready to use on the remote host.
-
 ## Demo
 
 <p align="center">
-  <img src="docs/media/03-session-launch.gif" alt="Session launch demo" width="700" />
+  <img src="docs/media/demo-overview.gif" alt="CyberShuttle demo" width="700" />
 </p>
+
+CyberShuttle is a VS Code extension that lets you work locally while computation runs on a remote HPC cluster or VM. It automatically mounts your workspace on the remote machine through a secure Dev Tunnel — no file syncing, no manual setup. Select a target, launch a session, and your project is ready to use on the remote host.
 
 ## Features
 
@@ -36,13 +34,9 @@ CyberShuttle is a VS Code extension that lets you work locally while computation
 
 CyberShuttle reads your `~/.ssh/config` and lists all configured remote targets — HPC clusters, cloud VMs, or any machine with SSH access. Sign in with a Microsoft account to enable secure tunneling.
 
-<img src="docs/media/01-sign-in.gif" alt="Sign in and remote target setup" width="700" />
-
 ### Resource Configuration
 
 When a SLURM scheduler is detected, CyberShuttle queries available partitions, accounts, memory limits, GPUs, and walltime options. Configure jobs from a visual form directly in the sidebar. For plain SSH hosts, connect directly with no extra configuration.
-
-<img src="docs/media/02-resource-config.gif" alt="Resource configuration" width="700" />
 
 ### Session Launch and Connect
 
@@ -50,13 +44,9 @@ Launch a session with one click. Your current VS Code workspace is automatically
 
 When a session's walltime expires, restart it directly from the sidebar. CyberShuttle remembers your previous configuration.
 
-<img src="docs/media/03-session-launch.gif" alt="Session launch and connect" width="700" />
-
 ### Remote File Browser
 
 Browse directories on any connected remote host from the VS Code sidebar. Your local workspace is already mounted and ready in the remote window.
-
-<img src="docs/media/04-file-browser.gif" alt="Remote file browser" width="700" />
 
 ## Key Concepts
 
