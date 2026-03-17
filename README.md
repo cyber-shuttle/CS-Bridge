@@ -11,7 +11,7 @@
 <h1 align="center">CyberShuttle</h1>
 
 <p align="center">
-  <strong>Remote HPC development from VS Code — no file syncing, no manual setup.</strong>
+  <strong>Remote HPC development from VS Code - no file syncing, no manual setup.</strong>
 </p>
 
 <p align="center">
@@ -26,13 +26,13 @@
   <img src="docs/media/demo-overview.gif" alt="CyberShuttle demo" width="700" />
 </p>
 
-CyberShuttle is a VS Code extension that lets you work locally while computation runs on a remote HPC cluster or VM. It automatically mounts your workspace on the remote machine through a secure Dev Tunnel — no file syncing, no manual setup. Select a target, launch a session, and your project is ready to use on the remote host.
+CyberShuttle is a VS Code extension that lets you work locally while computation runs on a remote HPC cluster or VM. It automatically mounts your workspace on the remote machine through a secure Dev Tunnel - no file syncing, no manual setup. Select a target, launch a session, and your project is ready to use on the remote host.
 
 ## Features
 
 ### Sign In and Remote Target Setup
 
-CyberShuttle reads your `~/.ssh/config` and lists all configured remote targets — HPC clusters, cloud VMs, or any machine with SSH access. Sign in with a Microsoft account to enable secure tunneling.
+CyberShuttle reads your `~/.ssh/config` and lists all configured remote targets - HPC clusters, cloud VMs, or any machine with SSH access. Sign in with a Microsoft account to enable secure tunneling.
 
 ### Resource Configuration
 
@@ -40,7 +40,7 @@ When a SLURM scheduler is detected, CyberShuttle queries available partitions, a
 
 ### Session Launch and Connect
 
-Launch a session with one click. Your current VS Code workspace is automatically mounted on the remote machine — no file copying, no rsync, no git push/pull. Click **Connect** to open a new VS Code window on the remote target with your local project files ready to use.
+Launch a session with one click. Your current VS Code workspace is automatically mounted on the remote machine - no file copying, no rsync, no git push/pull. Click **Connect** to open a new VS Code window on the remote target with your local project files ready to use.
 
 When a session's walltime expires, restart it directly from the sidebar. CyberShuttle remembers your previous configuration.
 
@@ -84,7 +84,7 @@ This installs dependencies, compiles TypeScript, packages the `.vsix`, and insta
 3. Select a remote target from the dropdown
 4. Configure resources (SLURM clusters show partition, memory, GPU, and walltime options)
 5. Click **Launch** to start your session
-6. Click **Connect** — a new VS Code window opens on the remote machine with your workspace mounted
+6. Click **Connect** - a new VS Code window opens on the remote machine with your workspace mounted
 
 ### Prerequisites
 
