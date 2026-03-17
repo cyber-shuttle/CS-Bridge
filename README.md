@@ -1,4 +1,10 @@
 <p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle">
+    <img src="https://img.shields.io/visual-studio-marketplace/v/cybershuttle.cybershuttle?label=VS%20Code%20Marketplace&color=blue" alt="VS Code Marketplace" />
+  </a>
+</p>
+
+<p align="center">
   <img src="resources/cybershuttle.svg" alt="CyberShuttle" width="80" />
 </p>
 
@@ -16,7 +22,7 @@
 
 ---
 
-CyberShuttle is a VS Code extension that lets you work on your local project while computation runs on a remote HPC cluster or VM. It automatically mounts your workspace on the remote machine through a secure Dev Tunnel. Select a target, launch a session, and your project is ready to use on the remote host.
+CyberShuttle is a VS Code extension that lets you work locally while computation runs on a remote HPC cluster or VM. It automatically mounts your workspace on the remote machine through a secure Dev Tunnel with no file syncing and no manual setup. Select a target, launch a session, and your project is ready to use on the remote host.
 
 ## Demo
 
@@ -59,7 +65,7 @@ Browse directories on any connected remote host from the VS Code sidebar. Your l
 | **Workspace Mounting** | Your local project directory is mounted on the remote machine via a secure tunnel. No files are copied or synced. |
 | **Dev Tunnel** | A Microsoft Dev Tunnel provides the secure connection between your local VS Code and the remote compute node. |
 | **linkspan** | A lightweight agent deployed to the remote host that manages the VS Code Server and Dev Tunnel on the compute node. |
-| **Session** | A SLURM job (or direct SSH connection) running linkspan on the remote machine. Sessions can be launched, monitored, and restarted from the sidebar. |
+| **Session** | A SLURM job (or direct SSH connection) running linkspan on the remote machine. Sessions can be launched, monitored, restarted, and reattached from the sidebar. |
 
 ## Installation
 
@@ -71,6 +77,7 @@ Browse directories on any connected remote host from the VS Code sidebar. Your l
 4. Click **Install**
 
 ### From Source
+To build and install the extension locally for development:
 
 ```sh
 git clone https://github.com/cyber-shuttle/CS-Bridge.git
@@ -107,11 +114,11 @@ Local VS Code                          Remote HPC Cluster
 │  CyberShuttle sidebar │──── SSH ────▶│  SLURM scheduler           │
 │  (webview UI)         │              │                            │
 │                       │              │  Compute Node:             │
-│  SSH ControlMaster    │              │  ┌────────────────────┐    │
-│  (connection pool)    │              │  │  linkspan            │    │
-│                       │              │  │  ├─ VS Code Server  │    │
-│  Persistent shells    │              │  │  └─ Dev Tunnel ─────┼────┼──▶ devtunnels.ms
-│  (file browser,       │              │  └────────────────────┘    │
+│  SSH ControlMaster    │              │  ┌────────────────────┐   │
+│  (connection pool)    │              │  │  linkspan            │   │
+│                       │              │  │  ├─ VS Code Server │   │
+│  Persistent shells    │              │  │  └─ Dev Tunnel ─────┼───┼──▶ devtunnels.ms
+│  (file browser,       │              │  └────────────────────┘   │
 │   job monitoring)     │              └────────────────────────────┘
 └───────────────────────┘
          │
