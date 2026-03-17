@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="resources/cybershuttle.svg" alt="CyberShuttle" width="80" />
+  <img src="resources/cybershuttle_2.png" alt="CyberShuttle" width="80" />
 </p>
 
 <h1 align="center">CyberShuttle</h1>
