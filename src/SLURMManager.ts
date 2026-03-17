@@ -3,6 +3,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { SshManager } from './SshManager';
 import * as os from 'os';
+import { Runtime } from './WorkspaceManager';
+import { CSExtensionContext } from './ExtensionContext';
 
 export const HOST_PREFS_KEY = 'cybershuttle.hostPrefs';
 
@@ -190,4 +192,66 @@ export async function queryAssociations(hostName: string, outputChannel: vscode.
             associationsCts.delete(hostName);
         }
     });
+}
+
+
+/**
+     * SSH-based job status check (squeue for SLURM, kill -0 for plain processes).
+     * Used as fallback when tunnel health check fails or tunnel not yet established.
+     */
+export async function checkJobViaSsh(session: Runtime, ctx: CSExtensionContext): Promise<void> {
+    if (session.noSlurm) {
+        const pid = session.slurmJobId?.replace('pid-', '');
+        if (pid) {
+            const result = await ctx.ssh.runRemoteCommand(session.host, `kill -0 ${pid} 2>/dev/null && echo RUNNING || echo STOPPED`);
+            if (result.stdout.trim() === 'RUNNING') {
+                session.status = 'Active';
+                session.errorMessage = undefined;
+            } else {
+                session.status = 'Completed';
+                session.errorMessage = undefined;
+            }
+        }
+    } else {
+        const squeueStart = Date.now();
+        const result = await ctx.ssh.runRemoteCommand(session.host, `squeue -j ${session.slurmJobId} -h -o "%T %N"`);
+        ctx.metrics.record('sinfo_fetch', 'success', { cluster: session.host, raw_output_truncated: result.stdout.slice(0, 200) }, Date.now() - squeueStart);
+        const parts0 = result.stdout.trim().split(/\s+/);
+        const state = parts0[0] || '';
+        const nodeName = parts0[1] || '';
+        if (result.code === 0 && state) {
+            if (state === 'RUNNING') {
+                session.status = 'Active';
+                session.errorMessage = undefined;
+                if (nodeName && !session.computeNode) { session.computeNode = nodeName; }
+            } else if (state === 'PENDING' || state === 'CONFIGURING') {
+                session.status = 'Pending';
+                session.errorMessage = undefined;
+            } else if (state === 'FAILED' || state === 'CANCELLED' || state === 'TIMEOUT' || state === 'NODE_FAIL' || state === 'OUT_OF_MEMORY') {
+                session.status = 'Failed';
+                session.errorMessage = `Job ${state}`;
+            }
+        } else {
+            try {
+                const sacctResult = await ctx.ssh.runRemoteCommand(session.host, `sacct -j ${session.slurmJobId} -n -o State%20,ExitCode,Reason%40 --parsable2 2>/dev/null | head -1`);
+                const parts = sacctResult.stdout.trim().split('|');
+                const sacctState = (parts[0] || '').trim();
+                if (sacctState === 'COMPLETED') {
+                    session.status = 'Completed';
+                    session.errorMessage = undefined;
+                } else if (sacctState) {
+                    session.status = 'Failed';
+                    const reason = parts[2] && parts[2] !== 'None' ? `${sacctState} — ${parts[2]}` : sacctState;
+                    session.errorMessage = reason;
+                } else {
+                    session.status = 'Failed';
+                    session.errorMessage = 'Job no longer in queue';
+                }
+            } catch {
+                session.status = 'Failed';
+                session.errorMessage = 'Job no longer in queue';
+            }
+        }
+        ctx.outputChannel.appendLine(`Job ${session.slurmJobId} on ${session.host} status: ${session.status} ${session.errorMessage ? `(${session.errorMessage})` : ''}`);
+    }
 }

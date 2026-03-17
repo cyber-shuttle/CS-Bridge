@@ -23,7 +23,7 @@ export class TunnelManager {
     constructor(
         private readonly _outputChannel: vscode.OutputChannel,
         private readonly _metrics: MetricsCollector,
-    ) {}
+    ) { }
 
     /* ------------------------------------------------------------------ */
     /*  Provider-agnostic credentials                                      */
@@ -61,6 +61,7 @@ export class TunnelManager {
     /* ------------------------------------------------------------------ */
 
     async checkDevTunnelAuth(): Promise<void> {
+        this._outputChannel.appendLine('Dev Tunnels: checkDevTunnelAuth ');
         try {
             const session = await vscode.authentication.getSession(
                 'microsoft',
@@ -80,6 +81,8 @@ export class TunnelManager {
     }
 
     async signInDevTunnel(): Promise<void> {
+        this._outputChannel.appendLine('Dev Tunnels: signInDevTunnel ');
+
         try {
             await this.getDevTunnelAuthToken();
             const session = await vscode.authentication.getSession(
