@@ -200,10 +200,12 @@ export async function queryAssociations(hostName: string, outputChannel: vscode.
      * Used as fallback when tunnel health check fails or tunnel not yet established.
      */
 export async function checkJobViaSsh(session: Runtime, ctx: CSExtensionContext): Promise<void> {
+    ctx.outputChannel.appendLine(`Checking job status via SSH for session ${session.id} on ${session.host}...`);
     if (session.noSlurm) {
         const pid = session.slurmJobId?.replace('pid-', '');
         if (pid) {
             const result = await ctx.ssh.runRemoteCommand(session.host, `kill -0 ${pid} 2>/dev/null && echo RUNNING || echo STOPPED`);
+            ctx.outputChannel.appendLine(`kill -0 result: ${result.stdout.trim()} (code ${result.code})`);
             if (result.stdout.trim() === 'RUNNING') {
                 session.status = 'Active';
                 session.errorMessage = undefined;
@@ -215,6 +217,7 @@ export async function checkJobViaSsh(session: Runtime, ctx: CSExtensionContext):
     } else {
         const squeueStart = Date.now();
         const result = await ctx.ssh.runRemoteCommand(session.host, `squeue -j ${session.slurmJobId} -h -o "%T %N"`);
+        ctx.outputChannel.appendLine(`squeue result: [${result.stdout.trim()}] (code ${result.code})`);
         ctx.metrics.record('sinfo_fetch', 'success', { cluster: session.host, raw_output_truncated: result.stdout.slice(0, 200) }, Date.now() - squeueStart);
         const parts0 = result.stdout.trim().split(/\s+/);
         const state = parts0[0] || '';
@@ -234,6 +237,7 @@ export async function checkJobViaSsh(session: Runtime, ctx: CSExtensionContext):
         } else {
             try {
                 const sacctResult = await ctx.ssh.runRemoteCommand(session.host, `sacct -j ${session.slurmJobId} -n -o State%20,ExitCode,Reason%40 --parsable2 2>/dev/null | head -1`);
+                ctx.outputChannel.appendLine(`sacct result: [${sacctResult.stdout.trim()}] (code ${sacctResult.code})`);
                 const parts = sacctResult.stdout.trim().split('|');
                 const sacctState = (parts[0] || '').trim();
                 if (sacctState === 'COMPLETED') {
@@ -247,9 +251,9 @@ export async function checkJobViaSsh(session: Runtime, ctx: CSExtensionContext):
                     session.status = 'Failed';
                     session.errorMessage = 'Job no longer in queue';
                 }
-            } catch {
+            } catch (err: any) {
                 session.status = 'Failed';
-                session.errorMessage = 'Job no longer in queue';
+                session.errorMessage = `Job no longer in queue: ${err.message}\n${err.stack}`;
             }
         }
         ctx.outputChannel.appendLine(`Job ${session.slurmJobId} on ${session.host} status: ${session.status} ${session.errorMessage ? `(${session.errorMessage})` : ''}`);

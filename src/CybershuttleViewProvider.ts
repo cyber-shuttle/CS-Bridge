@@ -131,6 +131,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
             statusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100),
             internalSshConfigPath: path.join(os.homedir(), '.cybershuttle', 'ssh_config'),
             tearingDown: new Set<string>(),
+            cachedRemoteHome: new Map<string, string>(),
+            associationsCts: new Map<string, vscode.CancellationTokenSource>(),
+            logTailProcesses: new Map<string, ChildProcess>(),
         } as CSExtensionContext;
 
         this.ctx.tunnelManager.onAuthStateChanged = (account) => this.postAuthState(account);
@@ -668,9 +671,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 break;
             }
             case 'queryAssociations': {
+                this.ctx.outputChannel.appendLine(`[associations] Querying associations for host ${data.host}...`);
                 queryAssociations(data.host, this.ctx.outputChannel, this.ctx.ssh, this._extensionUri,
                     this.ctx.cachedRemoteHome, this.ctx.associationsCts, this.ctx.workspaceState,
-                    this._postSessionsMessage);
+                    this._postSessionsMessage.bind(this)).then(() => {
+                        this.ctx.outputChannel.appendLine(`[associations] Query completed for host ${data.host}`);
+                    }).catch(err => {
+                        this.ctx.outputChannel.appendLine(`[associations] Query failed for host ${data.host}: ${err.message}\n${err.stack}`);
+                    });
                 break;
             }
             case 'relaunchSession': {
@@ -2263,8 +2271,14 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                 const rmTargets = this._filesystemSyncEnabled
                     ? `~/sessions/${sessionId} ~/overlay/${sessionId}`
                     : `~/sessions/${sessionId}`;
-                await this.ctx.ssh.runRemoteCommand(session.host, `rm -rf ${rmTargets}`);
-            } catch { /* best-effort */ }
+                this.ctx.ssh.runRemoteCommand(session.host, `rm -rf ${rmTargets}`).then(() => {
+                    this.ctx.outputChannel.appendLine(`Remote session directory cleaned on ${session.host}`);
+                }).catch((err: any) => {
+                    this.ctx.outputChannel.appendLine(`Failed to clean remote session directory on ${session.host} (best-effort): ${err.message}\n${err.stack}`);
+                });
+            } catch (err: any) {
+                this.ctx.outputChannel.appendLine(`Failed to clean remote session directory on ${session.host} (best-effort): ${err.message}\n${err.stack}`);
+            }
 
             session.status = 'Completed';
             this.stopSessionLogStream(sessionId);
@@ -2306,7 +2320,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                     ? `~/sessions/${sessionId} ~/overlay/${sessionId}`
                     : `~/sessions/${sessionId}`;
                 await this.ctx.ssh.runRemoteCommand(session.host, `rm -rf ${rmTargets}`);
-            } catch { /* best-effort */ }
+            } catch (err: any) {
+                this.ctx.outputChannel.appendLine(`Failed to clean remote session directory on ${session.host} (best-effort): ${err.message}\n${err.stack}`);
+            }
         }
 
         this.stopSessionLogStream(sessionId);
@@ -2429,7 +2445,7 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
                             this.toggleSessionLogStream(session.id);
                         }
                     } catch (err: any) {
-                        this.ctx.outputChannel.appendLine(`[poll] Auto-connect tunnel failed for ${session.id}: ${err.message}`);
+                        this.ctx.outputChannel.appendLine(`[poll] Auto-connect tunnel failed for ${session.id}: ${err.message} \n${err.stack}`);
                     }
                 }
 
