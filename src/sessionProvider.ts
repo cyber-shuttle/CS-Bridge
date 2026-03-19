@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { Session } from './models';
+import { Session, SlurmSession } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
@@ -18,9 +18,15 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
         };
 
-        const sessions: Session[] = [
-            { id: 'session1', name: 'Session 1', cluster: 'Cluster A', status: 'running' },
-            { id: 'session2', name: 'Session 2', cluster: 'Cluster B', status: 'pending' },
+        const sessions: SlurmSession[] = [
+            {
+                id: 'session1', name: 'Session 1',
+                cluster: 'Cluster A', status: 'running', tunnelType: 'devtunnel',
+                tunnelId: 'tunnel1', tunnelUrl: 'http://localhost:3000',
+                jobId: '12345', queue: 'gpu', wallTime: '01:00:00',
+                gpuCount: 2, gpuClass: 'A100', cpus: 16, memory: '64GB',
+                jobDirectory: '/home/user/job1', allocation: 'allocation1'
+            },
         ];
 
         try {
