@@ -31,105 +31,9 @@
 	],
 	"main": "./out/extension.js",
 	"contributes": {
-		"commands": [
-			{
-				"command": "cybershuttle.auth",
-				"title": "Sign In",
-				"icon": "$(account)"
-			},
-			{
-				"command": "cybershuttle.openMetrics",
-				"title": "Session Metrics",
-				"icon": "$(graph)"
-			},
-			{
-				"command": "cybershuttle.exportMetrics",
-				"title": "CyberShuttle: Export Metrics"
-			},
-			{
-				"command": "cybershuttle.reportMetrics",
-				"title": "CyberShuttle: Report Metrics"
-			},
-			{
-				"command": "cybershuttle.addRemote",
-				"title": "Add Storage",
-				"icon": "$(add)"
-			},
-			{
-				"command": "cybershuttle.storagesGoBack",
-				"title": "Go Back",
-				"icon": "$(arrow-left)"
-			},
-			{
-				"command": "cybershuttle.storagesGoForward",
-				"title": "Go Forward",
-				"icon": "$(arrow-right)"
-			},
-			{
-				"command": "cybershuttle.storagesGoHome",
-				"title": "Go Home",
-				"icon": "$(home)"
-			},
-			{
-				"command": "cybershuttle.storagesRefresh",
-				"title": "Refresh",
-				"icon": "$(refresh)"
-			},
-			{
-				"command": "cybershuttle.switchSession",
-				"title": "CyberShuttle: Switch Session"
-			},
-			{
-				"command": "cybershuttle.reinstallDependencies",
-				"title": "CyberShuttle: Reinstall Dependencies"
-			},
-			{
-				"command": "cybershuttle.startLinkspan",
-				"title": "CyberShuttle: Start Linkspan"
-			},
-			{
-				"command": "cybershuttle.restartLinkspan",
-				"title": "CyberShuttle: Restart Linkspan"
-			}
-		],
+		"commands": [],
 		"menus": {
-			"view/title": [
-				{
-					"command": "cybershuttle.auth",
-					"when": "view == cybershuttle.sessionsView",
-					"group": "navigation@1"
-				},
-				{
-					"command": "cybershuttle.openMetrics",
-					"when": "view == cybershuttle.sessionsView",
-					"group": "navigation@2"
-				},
-				{
-					"command": "cybershuttle.storagesGoBack",
-					"when": "view == cybershuttle.storagesView",
-					"group": "navigation@1"
-				},
-				{
-					"command": "cybershuttle.storagesGoForward",
-					"when": "view == cybershuttle.storagesView",
-					"group": "navigation@2"
-				},
-				{
-					"command": "cybershuttle.storagesGoHome",
-					"when": "view == cybershuttle.storagesView",
-					"group": "navigation@3"
-				},
-				{
-					"command": "cybershuttle.storagesRefresh",
-					"when": "view == cybershuttle.storagesView",
-					"group": "navigation@4"
-				},
-				{
-					"command": "cybershuttle.addRemote",
-					"when": "view == cybershuttle.storagesView",
-					"group": "navigation@5"
-				}
-			]
+			"view/title": []
 		},
 		"viewsContainers": {
 			"activitybar": [
@@ -146,11 +50,6 @@
 					"type": "webview",
 					"id": "cybershuttle.sessionsView",
 					"name": "Sessions"
-				},
-				{
-					"type": "webview",
-					"id": "cybershuttle.storagesView",
-					"name": "Storages"
 				}
 			]
 		},
