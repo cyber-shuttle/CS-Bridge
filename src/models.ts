@@ -19,3 +19,9 @@ export interface Session {
     tunnelId: string;
     tunnelUrl: string;
 }
+
+export interface SshHost {
+    name: string;
+    hostname?: string;
+    user?: string;
+}

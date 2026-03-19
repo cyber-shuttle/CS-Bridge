@@ -1,8 +1,64 @@
 import * as vscode from 'vscode';
 import { Session, SlurmSession } from '../models';
 import { Logger } from '../logger';
+import { getSshHostsFromConfig } from '../modules/sshSupport';
 
 function ci(name: string) { return '<i class="codicon codicon-' + name + '"></i>'; }
+
+const buildHostPickerHtml = (): string => {
+
+    const sshHosts = getSshHostsFromConfig();
+
+    if (sshHosts.length === 0) {
+        return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
+    }
+    return sshHosts.map(host => `
+        <div class="host-picker-item">
+            <div class="host-picker-row" data-host="${escapeHtml(host.name)}"  title="${host.hostname ? escapeHtml((host.user ? host.user + '@' : '') + host.hostname) : escapeHtml(host.name)}">
+                <span class="host-picker-chevron">&#x203A;</span>
+                <span class="host-picker-name">${escapeHtml(host.name)}</span>
+                ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
+            </div>
+            <div class="host-picker-form" id="host-form-${escapeHtml(host.name)}" style="display:none;">
+                <div class="job-form-loading" style="display:none;"><span class="spinner"></span>Fetching partitions...</div>
+                <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
+                <div class="job-form-fields" style="display:none;">
+                    <div class="resource-tabs" data-host="${escapeHtml(host.name)}">
+                        <button class="resource-tab active" data-tab="cpu" data-host="${escapeHtml(host.name)}">CPU</button>
+                        <button class="resource-tab" data-tab="gpu" data-host="${escapeHtml(host.name)}" style="display:none;">GPU</button>
+                    </div>
+                    <div class="form-row alloc-row" data-host="${escapeHtml(host.name)}"><label>Allocation</label><select class="form-select" data-field="allocation" data-host="${escapeHtml(host.name)}">
+                        <option value="">Loading...</option>
+                    </select></div>
+                    <div class="form-row"><label>Partition</label><select class="form-select" data-field="queue" data-host="${escapeHtml(host.name)}">
+                        <option value="">Select allocation first</option>
+                    </select></div>
+                    <div class="form-row"><label>CPUs</label><select class="form-select" data-field="cpus">
+                        <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+                        <option value="8">8</option><option value="16">16</option><option value="32">32</option><option value="64">64</option>
+                    </select></div>
+                    <div class="form-row"><label>Memory</label><select class="form-select" data-field="memory">
+                        <option value="1 GB">1 GB</option><option value="2 GB">2 GB</option><option value="4 GB">4 GB</option>
+                        <option value="8 GB">8 GB</option><option value="16 GB">16 GB</option><option value="32 GB">32 GB</option>
+                        <option value="64 GB">64 GB</option><option value="128 GB">128 GB</option>
+                    </select></div>
+                    <div class="form-row gpu-count-row" style="display:none" data-host="${escapeHtml(host.name)}"><label>GPUs</label><select class="form-select" data-field="gpuCount" data-host="${escapeHtml(host.name)}">
+                        <option value="0">None</option>
+                    </select></div>
+                    <div class="form-row gpu-type-row" style="display:none" data-host="${escapeHtml(host.name)}"><label>GPU Type</label><select class="form-select" data-field="gpuType" data-host="${escapeHtml(host.name)}">
+                    </select></div>
+                    <div class="form-row"><label>Wall Time</label><select class="form-select" data-field="wallTime">
+                        <option value="00:30:00">30 min</option><option value="01:00:00">1 hour</option>
+                        <option value="02:00:00">2 hours</option><option value="04:00:00">4 hours</option>
+                        <option value="08:00:00">8 hours</option><option value="12:00:00">12 hours</option>
+                        <option value="24:00:00">24 hours</option>
+                    </select></div>
+                    <button class="submit-job-btn" data-host="${escapeHtml(host.name)}">Add</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+};
 
 function generateSessionDetailsHtml(session: SlurmSession): string {
 
@@ -63,11 +119,15 @@ function generateSessionsHtml(sessions: SlurmSession[]): string {
             <div class="workspace-runtimes">${sessionsHtml}</div>
         </div>` : '';
 
+    const hostPickerHtml = buildHostPickerHtml();
     return `
     <div class="workspace-section">
         ${sessionsWrapperHtml}
         <div class="add-session-placeholder">
             <i class="codicon codicon-add"></i> Add Session
+        </div>
+        <div class="workspace-host-picker" id="host-picker">
+            ${hostPickerHtml}
         </div>
     </div>`;
 }
@@ -83,7 +143,6 @@ export function getSessionWebviewContent(webview: vscode.Webview, extensionUri: 
     const sessionsJsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'js', 'sessions.js'));
 
     const sessionsHtml = generateSessionsHtml(sessions);
-    logger.debug('Generated session html :', sessionsHtml);
 
     return `
     <!DOCTYPE html>
