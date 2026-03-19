@@ -1,11 +1,5 @@
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle">
-    <img src="https://img.shields.io/visual-studio-marketplace/v/cybershuttle.cybershuttle?label=VS%20Code%20Marketplace&color=blue" alt="VS Code Marketplace" />
-  </a>
-</p>
-
-<p align="center">
-  <img src="resources/cybershuttle_2.png" alt="CyberShuttle" width="80" />
+  <img src="resources/cs-logo.png" alt="CyberShuttle Logo" width="120" />
 </p>
 
 <h1 align="center">CyberShuttle</h1>
