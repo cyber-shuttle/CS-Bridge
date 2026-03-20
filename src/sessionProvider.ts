@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { Session, SlurmSession } from './models';
+import { SlurmSession } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
+import { getSlurmClusterInfo } from './modules/sshSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -29,6 +30,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             },
         ];
 
+        webviewView.webview.onDidReceiveMessage((data) => this._onMessageFromJs(data, webviewView.webview));
+
         try {
             webviewView.webview.html = getSessionWebviewContent(webviewView.webview, this._extensionUri, sessions);
         } catch (error) {
@@ -37,7 +40,27 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    // Handle messages from the webview here (e.g., refresh sessions, open terminal, etc.)
+    private _onMessageFromJs(data: any, webView: vscode.Webview) {
+        this._logger.info('Received message from webview:', data);
 
-
-
+        const command = data.command;
+        switch (command) {
+            case 'fetchSlurmClusterInfo':
+                // vscode.postMessage({ command: 'fetchSlurmClusterInfo', host: host });
+                const host = data.host;
+                this._logger.info(`Fetching slurm cluster info for host: ${host}`);
+                getSlurmClusterInfo(host).then(clusterInfo => {
+                    this._logger.info('Fetched slurm cluster info:', clusterInfo);
+                    // Send back to sessions.js
+                    webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
+                }).catch(error => {
+                    this._logger.error('Error fetching slurm cluster info:', error);
+                    webView.postMessage({ command: 'slurmClusterInfoError', host, message: error instanceof Error ? error.message : String(error) });
+                });
+                break;
+            default:
+                this._logger.warn('Unknown command from webview:', command);
+        }
+    }
 }

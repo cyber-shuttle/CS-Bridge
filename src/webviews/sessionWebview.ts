@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import { Session, SlurmSession } from '../models';
 import { Logger } from '../logger';
-import { getSshHostsFromConfig } from '../modules/sshSupport';
+import { SshManager } from '../modules/sshSupport';
 
 function ci(name: string) { return '<i class="codicon codicon-' + name + '"></i>'; }
 
 const buildHostPickerHtml = (): string => {
 
-    const sshHosts = getSshHostsFromConfig();
+    const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
 
     if (sshHosts.length === 0) {
         return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
@@ -126,7 +126,7 @@ function generateSessionsHtml(sessions: SlurmSession[]): string {
         <div class="add-session-placeholder">
             <i class="codicon codicon-add"></i> Add Session
         </div>
-        <div class="workspace-host-picker" id="host-picker">
+        <div class="workspace-host-picker" id="host-picker" style="display:none;">
             ${hostPickerHtml}
         </div>
     </div>`;

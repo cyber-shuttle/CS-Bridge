@@ -25,3 +25,21 @@ export interface SshHost {
     hostname?: string;
     user?: string;
 }
+
+export interface SlurmClusterInfo {
+    host: string;
+    accounts: string[];
+    partitions: SlurmPartitionInfo[]
+}
+
+export interface SlurmPartitionInfo {
+    name: string;
+    cpuCount: number;
+    memory: string;
+    gres: GresInfo[];
+}
+
+export interface GresInfo {
+    name: string;
+    count: number;
+}

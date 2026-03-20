@@ -13,68 +13,240 @@
 
     window.addEventListener('message', event => {
         const msg = event.data;
-        switch (msg.command) { // {command: 'updateSessions', sessions: Session[]}
-            case 'updateSessions':
-                updateSessions(msg.sessions);
+        console.log('Received message from extension:', msg);
+        switch (msg.command) {
+            case 'slurmClusterInfo':
+                // webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
+                const host = msg.host;
+                const clusterInfo = msg.clusterInfo;
+                /*
+                {
+                    host: string;
+                    accounts: string[];
+                    partitions: SlurmPartitionInfo[]
+                } 
+                */
+                // if accounts is empty array, show "no accounts" option and hide alloc select
+                if (clusterInfo.accounts.length === 0) {
+                    console.log(`No accounts found for host ${host}`);
+                    return;
+                }
+
+                console.log('Updating account info for host:', host, 'with accounts:', clusterInfo.accounts);
+                const form = getFormForHost(host);
+                if (form) {
+                    console.log('Updating form for host:', host, 'with accounts:', clusterInfo.accounts);
+                    form.querySelector('.job-form-loading').style.display = 'none';
+                    form.querySelector('.job-form-error').style.display = 'none';
+                    form.querySelector('.job-form-fields').style.display = 'block';
+
+                    const allocSelect = form.querySelector('[data-field="allocation"]');
+                    const partSelect = form.querySelector('[data-field="queue"]');
+                    const memorySelect = form.querySelector('[data-field="memory"]');
+                    const cpuSelect = form.querySelector('[data-field="cpus"]');
+
+                    const allocRow = form.querySelector('.alloc-row');
+                    allocSelect.innerHTML = '';
+                    if (clusterInfo.accounts.length > 0) {
+                        if (allocRow) { allocRow.style.display = ''; }
+                        clusterInfo.accounts.forEach((account) => {
+                            const opt = document.createElement('option');
+                            opt.value = account;
+                            opt.textContent = account;
+                            allocSelect.appendChild(opt);
+                        });
+                    } else {
+                        if (allocRow) { allocRow.style.display = 'none'; }
+                    }
+
+                    /*
+                    export interface SlurmPartitionInfo {
+                        name: string;
+                        cpuCount: number;
+                        memory: string;
+                        gres: GresInfo[];
+                    }
+                    */
+                    const cpuParts = clusterInfo.partitions.filter(partition => !partition.gres || partition.gres.length === 0);
+                    const gpuParts = clusterInfo.partitions.filter(partition => partition.gres && partition.gres.length > 0);
+
+                    const gpuTab = form.querySelector('.resource-tab[data-tab="gpu"]');
+                    const cpuTab = form.querySelector('.resource-tab[data-tab="cpu"]');
+                    const hasCpu = cpuParts.length > 0;
+                    const hasGpu = gpuParts.length > 0;
+
+                    if (cpuTab) { cpuTab.style.display = hasCpu ? '' : 'none'; }
+                    if (gpuTab) { gpuTab.style.display = hasGpu ? '' : 'none'; }
+
+                    const gpuCountRow = document.querySelector('.gpu-count-row[data-host="' + host + '"]');
+                    const gpuCountSelect = document.querySelector('[data-field="gpuCount"][data-host="' + host + '"]');
+                    const gpuTypeRow = document.querySelector('.gpu-type-row[data-host="' + host + '"]');
+                    const gpuTypeSelect = document.querySelector('[data-field="gpuType"][data-host="' + host + '"]');
+
+                    let activeTab = hasCpu ? 'cpu' : 'gpu';
+
+                    function updateGpuFields() {
+                        const selPart = partSelect.value;
+                        const partition = clusterInfo.partitions.find(p => p.name === selPart);
+                        if (partition === null || partition === undefined) {
+                            console.warn('Selected partition not found in cluster info:', selPart);
+                            return;
+                        }
+                        if (!gpuCountSelect) return;
+                        if (activeTab === 'gpu' && partition && partition.gres.length > 0) {
+                            gpuCountSelect.innerHTML = '';
+                            for (let g = 1; g <= partition.gres[0].count; g++) {
+                                const opt = document.createElement('option');
+                                opt.value = '' + g;
+                                opt.textContent = '' + g;
+                                if (g === 1) { opt.selected = true; }
+                                gpuCountSelect.appendChild(opt);
+                            }
+                            if (gpuCountRow) { gpuCountRow.style.display = ''; }
+                            if (gpuTypeSelect && gpuTypeRow) {
+                                gpuTypeSelect.innerHTML = '';
+                                partition.gres.forEach(gres => {
+                                    const opt = document.createElement('option');
+                                    opt.value = gres.name;
+                                    opt.textContent = gres.name;
+                                    gpuTypeSelect.appendChild(opt);
+                                });
+                                gpuTypeRow.style.display = '';
+                            }
+                        } else {
+                            gpuCountSelect.innerHTML = '<option value="0">None</option>';
+                            if (gpuCountRow) { gpuCountRow.style.display = 'none'; }
+                            if (gpuTypeRow) { gpuTypeRow.style.display = 'none'; }
+                        }
+                    }
+
+                    function updateMemoryOptions() {
+                        if (!memorySelect) return;
+                        const selPart = partSelect.value;
+                        const partition = clusterInfo.partitions.find(p => p.name === selPart);
+                        if (partition === null || partition === undefined) {
+                            console.warn('Selected partition not found in cluster info:', selPart);
+                            return;
+                        }
+                        const maxMb = partition ? (partition.memory || 0) : 0;
+                        const maxGb = Math.floor(maxMb / 1024);
+                        memorySelect.innerHTML = '';
+                        if (maxGb <= 0) {
+                            [1, 2, 4, 8, 16, 32, 64, 128].forEach(g => {
+                                const opt = document.createElement('option');
+                                opt.value = g + ' GB'; opt.textContent = g + ' GB';
+                                memorySelect.appendChild(opt);
+                            });
+                            return;
+                        }
+                        const steps = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+                        const valid = steps.filter(g => g <= maxGb);
+                        if (valid.length === 0) { valid.push(1); }
+                        valid.forEach(g => {
+                            const opt = document.createElement('option');
+                            opt.value = g + ' GB'; opt.textContent = g + ' GB';
+                            memorySelect.appendChild(opt);
+                        });
+                    }
+
+                    function updateCpuOptions() {
+                        if (!cpuSelect) return;
+                        const selPart = partSelect.value;
+                        const partition = clusterInfo.partitions.find(p => p.name === selPart);
+                        if (partition === null || partition === undefined) {
+                            console.warn('Selected partition not found in cluster info:', selPart);
+                            return;
+                        }
+                        const maxCpus = partition ? partition.cpuCount : 0;
+                        cpuSelect.innerHTML = '';
+                        for (let c = 1; c <= maxCpus; c++) {
+                            const opt = document.createElement('option');
+                            opt.value = '' + c;
+                            opt.textContent = '' + c;
+                            if (c === 1) { opt.selected = true; }
+                            cpuSelect.appendChild(opt);
+                        }
+                    }
+
+                    function updatePartitions() {
+                        const filtered = activeTab === 'gpu' ? gpuParts : cpuParts;
+                        partSelect.innerHTML = '';
+                        filtered.forEach((partition, i) => {
+                            const label = partition.gres.length > 0
+                                ? partition.name + ' (' + partition.cpuCount + ' CPUs, ' + partition.gres[0].count + ' GPUs)'
+                                : partition.name + ' (' + partition.cpuCount + ' CPUs)';
+                            const opt = document.createElement('option');
+                            opt.value = partition.name;
+                            opt.textContent = label;
+                            partSelect.appendChild(opt);
+                        });
+                        updateMemoryOptions();
+                        updateGpuFields();
+                        updateCpuOptions();
+                    }
+
+                    function switchTab(tab) {
+                        activeTab = tab;
+                        form.querySelectorAll('.resource-tab').forEach(t => {
+                            t.classList.toggle('active', t.getAttribute('data-tab') === tab);
+                        });
+                        updatePartitions();
+                    }
+
+                    if (cpuTab) { cpuTab.addEventListener('click', () => switchTab('cpu')); }
+                    if (gpuTab) { gpuTab.addEventListener('click', () => switchTab('gpu')); }
+                    switchTab(activeTab);
+                    partSelect.addEventListener('change', () => { updateMemoryOptions(); updateGpuFields(); updateCpuOptions(); });
+                    allocSelect.addEventListener('change', updatePartitions);
+                }
+                break;
+            case 'slurmClusterInfoError':
+                // Todo: show error message in form
+                console.error('Error fetching slurm cluster info for host:', msg.host, 'error:', msg.message);
                 break;
         }
     });
 
-    function updateSessions(sessions) {
-        for (const session of sessions) {
-            const sessionElement = document.querySelector('.runtime-entry[data-session-id="' + session.id + '"]');
-            const existingDetails = sessionElement.querySelector('.runtime-details');
-
-            const deadMs = 2000;
-            const totalMs = 5000;
-            const _remStr = Math.ceil(deadMs / 1000) + 's';
-            const _reqStr = Math.ceil(totalMs / 1000) + 's';
-            const _initText = ci('watch') + ' ' + _remStr + ' / ' + _reqStr;
-            const timePart = '<span class="session-countdown-badge" data-deadline="' + deadMs + '" data-total="' + totalMs + '">' + _initText + '</span>';
-            const rem = Math.max(0, deadMs - Date.now());
-            const pct = totalMs > 0 ? (rem / totalMs) * 100 : 0;
-            const progressHtml = '<div class="session-progress-bar"><div class="session-progress-fill" data-deadline="' + deadMs + '" data-total="' + totalMs + '" style="width:' + pct.toFixed(1) + '%"></div></div>';
-
-            const gpuPart = session.gpuClass !== 'None' ? ' <span class="detail-sep">|</span> ' + ci('circuit-board') + ' ' + escapeHtml(session.gpuClass) : '';
-
-            const line1 = ci('server-environment') + ' ' + escapeHtml(session.queue) +
-                ' <span class="detail-sep">|</span> ' + ci('account') + ' ' + escapeHtml(session.allocation) +
-                ' <span class="detail-sep">|</span> ' + ci('vm') + ' ' + session.cpus +
-                ' <span class="detail-sep">|</span> ' + ci('database') + ' ' + session.memory + gpuPart +
-                ' <span class="detail-sep">|</span> ' + timePart;
-
-            const line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.tunnelId || '') +
-                ' <button class="copy-btn" data-copy="' + escapeHtml(session.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
-
-            const incActionBtns = [];
-            incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
-            incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Activate</button>');
-
-
-            const statusLeft = line2 || '';
-            const btnsRight = incActionBtns.length > 0 ? '<span class="session-action-btns">' + incActionBtns.join('') + '</span>' : '';
-            const actionRowHtml = (statusLeft || btnsRight) ? '<div class="session-action-row">' + statusLeft + btnsRight + '</div>' : '';
-            const detailInner = '<span class="session-detail">' + line1 + '</span>' + actionRowHtml;
-
-            // Update or create progress bar
-            const existingProgress = sessionElement.querySelector('.session-progress-bar');
-            if (progressHtml) {
-                if (!existingProgress) {
-                    sessionElement.insertAdjacentHTML('afterbegin', progressHtml);
-                }
-            } else if (existingProgress) {
-                existingProgress.remove();
+    // Toggle to host picker visibility
+    document.querySelectorAll('.add-session-placeholder').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const picker = document.getElementById('host-picker');
+            if (picker) {
+                const show = picker.style.display === 'none';
+                picker.style.display = show ? 'block' : 'none';
             }
+        });
+    });
 
-            if (existingDetails) {
-                existingDetails.innerHTML = detailInner;
-            } else {
-                const div = document.createElement('div');
-                div.className = 'runtime-details';
-                div.innerHTML = detailInner;
-                sessionElement.appendChild(div);
+    // Host picker row: toggle form + trigger queryAssociations
+    document.querySelectorAll('.host-picker-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const host = row.getAttribute('data-host');
+            const form = getFormForHost(host);
+            const chevron = row.querySelector('.host-picker-chevron');
+            if (!form) { return; }
+            const isExpanding = form.style.display === 'none';
+            form.style.display = isExpanding ? 'block' : 'none';
+            if (chevron) { chevron.classList.toggle('expanded', isExpanding); }
+            if (isExpanding) {
+                form.querySelector('.job-form-loading').style.display = 'flex';
+                form.querySelector('.job-form-fields').style.display = 'none';
+                form.querySelector('.job-form-error').style.display = 'none';
+                vscode.postMessage({ command: 'fetchSlurmClusterInfo', host: host });
+                // Pass to extension to handle and reply with slurmClusterInfo or slurmClusterInfoError
             }
-        }
+        });
+    });
+
+    function getFormForHost(host) {
+        let foundForm = null;
+        document.querySelectorAll('.host-picker-form').forEach(form => {
+            const allocSelect = form.querySelector('[data-field="allocation"][data-host="' + host + '"]');
+            if (allocSelect) {
+                foundForm = form;
+            }
+        });
+        return foundForm;
     }
 
 })();
