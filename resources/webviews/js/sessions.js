@@ -175,31 +175,51 @@
             ' <span class="detail-sep">|</span> ' + timePart;
 
         let line2 = '';
-        if (session.status === 'running') {
-            if (session.tunnelUrl) {
-                line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
-            } else {
-                line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
-            }
-        } else if (session.status === 'deploying_agent') {
-            line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(session.host) + '...</span>';
-        } else if (session.status === 'submitting') {
-            line2 = '<span class="session-detail"><span class="spinner"></span> submitting job...</span>';
-        } else if (session.status === 'pending') {
-            var queuedStr = '';
-            if (session.submittedAt) {
-                var elapsed = Math.floor((Date.now() - new Date(session.submittedAt).getTime()) / 1000);
-                if (elapsed >= 60) { queuedStr = ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)'; }
-                else { queuedStr = ' (' + elapsed + 's)'; }
-            }
-            line2 = '<span class="session-detail"><span class="spinner"></span> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + session.submittedAt + '">' + queuedStr + '</span></span>';
-        } else if (session.status === 'cancelling') {
-            line2 = '<span class="session-detail"><span class="spinner"></span> stopping session...</span>';
-        } else if (session.status === 'failed') {
-            line2 = '<span class="session-detail">' + (session.errorMessage ? ci('error') + ' failed: ' + escapeHtml(session.errorMessage) : ci('error') + ' failed') + '</span>';
-        } else if (session.status === 'completed') {
-            line2 = '<span class="session-detail">' + ci('pass') + ' completed</span>';
+        // status: 'connected' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
+        // update the bottom left status text based on session.status
+        switch (session.status) {
+            case 'not_started':
+                line2 = '<span class="session-detail">' + ci('circle-slash') + ' not started</span>';
+                break;
+            case 'running':
+                if (session.tunnelUrl) {
+                    line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
+                } else {
+                    line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
+                }
+                break;
+            case 'deploying_agent':
+                line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(session.host) + '...</span>';
+                break;
+            case 'submitting':
+                line2 = '<span class="session-detail"><span class="spinner"></span> submitting job...</span>';
+                break;
+            case 'pending':
+                var queuedStr = '';
+                if (session.submittedAt) {
+                    var elapsed = Math.floor((Date.now() - new Date(session.submittedAt).getTime()) / 1000);
+                    if (elapsed >= 60) { queuedStr = ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)'; }
+                    else { queuedStr = ' (' + elapsed + 's)'; }
+                }
+                line2 = '<span class="session-detail"><span class="spinner"></span> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + session.submittedAt + '">' + queuedStr + '</span></span>';
+                break;
+            case 'cancelling':
+                line2 = '<span class="session-detail"><span class="spinner"></span> stopping session...</span>';
+                break;
+            case 'failed':
+                line2 = '<span class="session-detail">' + (session.errorMessage ? ci('error') + ' failed: ' + escapeHtml(session.errorMessage) : ci('error') + ' failed') + '</span>';
+                break;
+            case 'completed':
+                line2 = '<span class="session-detail">' + ci('pass') + ' completed</span>';
+                break;
+            case 'expired':
+                line2 = '<span class="session-detail">' + ci('history') + ' expired</span>';
+                break;
+            case 'connected':
+                line2 = '<span class="session-detail">' + ci('check') + ' connected</span>';
+                break;
         }
+
 
         const incActionBtns = [];
 
