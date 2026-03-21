@@ -57,7 +57,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     id: `session-${Date.now()}`,
                     name: `Session ${Date.now()}`,
                     cluster: data.host,
-                    status: 'pending',
+                    status: 'not_started',
                     tunnelType: 'devtunnel',
                     tunnelId: '',
                     tunnelUrl: '',
@@ -79,9 +79,12 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private _refereshSessions(webview: vscode.Webview) {
+    private _refereshSessions(webView: vscode.Webview) {
         const sessions = getAllSessions();
-        webview.html = getSessionWebviewContent(webview, this._extensionUri, sessions);
+        webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions);
+        for (const session of sessions) {
+            webView.postMessage({ command: 'sessionUpdate', session: session });
+        }
     }
 
 }

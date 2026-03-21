@@ -14,7 +14,7 @@ export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'running' | 'failed' | 'completed' | 'pending' | 'cancelled' | 'not_started';
+    status: 'running' | 'failed' | 'completed' | 'pending' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
     tunnelType: 'devtunnel' | 'cstunnel' | 'open';
     tunnelId: string;
     tunnelUrl: string;
