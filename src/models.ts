@@ -14,10 +14,12 @@ export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'running' | 'failed' | 'completed' | 'pending' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
+    status: 'connected' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
     tunnelType: 'devtunnel' | 'cstunnel' | 'open';
     tunnelId: string;
     tunnelUrl: string;
+    submittedAt: number;
+    errorMessage: string;
 }
 
 export interface SshHost {

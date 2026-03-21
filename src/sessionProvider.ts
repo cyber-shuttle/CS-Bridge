@@ -69,7 +69,9 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     cpus: parseInt(data.cpus) || 0,
                     memory: data.memory || '',
                     jobDirectory: '',
-                    allocation: data.allocation || ''
+                    allocation: data.allocation || '',
+                    submittedAt: Date.now(),
+                    errorMessage: ''
                 };
                 addSession(newSession);
                 this._refereshSessions(webView);

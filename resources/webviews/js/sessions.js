@@ -108,10 +108,10 @@
         if (['failed', 'cancelled', 'expired'].includes(session.status)) {
             dotClass = 'dot-failed';
             sessionCard.classList.add('status-failed');
-        } else if (['pending', 'cancelling'].includes(session.status)) {
+        } else if (['pending', 'cancelling', 'submitting', 'deploying_agent'].includes(session.status)) {
             dotClass = 'dot-activating';
             sessionCard.classList.add('status-activating');
-        } else if (['running'].includes(session.status)) {
+        } else if (['running', 'connected'].includes(session.status)) {
             dotClass = 'dot-live';
             sessionCard.classList.add('status-live');
         }
@@ -123,6 +123,110 @@
         if (dotWrap) {
             console.log('Updating session card for session:', session.id, 'status:', session.status, 'dot class:', dotClass);
             dotWrap.outerHTML = dotHtml;
+        }
+
+        const nameSpan = sessionCard.querySelector('.runtime-name');
+        if (nameSpan) {
+            const runtimeLabel = escapeHtml(session.cluster);
+            nameSpan.textContent = runtimeLabel;
+        }
+
+        const workDir = session.jobDirectory ? escapeHtml(session.jobDirectory) : '';
+        let workDirSpan = sessionCard.querySelector('.runtime-workdir');
+        console.log('Updating work directory display for session:', session.id, 'workDir:', workDir);
+        if (workDir) {
+
+            if (!workDirSpan) {
+                console.log('Adding work directory span for session:', session.id, 'workDir:', workDir);
+                workDirSpan = document.createElement('span');
+                workDirSpan.className = 'runtime-workdir';
+                const header = sessionCard.querySelector('.runtime-header');
+                const headerRight = sessionCard.querySelector('.runtime-header-right');
+                if (header && headerRight) {
+                    header.insertBefore(workDirSpan, headerRight);
+                }
+            }
+            workDirSpan.textContent = workDir;
+        } else if (workDirSpan) {
+            console.log('Removing work directory span for session:', session.id);
+            workDirSpan.remove();
+        }
+
+
+        // Update bottom details section
+        const existingDetails = sessionCard.querySelector('.runtime-details');
+
+        const deadMs = 2000;
+        const totalMs = 5000;
+        const _remStr = Math.ceil(deadMs / 1000) + 's';
+        const _reqStr = Math.ceil(totalMs / 1000) + 's';
+        const _initText = ci('watch') + ' ' + _remStr + ' / ' + _reqStr;
+        const timePart = '<span class="session-countdown-badge" data-deadline="' + deadMs + '" data-total="' + totalMs + '">' + _initText + '</span>';
+        const rem = Math.max(0, deadMs - Date.now());
+        const pct = totalMs > 0 ? (rem / totalMs) * 100 : 0;
+        const progressHtml = '<div class="session-progress-bar"><div class="session-progress-fill" data-deadline="' + deadMs + '" data-total="' + totalMs + '" style="width:' + pct.toFixed(1) + '%"></div></div>';
+
+        const gpuPart = session.gpuClass !== 'None' ? ' <span class="detail-sep">|</span> ' + ci('circuit-board') + ' ' + escapeHtml(session.gpuClass) : '';
+
+        const line1 = ci('server-environment') + ' ' + escapeHtml(session.queue) +
+            ' <span class="detail-sep">|</span> ' + ci('account') + ' ' + escapeHtml(session.allocation) +
+            ' <span class="detail-sep">|</span> ' + ci('vm') + ' ' + session.cpus +
+            ' <span class="detail-sep">|</span> ' + ci('database') + ' ' + session.memory + gpuPart +
+            ' <span class="detail-sep">|</span> ' + timePart;
+
+        let line2 = '';
+        if (session.status === 'running') {
+            if (session.tunnelUrl) {
+                line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
+            } else {
+                line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
+            }
+        } else if (session.status === 'deploying_agent') {
+            line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(session.host) + '...</span>';
+        } else if (session.status === 'submitting') {
+            line2 = '<span class="session-detail"><span class="spinner"></span> submitting job...</span>';
+        } else if (session.status === 'pending') {
+            var queuedStr = '';
+            if (session.submittedAt) {
+                var elapsed = Math.floor((Date.now() - new Date(session.submittedAt).getTime()) / 1000);
+                if (elapsed >= 60) { queuedStr = ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)'; }
+                else { queuedStr = ' (' + elapsed + 's)'; }
+            }
+            line2 = '<span class="session-detail"><span class="spinner"></span> queued, waiting for resources...<span class="session-queued-timer" data-submitted="' + session.submittedAt + '">' + queuedStr + '</span></span>';
+        } else if (session.status === 'cancelling') {
+            line2 = '<span class="session-detail"><span class="spinner"></span> stopping session...</span>';
+        } else if (session.status === 'failed') {
+            line2 = '<span class="session-detail">' + (session.errorMessage ? ci('error') + ' failed: ' + escapeHtml(session.errorMessage) : ci('error') + ' failed') + '</span>';
+        } else if (session.status === 'completed') {
+            line2 = '<span class="session-detail">' + ci('pass') + ' completed</span>';
+        }
+
+        const incActionBtns = [];
+
+        if (['failed', 'cancelled', 'expired', 'completed'].includes(session.status)) {
+            incActionBtns.push('<button class="session-action-main action-start start-btn" data-session-id="' + session.id + '">' + ci('debug-restart') + ' Restart</button>');
+        } else if (['pending', 'cancelling', 'submitting', 'deploying_agent', 'connected'].includes(session.status)) {
+            //incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
+            incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
+        } else if (['running'].includes(session.status)) {
+            incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Activate</button>');
+        } else if (['not_started'].includes(session.status)) {
+            incActionBtns.push('<button class="session-action-main action-start start-btn" data-session-id="' + session.id + '">' + ci('play') + ' Start</button>');
+        }
+
+        const statusLeft = line2 || '';
+        const btnsRight = incActionBtns.length > 0 ? '<span class="session-action-btns">' + incActionBtns.join('') + '</span>' : '';
+        const actionRowHtml = (statusLeft || btnsRight) ? '<div class="session-action-row">' + statusLeft + btnsRight + '</div>' : '';
+        const detailInner = '<span class="session-detail">' + line1 + '</span>' + actionRowHtml;
+
+        console.log('Updating session details for session:', session.id, 'status:', session.status, 'detailInner:', detailInner);
+        if (existingDetails) {
+            existingDetails.innerHTML = detailInner;
+        } else {
+            const div = document.createElement('div');
+            div.className = 'runtime-details';
+            div.innerHTML = detailInner;
+            sessionCard.appendChild(div);
         }
     }
 
