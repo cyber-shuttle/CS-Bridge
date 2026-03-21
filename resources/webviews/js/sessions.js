@@ -238,6 +238,29 @@
         });
     });
 
+    // Add click handlers to submit job buttons (workspace host picker only)
+    document.querySelectorAll('.submit-job-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const host = btn.getAttribute('data-host');
+            const form = btn.closest('.host-picker-form');
+            if (!form) { return; }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Submitting...';
+            btn.classList.add('btn-loading');
+
+            const cpus = form.querySelector('[data-field="cpus"]').value;
+            const memory = form.querySelector('[data-field="memory"]').value;
+            const gpuCount = parseInt(form.querySelector('[data-field="gpuCount"]').value, 10) || 0;
+            const gpuTypeEl = form.querySelector('[data-field="gpuType"]');
+            const gpuType = gpuTypeEl && !gpuTypeEl.closest('.gpu-type-row').style.display.includes('none') ? gpuTypeEl.value : '';
+            const gpu = gpuCount > 0 ? (gpuType ? gpuType + ':' + gpuCount : gpuCount + '') : 'None';
+            const wallTime = form.querySelector('[data-field="wallTime"]').value;
+            const queue = form.querySelector('[data-field="queue"]').value;
+            const allocation = form.querySelector('[data-field="allocation"]').value;
+            vscode.postMessage({ command: 'addSession', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation });
+        });
+    });
+
     function getFormForHost(host) {
         let foundForm = null;
         document.querySelectorAll('.host-picker-form').forEach(form => {

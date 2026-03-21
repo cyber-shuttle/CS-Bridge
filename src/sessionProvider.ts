@@ -3,6 +3,7 @@ import { Logger } from './logger';
 import { SlurmSession } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
 import { getSlurmClusterInfo } from './modules/sshSupport';
+import { addSession, getAllSessions } from './extensionStore';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -19,21 +20,10 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
         };
 
-        const sessions: SlurmSession[] = [
-            {
-                id: 'session1', name: 'Session 1',
-                cluster: 'Cluster A', status: 'running', tunnelType: 'devtunnel',
-                tunnelId: 'tunnel1', tunnelUrl: 'http://localhost:3000',
-                jobId: '12345', queue: 'gpu', wallTime: '01:00:00',
-                gpuCount: 2, gpuClass: 'A100', cpus: 16, memory: '64GB',
-                jobDirectory: '/home/user/job1', allocation: 'allocation1'
-            },
-        ];
-
         webviewView.webview.onDidReceiveMessage((data) => this._onMessageFromJs(data, webviewView.webview));
 
         try {
-            webviewView.webview.html = getSessionWebviewContent(webviewView.webview, this._extensionUri, sessions);
+            this._refereshSessions(webviewView.webview);
         } catch (error) {
             this._logger.error('Error generating session webview content:', error);
             webviewView.webview.html = `<html><body><h2>Error loading sessions</h2><p>${error instanceof Error ? error.message : String(error)}</p></body></html>`;
@@ -59,8 +49,39 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     webView.postMessage({ command: 'slurmClusterInfoError', host, message: error instanceof Error ? error.message : String(error) });
                 });
                 break;
+            case 'addSession':
+                // Handle adding a new session based on data from the webview
+                //vscode.postMessage({ command: 'addSession', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation });
+                this._logger.info('Adding new session with data:', data);
+                const newSession: SlurmSession = {
+                    id: `session-${Date.now()}`,
+                    name: `Session ${Date.now()}`,
+                    cluster: data.host,
+                    status: 'pending',
+                    tunnelType: 'devtunnel',
+                    tunnelId: '',
+                    tunnelUrl: '',
+                    jobId: '',
+                    queue: data.queue || '',
+                    wallTime: data.wallTime || '',
+                    gpuCount: data.gpu === 'None' ? 0 : 1,
+                    gpuClass: data.gpu === 'None' ? '' : data.gpu, // Could be determined based on gpuCount or additional data
+                    cpus: parseInt(data.cpus) || 0,
+                    memory: data.memory || '',
+                    jobDirectory: '',
+                    allocation: data.allocation || ''
+                };
+                addSession(newSession);
+                this._refereshSessions(webView);
+                break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
     }
+
+    private _refereshSessions(webview: vscode.Webview) {
+        const sessions = getAllSessions();
+        webview.html = getSessionWebviewContent(webview, this._extensionUri, sessions);
+    }
+
 }
