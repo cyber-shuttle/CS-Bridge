@@ -77,11 +77,17 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 addSession(newSession);
                 this._refereshSessions(webView);
                 break;
+            case 'prepareLaunchSession':
+                // vscode.postMessage({ command: 'prepareLaunchSession', sessionId: sessionId });
+                const sessionId = data.sessionId;
+                this._logger.info(`Preparing to launch session with ID: ${sessionId}`);
+                this._prepareLaunchSession(webView, sessionId);
+                break;
             case 'launchSession':
                 // vscode.postMessage({ command: 'launchSession', sessionId: sessionId });
-                const sessionId = data.sessionId;
-                this._logger.info(`Launching session with ID: ${sessionId}`);
-                this._launchSession(webView, sessionId);
+                const launchSessionId = data.sessionId;
+                this._logger.info(`Launching session with ID: ${launchSessionId}`);
+                this._launchSession(webView, launchSessionId);
                 break;
             case 'cancelSessionExecution':
                 const cancelSessionId = data.sessionId;
@@ -137,6 +143,20 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: 'Session not found.' });
             return;
         }
+        this._logger.info(`Launching session with ID: ${sessionId}`);
+        session.status = 'submitting';
+        updateSession(session);
+        this._refereshSessions(webView);
+    }
+
+    private _prepareLaunchSession(webView: vscode.Webview, sessionId: string) {
+        const session = findSession(sessionId);
+        if (!session) {
+            this._logger.error(`Session with ID ${sessionId} not found to prepare launch.`);
+            vscode.window.showErrorMessage('Session not found.');
+            webView.postMessage({ command: 'prepareLaunchSessionError', sessionId: sessionId, message: 'Session not found.' });
+            return;
+        }
 
         // Generate script on demand if missing
         if (!session.batchScript) {
@@ -147,7 +167,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
                 session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
                 updateSession(session);
-                webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: `Failed to get tunnel credentials: ${err.message}` });
+                webView.postMessage({ command: 'prepareLaunchSessionError', sessionId: sessionId, message: `Failed to get tunnel credentials: ${err.message}` });
                 this._logger.error('Failed to get tunnel credentials:', err);
                 return;
             }
@@ -157,7 +177,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 this._logger.info('Generated Slurm script:', session.batchScript);
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
-                webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: `Failed to generate Slurm script: ${err.message}` });
+                webView.postMessage({ command: 'prepareLaunchSessionError', sessionId: sessionId, message: `Failed to generate Slurm script: ${err.message}` });
                 session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
                 updateSession(session);
                 this._logger.error('Failed to generate Slurm script:', err);

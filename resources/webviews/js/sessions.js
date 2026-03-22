@@ -29,8 +29,11 @@
             case 'sessionUpdate':
                 updateSessionDetailsSection(msg.session);
                 break;
+            case 'prepareLaunchSessionError':
+                console.error('Error preparing to launch session: ' + msg.sessionId + ' err: ' + msg.message);
+                break;
             case 'launchSessionError':
-                console.error('Error relaunching session: ' + msg.sessionId + ' err: ' + msg.message);
+                console.error('Error launching session: ' + msg.sessionId + ' err: ' + msg.message);
                 break;
             case 'scriptPreview':
                 showSlurmScriptPreview(msg.session);
@@ -94,14 +97,24 @@
         });
     });
 
+    document.getElementById('confirm-preview-btn')?.addEventListener('click', () => {
+        const previewSessionId = document.getElementById('script-preview-overlay')?.getAttribute('preview-session-id');
+        if (previewSessionId && previewSessionId !== '') {
+            vscode.postMessage({ command: 'launchSession', sessionId: previewSessionId });
+            document.getElementById('script-preview-overlay')?.classList.remove('visible');
+            document.getElementById('script-preview-overlay')?.setAttribute('preview-session-id', '');
+
+        }
+    });
     // Close script preview overlay
     document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
         const previewSessionId = document.getElementById('script-preview-overlay')?.getAttribute('preview-session-id');
-        if (previewSessionId) {
+        if (previewSessionId && previewSessionId !== '') {
             vscode.postMessage({ command: 'cancelSessionExecution', sessionId: previewSessionId });
         }
         console.log('Closing script preview overlay');
         document.getElementById('script-preview-overlay')?.classList.remove('visible');
+        document.getElementById('script-preview-overlay')?.setAttribute('preview-session-id', '');
     });
 
 
@@ -132,10 +145,10 @@
         entry.querySelectorAll('.session-action-main, .close-session-btn, .dot-action-btn').forEach(b => b.disabled = true);
     }
 
-    function launchSession(sessionId) {
+    function prepareLaunchSession(sessionId) {
         disableSessionActions(sessionId);
-        console.log('Requesting launch of session:', sessionId);
-        vscode.postMessage({ command: 'launchSession', sessionId: sessionId });
+        console.log('Requesting preparation to launch session:', sessionId);
+        vscode.postMessage({ command: 'prepareLaunchSession', sessionId: sessionId });
     }
 
     // Delegated click handler for dynamically created start/restart buttons
@@ -144,7 +157,7 @@
         const btn = e.target.closest('.start-btn');
         if (btn) {
             const sessionId = btn.getAttribute('data-session-id');
-            if (sessionId) { launchSession(sessionId); }
+            if (sessionId) { prepareLaunchSession(sessionId); }
         }
 
     });
