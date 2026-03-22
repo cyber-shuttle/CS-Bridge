@@ -29,6 +29,14 @@
             case 'sessionUpdate':
                 updateSessionDetailsSection(msg.session);
                 break;
+            case 'launchSessionError':
+                console.error('Error relaunching session: ' + msg.sessionId + ' err: ' + msg.message);
+                break;
+            case 'scriptPreview':
+                showSlurmScriptPreview(msg.session);
+                break;
+            default:
+                console.warn('Unknown message command:', msg.command);
         }
     });
 
@@ -63,7 +71,7 @@
         });
     });
 
-    // Add click handlers to submit job buttons (workspace host picker only)
+    // Add click handlers to provision a session from config view
     document.querySelectorAll('.submit-job-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const host = btn.getAttribute('data-host');
@@ -84,6 +92,61 @@
             const allocation = form.querySelector('[data-field="allocation"]').value;
             vscode.postMessage({ command: 'addSession', host: host, cpus: cpus, memory: memory, gpu: gpu, wallTime: wallTime, queue: queue, allocation: allocation });
         });
+    });
+
+    // Close script preview overlay
+    document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
+        const previewSessionId = document.getElementById('script-preview-overlay')?.getAttribute('preview-session-id');
+        if (previewSessionId) {
+            vscode.postMessage({ command: 'cancelSessionExecution', sessionId: previewSessionId });
+        }
+        console.log('Closing script preview overlay');
+        document.getElementById('script-preview-overlay')?.classList.remove('visible');
+    });
+
+
+    function showSlurmScriptPreview(session) {
+        /*
+        <div id="script-preview-overlay" preview-session-id="" class="script-preview-overlay">
+            <div class="script-preview-header">SLURM Job Script Preview</div>
+            <div id="script-preview-host" class="script-preview-host"></div>
+            <div id="script-preview-code" class="script-preview-code"></div>
+            <div class="script-preview-actions">
+                <button id="cancel-preview-btn" class="cancel-preview-btn">Cancel</button>
+                <button id="confirm-preview-btn">Submit Job</button>
+            </div>
+        </div>
+        */
+        console.log('Showing Slurm script preview for session:', session);
+        document.getElementById('script-preview-host').textContent = 'Host: ' + session.cluster;
+        document.getElementById('script-preview-code').textContent = session.batchScript;
+        document.getElementById('script-preview-overlay').classList.add('visible');
+        // update preview-session-id attribute to session.id so we can correlate if user clicks submit/cancel
+        document.getElementById('script-preview-overlay').setAttribute('preview-session-id', session.id);
+    }
+
+    // Helper: disable all action buttons in a runtime card
+    function disableSessionActions(sessionId) {
+        const entry = document.querySelector('.runtime-entry[data-session-id="' + sessionId + '"]');
+        if (!entry) { return; }
+        entry.querySelectorAll('.session-action-main, .close-session-btn, .dot-action-btn').forEach(b => b.disabled = true);
+    }
+
+    function launchSession(sessionId) {
+        disableSessionActions(sessionId);
+        console.log('Requesting launch of session:', sessionId);
+        vscode.postMessage({ command: 'launchSession', sessionId: sessionId });
+    }
+
+    // Delegated click handler for dynamically created start/restart buttons
+    document.addEventListener('click', function (e) {
+
+        const btn = e.target.closest('.start-btn');
+        if (btn) {
+            const sessionId = btn.getAttribute('data-session-id');
+            if (sessionId) { launchSession(sessionId); }
+        }
+
     });
 
     function getFormForHost(host) {

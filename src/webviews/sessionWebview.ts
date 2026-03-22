@@ -165,6 +165,17 @@ export function getSessionWebviewContent(webview: vscode.Webview, extensionUri: 
                 ${sessionsHtml}
             </div>
 
+            <!-- Script preview overlay -->
+            <div id="script-preview-overlay" preview-session-id="" class="script-preview-overlay">
+                <div class="script-preview-header">SLURM Job Script Preview</div>
+                <div id="script-preview-host" class="script-preview-host"></div>
+                <div id="script-preview-code" class="script-preview-code"></div>
+                <div class="script-preview-actions">
+                    <button id="cancel-preview-btn" class="cancel-preview-btn">Cancel</button>
+                    <button id="confirm-preview-btn">Submit Job</button>
+                </div>
+            </div>
+
             <script nonce="${nonce}" src="${sessionsJsUri}"></script>
         </body>
     </html>`;

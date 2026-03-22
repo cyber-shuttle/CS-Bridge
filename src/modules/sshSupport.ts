@@ -1,4 +1,4 @@
-import { GresInfo, SlurmClusterInfo, SlurmPartitionInfo, SshHost } from "../models";
+import { GresInfo, SlurmClusterInfo, SlurmPartitionInfo, SlurmSession, SshHost, TunnelCredential } from "../models";
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
+import { generateLinkspanWorkflow } from "./linkspanSupport";
 
 
 export class SshManager {
@@ -286,9 +287,54 @@ export async function getSlurmClusterInfo(hostName: string): Promise<SlurmCluste
     return clusterInfo;
 }
 
+export function generateSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
 
+    // Parse memory value (e.g. "8 GB" → "8G")
+    const memSlurm = session.memory.replace(/\s+/g, '');
 
+    // Build #SBATCH lines.
+    const sbatchLines = [
+        `#SBATCH --job-name=linkspan-session`,
+        `#SBATCH --ntasks=1`,
+        `#SBATCH --cpus-per-task=${session.cpus}`,
+        `#SBATCH --mem=${memSlurm}`,
+        `#SBATCH --time=${session.wallTime}`,
+        `#SBATCH --partition=${session.queue}`,
+        `#SBATCH --account=${session.allocation}`,
+    ];
 
+    // Add GPU if selected (format: "type:count" or "count")
+    if (session.gpuClass !== 'None') {
+        sbatchLines.push(`#SBATCH --gres=gpu:${session.gpuClass}`);
+    }
+
+    // Build the workflow YAML that will be passed to linkspan via stdin.
+    const hostSlug = (session.cluster || 'unknown').replace(/[^a-zA-Z0-9-]/g, '-');
+    const workflowYaml = generateLinkspanWorkflow(`ls-${hostSlug}-${session.id || 'unknown'}`, session.tunnelType, session.tunnelUrl);
+
+    const scriptLines = [
+        `#!/bin/bash`,
+        ...sbatchLines,
+        ``,
+        `# --- Set up log files using $HOME ---`,
+        `LOG_DIR="$HOME/.cybershuttle/logs"`,
+        `mkdir -p "$LOG_DIR"`,
+        `exec > "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.out" 2> "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.err"`,
+        ``,
+    ];
+
+    scriptLines.push(
+        `# --- Run linkspan (pre-deployed via scp) ---`,
+        `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
+        `"$LINKSPAN_BIN" --port 0 --tunnel-auth-token '${tunnelCred.authToken}' --workflow - <<WORKFLOW_EOF`,
+        workflowYaml,
+        `WORKFLOW_EOF`,
+    );
+
+    const script = scriptLines.join('\n');
+
+    return script;
+}
 
 
 /// Parsing helpers

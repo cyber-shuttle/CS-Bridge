@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { SlurmSession } from './models';
+import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
-import { getSlurmClusterInfo } from './modules/sshSupport';
-import { addSession, getAllSessions } from './extensionStore';
+import { generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
+import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
+import { getDevTunnelCredentials } from './modules/tunnelSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -76,6 +77,17 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 addSession(newSession);
                 this._refereshSessions(webView);
                 break;
+            case 'launchSession':
+                // vscode.postMessage({ command: 'launchSession', sessionId: sessionId });
+                const sessionId = data.sessionId;
+                this._logger.info(`Launching session with ID: ${sessionId}`);
+                this._launchSession(webView, sessionId);
+                break;
+            case 'cancelSessionExecution':
+                const cancelSessionId = data.sessionId;
+                this._logger.info(`Cancelling session execution with ID: ${cancelSessionId}`);
+                this._cancelSessionExecution(webView, cancelSessionId);
+                break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
@@ -87,6 +99,81 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         for (const session of sessions) {
             webView.postMessage({ command: 'sessionUpdate', session: session });
         }
+    }
+
+    private _cancelSessionExecution(webView: vscode.Webview, sessionId: string) {
+        const session = findSession(sessionId);
+        if (!session) {
+            this._logger.error(`Session with ID ${sessionId} not found to cancel.`);
+            vscode.window.showErrorMessage('Session not found.');
+            webView.postMessage({ command: 'cancelSessionError', sessionId: sessionId, message: 'Session not found.' });
+            return;
+        }
+
+        // For simplicity, we just update the status here. In a real implementation, you'd also want to cancel the job on the cluster and clean up any resources.
+        // TODO: Implement actual job cancellation logic (e.g., scancel for Slurm, API call for cloud provider, etc.)
+        if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent') {
+            session.status = 'cancelling';
+            session.errorMessage = '';
+        } else if (session.status === 'configuring') {
+            session.status = 'cancelled';
+            vscode.window.showWarningMessage(`Session cancelled while configuring. If the session was already submitted to the cluster, please check the cluster for any running jobs and cancel them manually if needed.`);
+            session.errorMessage = '';
+        } else {
+            this._logger.warn(`Session with ID ${sessionId} is in status ${session.status} and cannot be cancelled.`);
+            vscode.window.showWarningMessage(`Session cannot be cancelled from status: ${session.status}`);
+            webView.postMessage({ command: 'cancelSessionError', sessionId: sessionId, message: `Session cannot be cancelled from status: ${session.status}` });
+            return;
+        }
+        updateSession(session);
+        this._refereshSessions(webView);
+    }
+
+    private _launchSession(webView: vscode.Webview, sessionId: string) {
+        const session = findSession(sessionId);
+        if (!session) {
+            this._logger.error(`Session with ID ${sessionId} not found to launch.`);
+            vscode.window.showErrorMessage('Session not found.');
+            webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: 'Session not found.' });
+            return;
+        }
+
+        // Generate script on demand if missing
+        if (!session.batchScript) {
+            let creds: TunnelCredential;
+            try {
+                creds = getDevTunnelCredentials();
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
+                session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
+                updateSession(session);
+                webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: `Failed to get tunnel credentials: ${err.message}` });
+                this._logger.error('Failed to get tunnel credentials:', err);
+                return;
+            }
+            this._logger.info('Generating Slurm script for session:', session);
+            try {
+                session.batchScript = generateSlurmScript(session, creds);
+                this._logger.info('Generated Slurm script:', session.batchScript);
+            } catch (err: any) {
+                vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
+                webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: `Failed to generate Slurm script: ${err.message}` });
+                session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
+                updateSession(session);
+                this._logger.error('Failed to generate Slurm script:', err);
+                return;
+            }
+            this._logger.info('Generated Slurm script:', session.batchScript);
+        }
+
+        session.errorMessage = '';
+        session.runtimeInfo = undefined;
+        session.status = 'configuring';
+        updateSession(session);
+        this._refereshSessions(webView);
+
+        // Show preview and let user confirm
+        webView.postMessage({ command: 'scriptPreview', session: session });
     }
 
 }

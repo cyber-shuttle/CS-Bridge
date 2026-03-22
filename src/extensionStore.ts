@@ -4,7 +4,7 @@ import { SlurmSession } from "./models";
 const sessions: SlurmSession[] = [
     {
         id: 'session1', name: 'Session 1',
-        cluster: 'Cluster A', status: 'running', tunnelType: 'devtunnel',
+        cluster: 'Cluster A', status: 'not_started', tunnelType: 'devtunnel',
         tunnelId: 'tunnel1', tunnelUrl: 'http://localhost:3000',
         jobId: '12345', queue: 'gpu', wallTime: '01:00:00',
         gpuCount: 2, gpuClass: 'A100', cpus: 16, memory: '64GB',
@@ -37,4 +37,9 @@ export function deleteSession(sessionId: string) {
     if (index !== -1) {
         sessions.splice(index, 1);
     }
+}
+
+export function findSession(sessionId: string): SlurmSession | undefined {
+    // Placeholder for finding a session in persistent storage (e.g., globalState, file, etc.)
+    return sessions.find(s => s.id === sessionId);
 }
