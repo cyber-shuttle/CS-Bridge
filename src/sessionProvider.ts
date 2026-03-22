@@ -5,6 +5,7 @@ import { getSessionWebviewContent } from './webviews/sessionWebview';
 import { generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
 import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
 import { getDevTunnelCredentials } from './modules/tunnelSupport';
+import { launchSessionWithProgress } from './modules/sessionSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -61,7 +62,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     status: 'not_started',
                     tunnelType: 'devtunnel',
                     tunnelId: '',
-                    tunnelUrl: '',
+                    tunnelUrl: 'https://devtunnels.microsoft.com',
                     jobId: '',
                     queue: data.queue || '',
                     wallTime: data.wallTime || '',
@@ -143,10 +144,21 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             webView.postMessage({ command: 'launchSessionError', sessionId: sessionId, message: 'Session not found.' });
             return;
         }
-        this._logger.info(`Launching session with ID: ${sessionId}`);
+        this._logger.info(`Launching session with IDs: ${sessionId}`);
         session.status = 'submitting';
         updateSession(session);
         this._refereshSessions(webView);
+        launchSessionWithProgress(session, webView).then(() => {
+            this._logger.info(`Session launch completed for session ID: ${sessionId}`);
+            this._refereshSessions(webView);
+        }).catch(error => {
+            this._logger.error(`Error launching session with ID ${sessionId}:`, error);
+            vscode.window.showErrorMessage(`Failed to launch session: ${error instanceof Error ? error.message : String(error)}. Please clean up any resources on the cluster if necessary.`);
+            session.status = 'failed';
+            session.errorMessage = `Failed to launch session: ${error instanceof Error ? error.message : String(error)}`;
+            updateSession(session);
+            this._refereshSessions(webView);
+        });
     }
 
     private _prepareLaunchSession(webView: vscode.Webview, sessionId: string) {

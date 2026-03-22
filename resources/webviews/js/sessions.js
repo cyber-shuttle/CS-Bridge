@@ -175,6 +175,7 @@
 
     function updateSessionDetailsSection(session) {
 
+        console.log('Updating session details section for session:', session);
         const sessionCard = document.querySelector('.runtime-entry[data-session-id="' + session.id + '"]');
         if (!sessionCard) { return; }
         sessionCard.style.display = '';
@@ -281,6 +282,9 @@
                 break;
             case 'cancelling':
                 line2 = '<span class="session-detail"><span class="spinner"></span> stopping session...</span>';
+                break;
+            case 'cancelled':
+                line2 = '<span class="session-detail">' + ci('circle-slash') + ' ' + (session.errorMessage ? 'cancel failed: ' + escapeHtml(session.errorMessage) : 'cancelled') + '</span>';
                 break;
             case 'failed':
                 line2 = '<span class="session-detail">' + (session.errorMessage ? ci('error') + ' failed: ' + escapeHtml(session.errorMessage) : ci('error') + ' failed') + '</span>';
