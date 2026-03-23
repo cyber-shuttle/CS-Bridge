@@ -109,6 +109,55 @@ async function installLinkspan(session: SlurmSession, progress: vscode.Progress<
     }
 }
 
+async function submitJobToSlurm(session: SlurmSession, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<boolean> {
+    progress.report({ message: "Submitting job to Slurm..." });
+    const sshManager = SshManager.getInstance();
+
+    if (!session.batchScript) {
+        const errorMessage = `Batch script is missing for session ${session.name}`;
+        logger.error(errorMessage);
+        vscode.window.showErrorMessage(errorMessage);
+        session.status = 'failed';
+        session.errorMessage = errorMessage;
+        updateSession(session);
+        return false;
+    }
+
+    const scriptB64 = Buffer.from(session.batchScript!).toString('base64');
+    const submitCommand = `mkdir -p ~/.cybershuttle/logs && echo '${scriptB64}' | base64 -d | sbatch`;
+    logger.info(`Submitting job to Slurm with command: ${submitCommand}`);
+
+    const submitResult = await sshManager.runRemoteCommand(session.cluster, submitCommand);
+    if (submitResult.code === 0) {
+        const output = submitResult.stdout.trim();
+        logger.info(`Job submission output: ${output}`);
+        const jobIdMatch = output.match(/Submitted batch job (\d+)/);
+        if (jobIdMatch) {
+            const jobId = jobIdMatch[1];
+            logger.info(`Job submitted successfully with Job ID: ${jobId}`);
+            session.jobId = jobId;
+            updateSession(session);
+            return true;
+        } else {
+            const errorMessage = `Failed to parse job ID from sbatch output: ${output}`;
+            logger.error(errorMessage);
+            vscode.window.showErrorMessage(errorMessage);
+            session.status = 'failed';
+            session.errorMessage = errorMessage;
+            updateSession(session);
+            return false;
+        }
+    } else {
+        const errorMessage = `Job submission failed: ${submitResult.stderr}`;
+        logger.error(errorMessage);
+        vscode.window.showErrorMessage(errorMessage);
+        session.status = 'failed';
+        session.errorMessage = errorMessage;
+        updateSession(session);
+        return false;
+    }
+}
+
 export async function launchSessionWithProgress(session: SlurmSession, webView: vscode.Webview) {
 
     logger.info(`Initiating launch for session: ${session.name}`);
@@ -145,6 +194,11 @@ export async function launchSessionWithProgress(session: SlurmSession, webView: 
             if (!installSuccess) {
                 return;
             }
+        }
+
+        const submissionSuccess = await submitJobToSlurm(session, progress);
+        if (!submissionSuccess) {
+            return;
         }
 
 

@@ -304,7 +304,7 @@ export function generateSlurmScript(session: SlurmSession, tunnelCred: TunnelCre
     ];
 
     // Add GPU if selected (format: "type:count" or "count")
-    if (session.gpuClass !== 'None') {
+    if (session.gpuClass !== '' && session.gpuCount > 0) {
         sbatchLines.push(`#SBATCH --gres=gpu:${session.gpuClass}`);
     }
 

@@ -287,7 +287,7 @@
                 line2 = '<span class="session-detail">' + ci('circle-slash') + ' ' + (session.errorMessage ? 'cancel failed: ' + escapeHtml(session.errorMessage) : 'cancelled') + '</span>';
                 break;
             case 'failed':
-                line2 = '<span class="session-detail">' + (session.errorMessage ? ci('error') + ' failed: ' + escapeHtml(session.errorMessage) : ci('error') + ' failed') + '</span>';
+                line2 = '<span class="session-detail"' + (session.errorMessage ? ' title="' + escapeHtml(session.errorMessage) + '"' : '') + '>' + (session.errorMessage ? ci('error') + ' failed: ' + escapeHtml(session.errorMessage) : ci('error') + ' failed') + '</span>';
                 break;
             case 'completed':
                 line2 = '<span class="session-detail">' + ci('pass') + ' completed</span>';

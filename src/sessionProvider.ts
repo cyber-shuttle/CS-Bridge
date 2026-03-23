@@ -67,7 +67,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     queue: data.queue || '',
                     wallTime: data.wallTime || '',
                     gpuCount: data.gpu === 'None' ? 0 : 1,
-                    gpuClass: data.gpu === 'None' ? '' : data.gpu, // Could be determined based on gpuCount or additional data
+                    gpuClass: data.gpu, // Could be determined based on gpuCount or additional data
                     cpus: parseInt(data.cpus) || 0,
                     memory: data.memory || '',
                     jobDirectory: '',
