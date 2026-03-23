@@ -5,7 +5,7 @@ import { getSessionWebviewContent } from './webviews/sessionWebview';
 import { generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
 import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
 import { getDevTunnelCredentials } from './modules/tunnelSupport';
-import { launchSessionWithProgress } from './modules/sessionSupport';
+import { cancelRunningSession, launchSessionWithProgress } from './modules/sessionSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -122,6 +122,17 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent') {
             session.status = 'cancelling';
             session.errorMessage = '';
+            cancelRunningSession(session, webView).then(() => {
+                this._refereshSessions(webView);
+                vscode.window.showInformationMessage('Session cancellation completed. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.');
+            }).catch(error => {
+                this._logger.error(`Error cancelling session with ID ${sessionId}:`, error);
+                vscode.window.showErrorMessage(`Failed to cancel session: ${error instanceof Error ? error.message : String(error)}. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.`);
+                session.status = 'failed';
+                session.errorMessage = `Failed to cancel session: ${error instanceof Error ? error.message : String(error)}`;
+                updateSession(session);
+                this._refereshSessions(webView);
+            });
         } else if (session.status === 'configuring') {
             session.status = 'cancelled';
             vscode.window.showWarningMessage(`Session cancelled while configuring. If the session was already submitted to the cluster, please check the cluster for any running jobs and cancel them manually if needed.`);

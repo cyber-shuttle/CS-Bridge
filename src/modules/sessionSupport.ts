@@ -136,6 +136,8 @@ async function submitJobToSlurm(session: SlurmSession, progress: vscode.Progress
             const jobId = jobIdMatch[1];
             logger.info(`Job submitted successfully with Job ID: ${jobId}`);
             session.jobId = jobId;
+            session.status = 'pending'; // Job is submitted and waiting in queue
+            session.submittedAt = new Date().getTime();
             updateSession(session);
             return true;
         } else {
@@ -217,4 +219,49 @@ export async function launchSessionWithProgress(session: SlurmSession, webView: 
 
     });
 
+}
+
+export async function cancelRunningSession(session: SlurmSession, webView: vscode.Webview) {
+    // Implement logic to cancel a running session, e.g. by sending scancel command for Slurm jobs
+    logger.info(`Cancelling session: ${session.name}`);
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: `Cancelling session ${session.name}...`,
+        cancellable: true
+    }, async (progress, token) => {
+        token.onCancellationRequested(() => {
+            logger.info(`Session cancellation interrupted: ${session.name}`);
+            session.status = 'cancelled';
+            updateSession(session);
+            webView.postMessage({ command: 'sessionUpdate', session: session });
+        });
+        progress.report({ message: "Cancelling session..." });
+
+        if (session.jobId) {
+            const sshManager = SshManager.getInstance();
+            const cancelCommand = `scancel ${session.jobId}`;
+            logger.info(`Sending cancellation command for session ${session.name}: ${cancelCommand}`);
+            const cancelResult = await sshManager.runRemoteCommand(session.cluster, cancelCommand);
+            if (cancelResult.code === 0) {
+                logger.info(`Cancellation command sent successfully for session ${session.name}`);
+                session.status = 'cancelled';
+                updateSession(session);
+                webView.postMessage({ command: 'sessionUpdate', session: session });
+            } else {
+                const errorMessage = `Failed to send cancellation command for session ${session.name}. Error: ${cancelResult.stderr}`;
+                logger.error(errorMessage);
+                vscode.window.showErrorMessage(errorMessage);
+                session.status = 'failed';
+                session.errorMessage = errorMessage;
+                updateSession(session);
+                webView.postMessage({ command: 'sessionUpdate', session: session });
+            }
+        } else {
+            session.status = 'cancelled';
+            updateSession(session);
+            webView.postMessage({ command: 'sessionUpdate', session: session });
+            logger.warn(`Session ${session.name} does not have an associated job ID. Marking as cancelled without sending cancellation command.`);
+        }
+    });
 }

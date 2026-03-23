@@ -110,7 +110,7 @@
     document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
         const previewSessionId = document.getElementById('script-preview-overlay')?.getAttribute('preview-session-id');
         if (previewSessionId && previewSessionId !== '') {
-            vscode.postMessage({ command: 'cancelSessionExecution', sessionId: previewSessionId });
+            stopSession(previewSessionId);
         }
         console.log('Closing script preview overlay');
         document.getElementById('script-preview-overlay')?.classList.remove('visible');
@@ -151,6 +151,12 @@
         vscode.postMessage({ command: 'prepareLaunchSession', sessionId: sessionId });
     }
 
+    function stopSession(sessionId) {
+        disableSessionActions(sessionId);
+        console.log('Requesting to stop session:', sessionId);
+        vscode.postMessage({ command: 'cancelSessionExecution', sessionId: sessionId });
+    }
+
     // Delegated click handler for dynamically created start/restart buttons
     document.addEventListener('click', function (e) {
 
@@ -158,6 +164,12 @@
         if (btn) {
             const sessionId = btn.getAttribute('data-session-id');
             if (sessionId) { prepareLaunchSession(sessionId); }
+        }
+
+        const stopButton = e.target.closest('.stop-btn');
+        if (stopButton) {
+            const sessionId = stopButton.getAttribute('data-session-id');
+            if (sessionId) { stopSession(sessionId); }
         }
 
     });
@@ -273,6 +285,7 @@
                 break;
             case 'pending':
                 var queuedStr = '';
+                console.log('Calculating queued time for session:', session.id, 'submittedAt:', session.submittedAt);
                 if (session.submittedAt) {
                     var elapsed = Math.floor((Date.now() - new Date(session.submittedAt).getTime()) / 1000);
                     if (elapsed >= 60) { queuedStr = ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)'; }
