@@ -1,10 +1,154 @@
-import { SlurmSession } from "../models";
+import { SlurmJobStatus, SlurmSession } from "../models";
 import * as vscode from 'vscode';
 import { Logger } from './../logger';
 import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
+import { getSlurmJobStatus } from "./slurmSupport";
 
 const logger = Logger.getInstance();
+
+class AsyncLock {
+    private _acquired = false;
+    private _waitQueue: (() => void)[] = [];
+
+    async acquire(): Promise<void> {
+        if (!this._acquired) {
+            this._acquired = true;
+            return;
+        }
+        return new Promise<void>(resolve => this._waitQueue.push(resolve));
+    }
+
+    release(): void {
+        const next = this._waitQueue.shift();
+        if (next) {
+            next();
+        } else {
+            this._acquired = false;
+        }
+    }
+}
+
+export class JobStatusMonitor {
+    private static instance: JobStatusMonitor;
+
+    private monitoringSessions: Map<string, SlurmSession> = new Map();
+    private _lock = new AsyncLock();
+
+
+    private constructor(webView: vscode.Webview) {
+        this.monitorSessions(webView);
+    }
+
+    public static init(webView: vscode.Webview): void {
+        if (!JobStatusMonitor.instance) {
+            JobStatusMonitor.instance = new JobStatusMonitor(webView);
+        }
+    }
+
+    public static getInstance(): JobStatusMonitor {
+        if (!JobStatusMonitor.instance) {
+            throw new Error("JobStatusMonitor not initialized. Call init() first.");
+        }
+        return JobStatusMonitor.instance;
+    }
+
+    // Run a while loop to periodically check the status of all sessions being monitored in background
+    private async monitorSessions(webView: vscode.Webview) {
+        while (true) {
+            await this._lock.acquire();
+            // Snapshot the current sessions so we can release the lock before async polling
+            const sessionsToCheck = [...this.monitoringSessions.entries()];
+            this._lock.release();
+
+            logger.info(`Polling Slurm job status for ${sessionsToCheck.length} sessions...`);
+            for (const [sessionId, session] of sessionsToCheck) {
+                if (session.jobId) {
+                    try {
+                        const slurmStatus = await getSlurmJobStatus(session);
+                        logger.info(`Polled Slurm job status for session ${session.name}: ${slurmStatus}`);
+
+                        await this._lock.acquire();
+                        const stillTracked = this.monitoringSessions.has(sessionId);
+                        this._lock.release();
+                        if (!stillTracked) { continue; }
+
+                        if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'running') {
+                            session.status = 'running';
+                            updateSession(session);
+                            webView.postMessage({ command: 'sessionUpdate', session: session });
+                            // Todo: Remove from monitoring pool when the Linkspan connection is established
+                        } else if (slurmStatus === SlurmJobStatus.COMPLETED) {
+                            session.status = 'completed';
+                            updateSession(session);
+                            webView.postMessage({ command: 'sessionUpdate', session: session });
+                            this.stopMonitoringInternal(sessionId);
+                        } else if ([SlurmJobStatus.FAILED, SlurmJobStatus.TIMEOUT, SlurmJobStatus.OUT_OF_MEMORY].includes(slurmStatus)) {
+                            session.status = 'failed';
+                            session.errorMessage = `Job ended with status: ${slurmStatus}`;
+                            updateSession(session);
+                            webView.postMessage({ command: 'sessionUpdate', session: session });
+                            this.stopMonitoringInternal(sessionId);
+                        } else if (slurmStatus === SlurmJobStatus.PENDING) {
+                            session.status = 'pending';
+                            updateSession(session);
+                            webView.postMessage({ command: 'sessionUpdate', session: session });
+                        } else if (slurmStatus === SlurmJobStatus.CANCELLED) {
+                            session.status = 'cancelled';
+                            updateSession(session);
+                            webView.postMessage({ command: 'sessionUpdate', session: session });
+                            this.stopMonitoringInternal(sessionId);
+                        } else if (slurmStatus === SlurmJobStatus.UNKNOWN) {
+                            logger.warn(`Received unknown Slurm job status for session ${session.name}`);
+                            session.status = 'failed';
+                            session.errorMessage = `Job ended with unknown status: ${slurmStatus}`;
+                            updateSession(session);
+                            webView.postMessage({ command: 'sessionUpdate', session: session });
+                            this.stopMonitoringInternal(sessionId);
+                        }
+                    } catch (error: any) {
+                        const errorMessage = `Error while monitoring Slurm job status for session ${session.name}: ${error.message || error}`;
+                        logger.error(errorMessage, error);
+                        vscode.window.showErrorMessage(errorMessage);
+                        session.status = 'failed'; // TODO: Probably unknown or retry
+                        session.errorMessage = errorMessage;
+                        updateSession(session);
+                        webView.postMessage({ command: 'sessionUpdate', session: session });
+                        this.stopMonitoringInternal(sessionId);
+                    }
+
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Check every 5 seconds
+        }
+    }
+
+    private stopMonitoringInternal(sessionId: string) {
+        this.monitoringSessions.delete(sessionId);
+        logger.info(`Stopped monitoring Slurm job status for session ID ${sessionId}`);
+    }
+
+    public async stopMonitoring(sessionId: string) {
+        await this._lock.acquire();
+        try {
+            this.stopMonitoringInternal(sessionId);
+        } finally {
+            this._lock.release();
+        }
+    }
+
+    public async startMonitoring(session: SlurmSession) {
+        await this._lock.acquire();
+        try {
+            if (session.jobId && !this.monitoringSessions.has(session.id)) {
+                this.monitoringSessions.set(session.id, session);
+                logger.info(`Started monitoring Slurm job status for session ${session.name} (Job ID: ${session.jobId})`);
+            }
+        } finally {
+            this._lock.release();
+        }
+    }
+}
 
 async function checkSlurmAvailability(session: SlurmSession, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<boolean> {
     try {
@@ -203,19 +347,7 @@ export async function launchSessionWithProgress(session: SlurmSession, webView: 
             return;
         }
 
-
-        /*for (let i = 0; i < 100; i += 2) {
-            logger.info(`Launching session ${session.name}: Step ${i / 20 + 1} of 5`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            progress.report({ increment: 20, message: `Step ${i / 20 + 1} of 5` });
-            if (token.isCancellationRequested) {
-                logger.info(`Session launch cancelled during progress: ${session.name}`);
-                // session.status = 'cancelled';
-                // updateSession(session);
-                //webView.postMessage({ command: 'sessionUpdate', session: session });
-                return;
-            }
-        }*/
+        JobStatusMonitor.getInstance().startMonitoring(session);
 
     });
 
@@ -238,30 +370,42 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
         });
         progress.report({ message: "Cancelling session..." });
 
-        if (session.jobId) {
-            const sshManager = SshManager.getInstance();
-            const cancelCommand = `scancel ${session.jobId}`;
-            logger.info(`Sending cancellation command for session ${session.name}: ${cancelCommand}`);
-            const cancelResult = await sshManager.runRemoteCommand(session.cluster, cancelCommand);
-            if (cancelResult.code === 0) {
-                logger.info(`Cancellation command sent successfully for session ${session.name}`);
+        try {
+            if (session.jobId) {
+                const sshManager = SshManager.getInstance();
+                const cancelCommand = `scancel ${session.jobId}`;
+                logger.info(`Sending cancellation command for session ${session.name}: ${cancelCommand}`);
+                const cancelResult = await sshManager.runRemoteCommand(session.cluster, cancelCommand);
+                if (cancelResult.code === 0) {
+                    logger.info(`Cancellation command sent successfully for session ${session.name}`);
+                    session.status = 'cancelled';
+                    updateSession(session);
+                    webView.postMessage({ command: 'sessionUpdate', session: session });
+                } else {
+                    const errorMessage = `Failed to send cancellation command for session ${session.name}. Error: ${cancelResult.stderr}`;
+                    logger.error(errorMessage);
+                    vscode.window.showErrorMessage(errorMessage);
+                    session.status = 'failed';
+                    session.errorMessage = errorMessage;
+                    updateSession(session);
+                    webView.postMessage({ command: 'sessionUpdate', session: session });
+                }
+            } else {
                 session.status = 'cancelled';
                 updateSession(session);
                 webView.postMessage({ command: 'sessionUpdate', session: session });
-            } else {
-                const errorMessage = `Failed to send cancellation command for session ${session.name}. Error: ${cancelResult.stderr}`;
-                logger.error(errorMessage);
-                vscode.window.showErrorMessage(errorMessage);
-                session.status = 'failed';
-                session.errorMessage = errorMessage;
-                updateSession(session);
-                webView.postMessage({ command: 'sessionUpdate', session: session });
+                logger.warn(`Session ${session.name} does not have an associated job ID. Marking as cancelled without sending cancellation command.`);
             }
-        } else {
-            session.status = 'cancelled';
+        } catch (error: any) {
+            const errorMessage = `Error while cancelling session ${session.name}: ${error.message || error}`;
+            logger.error(errorMessage, error);
+            vscode.window.showErrorMessage(errorMessage);
+            session.status = 'failed';
+            session.errorMessage = errorMessage;
             updateSession(session);
             webView.postMessage({ command: 'sessionUpdate', session: session });
-            logger.warn(`Session ${session.name} does not have an associated job ID. Marking as cancelled without sending cancellation command.`);
         }
+
+        JobStatusMonitor.getInstance().stopMonitoring(session.id);
     });
 }

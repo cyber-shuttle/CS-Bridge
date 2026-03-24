@@ -4,8 +4,8 @@ import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
 import { generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
 import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
-import { getDevTunnelCredentials } from './modules/tunnelSupport';
-import { cancelRunningSession, launchSessionWithProgress } from './modules/sessionSupport';
+import { getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -23,7 +23,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         };
 
         webviewView.webview.onDidReceiveMessage((data) => this._onMessageFromJs(data, webviewView.webview));
-
+        JobStatusMonitor.init(webviewView.webview);
         try {
             this._refereshSessions(webviewView.webview);
         } catch (error) {
@@ -82,7 +82,13 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 // vscode.postMessage({ command: 'prepareLaunchSession', sessionId: sessionId });
                 const sessionId = data.sessionId;
                 this._logger.info(`Preparing to launch session with ID: ${sessionId}`);
-                this._prepareLaunchSession(webView, sessionId);
+                this._prepareLaunchSession(webView, sessionId).then(() => {
+                    this._logger.info(`Preparation for session launch completed for session ID: ${sessionId}`);
+                }).catch((error: Error) => {
+                    this._logger.error(`Error preparing session launch for session ID ${sessionId}:`, error);
+                    webView.postMessage({ command: 'prepareLaunchSessionError', sessionId: sessionId, message: error instanceof Error ? error.message : String(error) });
+                    this._refereshSessions(webView);
+                });
                 break;
             case 'launchSession':
                 // vscode.postMessage({ command: 'launchSession', sessionId: sessionId });
@@ -94,6 +100,16 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 const cancelSessionId = data.sessionId;
                 this._logger.info(`Cancelling session execution with ID: ${cancelSessionId}`);
                 this._cancelSessionExecution(webView, cancelSessionId);
+                break;
+            case 'switchAuth':
+                this._logger.info('Switching Dev Tunnels authentication account as requested by webview');
+                switchDevTunnelAccount().then(() => {
+                    this._logger.info('Dev Tunnels authentication account switched successfully');
+                    webView.postMessage({ command: 'switchAuthSuccess' });
+                }).catch((error: Error) => {
+                    this._logger.error('Error switching Dev Tunnels authentication account:', error);
+                    webView.postMessage({ command: 'switchAuthError', message: error instanceof Error ? error.message : String(error) });
+                });
                 break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
@@ -172,7 +188,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private _prepareLaunchSession(webView: vscode.Webview, sessionId: string) {
+    private async _prepareLaunchSession(webView: vscode.Webview, sessionId: string) {
         const session = findSession(sessionId);
         if (!session) {
             this._logger.error(`Session with ID ${sessionId} not found to prepare launch.`);
@@ -185,14 +201,13 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         if (!session.batchScript) {
             let creds: TunnelCredential;
             try {
-                creds = getDevTunnelCredentials();
+                creds = await getDevTunnelCredentials();
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
                 session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
                 updateSession(session);
-                webView.postMessage({ command: 'prepareLaunchSessionError', sessionId: sessionId, message: `Failed to get tunnel credentials: ${err.message}` });
                 this._logger.error('Failed to get tunnel credentials:', err);
-                return;
+                throw err;
             }
             this._logger.info('Generating Slurm script for session:', session);
             try {
@@ -200,11 +215,10 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 this._logger.info('Generated Slurm script:', session.batchScript);
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
-                webView.postMessage({ command: 'prepareLaunchSessionError', sessionId: sessionId, message: `Failed to generate Slurm script: ${err.message}` });
                 session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
                 updateSession(session);
                 this._logger.error('Failed to generate Slurm script:', err);
-                return;
+                throw err;
             }
             this._logger.info('Generated Slurm script:', session.batchScript);
         }

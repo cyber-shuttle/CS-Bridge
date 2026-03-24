@@ -79,3 +79,14 @@ export interface TunnelCredential {
     authToken: string;
     serverUrl?: string;
 }
+
+export enum SlurmJobStatus {
+    PENDING = 'pending',
+    RUNNING = 'running',
+    COMPLETED = 'completed',
+    FAILED = 'failed',
+    CANCELLED = 'cancelled',
+    TIMEOUT = 'timeout',
+    OUT_OF_MEMORY = 'out_of_memory',
+    UNKNOWN = 'unknown'
+}
