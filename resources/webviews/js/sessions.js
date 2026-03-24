@@ -174,6 +174,12 @@
 
     });
 
+    // Switch dev tunnels auth account
+    document.getElementById('auth-switch-btn')?.addEventListener('click', () => {
+        console.log('Auth switch button clicked, sending message to extension');
+        vscode.postMessage({ command: 'switchAuth' });
+    });
+
     function getFormForHost(host) {
         let foundForm = null;
         document.querySelectorAll('.host-picker-form').forEach(form => {

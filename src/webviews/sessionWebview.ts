@@ -115,7 +115,7 @@ function generateSessionsHtml(sessions: SlurmSession[]): string {
     const sessionsHtml = sessions.map(generateSessionCardHtml).join('');
     const sessionsWrapperHtml = sessions.length > 0 ?
         `<div class="session-group">
-            <div class="session-group-label">Other Sessions</div>
+            <div class="session-group-label">Sessions</div>
             <div class="workspace-runtimes">${sessionsHtml}</div>
         </div>` : '';
 
@@ -140,9 +140,18 @@ export function getSessionWebviewContent(webview: vscode.Webview, extensionUri: 
     const codiconsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'codicons', 'codicon.css'));
     const commonCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'common.css'));
     const sessionsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'sessions.css'));
+    const infoCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'info.css'));
+
     const sessionsJsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'js', 'sessions.js'));
 
     const sessionsHtml = generateSessionsHtml(sessions);
+    const authHtml = `
+    <div id="account-line" class="info-line">
+        <span class="info-label">Microsoft Account:</span>
+        <span id="account-value" class="info-value 'info-value-warn'}">Dimuthu</span>
+        <button id="auth-switch-btn" class="info-action-btn">Switch</button>
+    </div>
+    `;
 
     return `
     <!DOCTYPE html>
@@ -155,12 +164,16 @@ export function getSessionWebviewContent(webview: vscode.Webview, extensionUri: 
             <link rel="stylesheet" href="${codiconsCssUri}">
             <link rel="stylesheet" href="${commonCssUri}">
             <link rel="stylesheet" href="${sessionsCssUri}">
+            <link rel="stylesheet" href="${infoCssUri}">
             <style>
                 ${getCommonStyles(codiconsFontUri)}
             </style>
         </head>
         <body>
             <!-- ${sessions.length > 0 ? '<div id="sessions-loading" class="panel-loading"><span class="spinner"></span></div>' : ''} -->
+            <div id="auth">
+                ${authHtml}
+            </div>
             <div id="sessions">
                 ${sessionsHtml}
             </div>
