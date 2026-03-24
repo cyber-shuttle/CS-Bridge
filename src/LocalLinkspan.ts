@@ -442,6 +442,10 @@ export class LocalLinkspanManager {
         return this._instances.get(workspacePath);
     }
 
+    listAll(): LocalLinkspanInfo[] {
+        return Array.from(this._instances.values());
+    }
+
     /**
      * Push a metadata value to the local linkspan's store.
      * Uses localhost (not tunnel URL) for reliable local communication.

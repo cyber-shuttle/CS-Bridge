@@ -39,6 +39,7 @@ export interface CSExtensionContext {
     metrics: MetricsCollector;
     heartbeatTimer?: ReturnType<typeof setInterval>;
     linkspanDownloaded: boolean;
+    lastTokenRefresh: number;
     outputChannel: vscode.OutputChannel;
     sshControlDir: string;
     /** @deprecated — kept only for old SSH shell methods that haven't been removed yet */

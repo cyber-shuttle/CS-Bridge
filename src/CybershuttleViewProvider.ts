@@ -19,7 +19,7 @@ import { getSessionsHtml } from './views/sessionsView.js';
 import { checkJobViaSsh, queryAssociations, saveHostPrefs } from './SLURMManager.js';
 import { CSExtensionContext } from './ExtensionContext.js';
 import { clearSessionFields, loadSessions, mergeSessionsFromFile, saveSessions } from './SessionManager.js';
-import { autoStartLinkspan, checkLinkspanHealth, deployLinkspan, ensureLocalLinkspan, launchLinkspanProcess, pollLinkspanWorkflow, restartLocalLinkspan, startLocalLinkspan, stopLocalLinkspan } from './LinkspanManager.js';
+import { autoStartLinkspan, checkLinkspanHealth, deployLinkspan, ensureLocalLinkspan, launchLinkspanProcess, pollLinkspanWorkflow, refreshAuthTokens, restartLocalLinkspan, startLocalLinkspan, stopLocalLinkspan } from './LinkspanManager.js';
 import { deleteDevTunnel } from './DevTunnelManager.js';
 
 /**
@@ -2467,6 +2467,9 @@ export class CybershuttleViewProvider implements vscode.WebviewViewProvider {
         saveSessions(this.ctx);
         this._sendRuntimeUpdates();
         this._updateStatusBar();
+
+        // Refresh Entra ID auth tokens on remote linkspan instances (every ~45 min)
+        await refreshAuthTokens(this.ctx);
 
         // Push active sessions metadata to local linkspan
         const workspaceSessions = new Map<string, any[]>();

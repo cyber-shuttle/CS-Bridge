@@ -573,6 +573,119 @@ async function _announceLocalLinkspan(session: Runtime, localInfo: import('./Loc
     }
 }
 
+/** Token refresh interval: 45 minutes (Entra ID tokens typically expire after 1 hour). */
+const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
+
+/**
+* Push a fresh Entra ID auth token to a remote linkspan instance.
+* Uses the tunnel URL if available, falls back to SSH + curl to the compute node.
+*/
+async function _pushAuthTokenToRemote(session: Runtime, authToken: string, ctx: CSExtensionContext): Promise<boolean> {
+    const payload = JSON.stringify({ authToken });
+
+    // Primary: via tunnel URL
+    if (session.tunnelUrl && session.tunnelToken) {
+        try {
+            const baseUrl = session.tunnelUrl.replace(/\/$/, '');
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10_000);
+            const resp = await fetch(`${baseUrl}/api/v1/tunnels/devtunnels/auth-token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.tunnelToken}`,
+                },
+                body: payload,
+                signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            if (resp.ok) { return true; }
+            ctx.outputChannel.appendLine(`[token-refresh] Tunnel push failed for ${session.id}: ${resp.status}`);
+        } catch (err: any) {
+            ctx.outputChannel.appendLine(`[token-refresh] Tunnel push error for ${session.id}: ${err.message}`);
+        }
+    }
+
+    // Fallback: SSH + curl to remote linkspan's local API
+    if (session.remoteServerPort && session.computeNode) {
+        try {
+            const escapedPayload = payload.replace(/'/g, "'\\''");
+            const curlCmd = `curl -sf -X POST http://127.0.0.1:${session.remoteServerPort}/api/v1/tunnels/devtunnels/auth-token -H 'Content-Type: application/json' -d '${escapedPayload}'`;
+            const result = await ctx.ssh.runRemoteCommand(session.computeNode, curlCmd);
+            if (result.code === 0) { return true; }
+            ctx.outputChannel.appendLine(`[token-refresh] SSH push failed for ${session.id}: ${result.stdout}`);
+        } catch (err: any) {
+            ctx.outputChannel.appendLine(`[token-refresh] SSH push error for ${session.id}: ${err.message}`);
+        }
+    }
+
+    return false;
+}
+
+/**
+* Refresh the Entra ID auth token on all active devtunnel sessions (remote + local).
+* Called from the session poll loop; skips if less than TOKEN_REFRESH_INTERVAL_MS
+* has elapsed since the last refresh.
+*/
+export async function refreshAuthTokens(ctx: CSExtensionContext): Promise<void> {
+    const now = Date.now();
+    if (ctx.lastTokenRefresh && (now - ctx.lastTokenRefresh) < TOKEN_REFRESH_INTERVAL_MS) {
+        return;
+    }
+
+    if (ctx.tunnelManager.getProvider() !== 'devtunnel') { return; }
+
+    const activeSessions = allRuntimes(ctx.workspaces).filter(
+        s => s.status === 'Active' && s.tunnelUrl
+    );
+    // Also check for running local linkspan instances
+    const hasLocalLinkspan = ctx.localLinkspan.listAll().length > 0;
+    if (activeSessions.length === 0 && !hasLocalLinkspan) { return; }
+
+    let authToken: string;
+    try {
+        const creds = await ctx.tunnelManager.getCredentials();
+        authToken = creds.authToken;
+    } catch (err: any) {
+        ctx.outputChannel.appendLine(`[token-refresh] Failed to get fresh Entra ID token: ${err.message}`);
+        return;
+    }
+
+    ctx.lastTokenRefresh = now;
+
+    // Refresh remote sessions
+    for (const session of activeSessions.filter(s => !s.isLocal)) {
+        const ok = await _pushAuthTokenToRemote(session, authToken, ctx);
+        if (ok) {
+            ctx.outputChannel.appendLine(`[token-refresh] Refreshed auth token for session ${session.id}`);
+        } else {
+            ctx.outputChannel.appendLine(`[token-refresh] Failed to refresh auth token for session ${session.id}`);
+        }
+    }
+
+    // Refresh local linkspan instances (localhost API)
+    for (const info of ctx.localLinkspan.listAll()) {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5_000);
+            const resp = await fetch(`http://127.0.0.1:${info.serverPort}/api/v1/tunnels/devtunnels/auth-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ authToken }),
+                signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            if (resp.ok) {
+                ctx.outputChannel.appendLine(`[token-refresh] Refreshed auth token for local linkspan (${info.workspacePath})`);
+            } else {
+                ctx.outputChannel.appendLine(`[token-refresh] Local linkspan refresh failed (${info.workspacePath}): ${resp.status}`);
+            }
+        } catch (err: any) {
+            ctx.outputChannel.appendLine(`[token-refresh] Local linkspan refresh error (${info.workspacePath}): ${err.message}`);
+        }
+    }
+}
+
 /**
 * Check if linkspan is alive by hitting /api/v1/health through the tunnel.
 */
