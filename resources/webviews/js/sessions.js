@@ -38,6 +38,9 @@
             case 'scriptPreview':
                 showSlurmScriptPreview(msg.session);
                 break;
+            case 'connectTunnelError':
+                console.error('Error connecting tunnel for session: ' + msg.sessionId + ' err: ' + msg.message);
+                break;
             default:
                 console.warn('Unknown message command:', msg.command);
         }
@@ -157,6 +160,11 @@
         vscode.postMessage({ command: 'cancelSessionExecution', sessionId: sessionId });
     }
 
+    function connectTunnel(sessionId) {
+        //disableSessionActions(sessionId);
+        console.log('Requesting to connect tunnel for session:', sessionId);
+        vscode.postMessage({ command: 'connectTunnel', sessionId: sessionId });
+    }
     // Delegated click handler for dynamically created start/restart buttons
     document.addEventListener('click', function (e) {
 
@@ -170,6 +178,14 @@
         if (stopButton) {
             const sessionId = stopButton.getAttribute('data-session-id');
             if (sessionId) { stopSession(sessionId); }
+        }
+
+        const switchBtn = e.target.closest('.switch-btn');
+        if (switchBtn) {
+            const sessionId = switchBtn.getAttribute('data-session-id');
+            if (sessionId) {
+                connectTunnel(sessionId);
+            }
         }
 
     });
@@ -270,18 +286,27 @@
             ' <span class="detail-sep">|</span> ' + timePart;
 
         let line2 = '';
-        // status: 'connected' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
+        // status: 'ready_to_connect' | 'connected' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired' | 'connection_broken';
         // update the bottom left status text based on session.status
         switch (session.status) {
             case 'not_started':
                 line2 = '<span class="session-detail">' + ci('circle-slash') + ' not started</span>';
                 break;
-            case 'running':
+            case 'ready_to_connect':
                 if (session.connectionInfo && session.connectionInfo.tunnelId) {
                     line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.connectionInfo.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.connectionInfo.tunnelId) + '" title="Copy tunnel ID">' + ci('copy') + '</button></span>';
                 } else {
                     line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
                 }
+                break;
+            case 'running':
+                line2 = '<span class="session-detail"><span class="spinner"></span> Fetching connection info...</span>';
+                break;
+            case 'connection_broken':
+                line2 = '<span class="session-detail"><span class="spinner"></span> Connection broken, attempting to reconnect...</span>';
+                break;
+            case 'connecting':
+                line2 = '<span class="session-detail"><span class="spinner"></span> Attempting to connect tunnel...</span>';
                 break;
             case 'deploying_agent':
                 line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(session.host) + '...</span>';
@@ -324,12 +349,12 @@
 
         if (['failed', 'cancelled', 'expired', 'completed'].includes(session.status)) {
             incActionBtns.push('<button class="session-action-main action-start start-btn" data-session-id="' + session.id + '">' + ci('debug-restart') + ' Restart</button>');
-        } else if (['pending', 'cancelling', 'submitting', 'deploying_agent', 'connected'].includes(session.status)) {
+        } else if (['pending', 'cancelling', 'submitting', 'deploying_agent', 'connected', 'running', 'connection_broken', 'connecting'].includes(session.status)) {
             //incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
-        } else if (['running'].includes(session.status)) {
+        } else if (['ready_to_connect'].includes(session.status)) {
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
-            incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Activate</button>');
+            incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Connect</button>');
         } else if (['not_started'].includes(session.status)) {
             incActionBtns.push('<button class="session-action-main action-start start-btn" data-session-id="' + session.id + '">' + ci('play') + ' Start</button>');
         }

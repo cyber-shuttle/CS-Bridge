@@ -20,6 +20,8 @@ Job status lifecycle:
 - submitting: Job is being submitted to the cluster.
 - pending: Job has been submitted to the cluster and is waiting in the queue.
 - running: Job is currently running on the cluster.
+- ready_to_connect: Job is running and tunnel is set up, waiting for user to connect.
+- connecting: User has initiated connection, attempting to connect tunnel.
 - connected: Job is running and tunnel is connected, ready for user interaction.
 - completed: Job has completed successfully.
 
@@ -28,12 +30,13 @@ Error states (Need proper handling and messaging for these):
 - cancelling: Cancellation has been requested and is in progress.
 - cancelled: Job has been cancelled.
 - expired: Session has expired (e.g., tunnel expired, job ran out of time, etc.).
+- connection_broken: Tunnel connection failed after job started.
 */
 export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'configuring' | 'connected' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
+    status: 'configuring' | 'connecting' | 'connected' | 'ready_to_connect' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired' | 'connection_broken';
     tunnelType: 'devtunnel' | 'cstunnel' | 'open';
     submittedAt: number;
     errorMessage: string;
@@ -46,6 +49,7 @@ interface SessionConnectionInfo {
     tunnelId: string;
     tunnelToken: string;
     apiPort: number;
+    region: string;
 }
 
 export interface SshHost {

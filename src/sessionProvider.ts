@@ -4,7 +4,7 @@ import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
 import { generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
 import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
-import { getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { createSSHServerForSessionOverTunnel, getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
@@ -99,6 +99,11 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 this._logger.info(`Cancelling session execution with ID: ${cancelSessionId}`);
                 this._cancelSessionExecution(webView, cancelSessionId);
                 break;
+            case 'connectTunnel':
+                const connectSessionId = data.sessionId;
+                this._logger.info(`Connecting tunnel for session with ID: ${connectSessionId}`);
+                this._connectSessionToTunnel(webView, connectSessionId);
+                break;
             case 'switchAuth':
                 this._logger.info('Switching Dev Tunnels authentication account as requested by webview');
                 switchDevTunnelAccount().then(() => {
@@ -122,6 +127,32 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private _connectSessionToTunnel(webView: vscode.Webview, sessionId: string) {
+        const session = findSession(sessionId);
+        if (!session) {
+            this._logger.error(`Session with ID ${sessionId} not found to connect tunnel.`);
+            vscode.window.showErrorMessage('Session not found.');
+            webView.postMessage({ command: 'connectTunnelError', sessionId: sessionId, message: 'Session not found.' });
+            return;
+        }
+
+        createSSHServerForSessionOverTunnel(session).then(() => {
+            this._logger.info(`Tunnel connection process completed for session ID: ${sessionId}`);
+        }).catch((error: Error) => {
+            this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
+            vscode.window.showErrorMessage(`Failed to connect tunnel: ${error instanceof Error ? error.message : String(error)}. Please check your tunnel configuration and cluster status.`);
+            session.status = 'connection_broken';
+            session.errorMessage = `Failed to connect tunnel: ${error instanceof Error ? error.message : String(error)}`;
+            updateSession(session);
+            webView.postMessage({ command: 'connectTunnelError', sessionId: sessionId, message: error instanceof Error ? error.message : String(error) });
+            this._refereshSessions(webView);
+        });
+        // TODO: Implement actual tunnel connection logic here. For now, we just simulate the connection process.
+        session.status = 'connected';
+        updateSession(session);
+        this._refereshSessions(webView);
+    }
+
     private _cancelSessionExecution(webView: vscode.Webview, sessionId: string) {
         const session = findSession(sessionId);
         if (!session) {
@@ -133,7 +164,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
 
         // For simplicity, we just update the status here. In a real implementation, you'd also want to cancel the job on the cluster and clean up any resources.
         // TODO: Implement actual job cancellation logic (e.g., scancel for Slurm, API call for cloud provider, etc.)
-        if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent') {
+        if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent' || session.status === 'connected' || session.status === 'connection_broken') {
             session.status = 'cancelling';
             session.errorMessage = '';
             cancelRunningSession(session, webView).then(() => {
