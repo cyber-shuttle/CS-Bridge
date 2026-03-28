@@ -5,7 +5,6 @@ const sessions: SlurmSession[] = [
     {
         id: 'session1', name: 'Session 1',
         cluster: 'Cluster A', status: 'not_started', tunnelType: 'devtunnel',
-        tunnelId: 'tunnel1', tunnelUrl: 'http://localhost:3000',
         jobId: '12345', queue: 'gpu', wallTime: '01:00:00',
         gpuCount: 2, gpuClass: 'A100', cpus: 16, memory: '64GB',
         jobDirectory: '/home/user/job1', allocation: 'allocation1',

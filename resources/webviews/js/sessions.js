@@ -277,8 +277,8 @@
                 line2 = '<span class="session-detail">' + ci('circle-slash') + ' not started</span>';
                 break;
             case 'running':
-                if (session.tunnelUrl) {
-                    line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
+                if (session.connectionInfo && session.connectionInfo.tunnelId) {
+                    line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.connectionInfo.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.connectionInfo.tunnelId) + '" title="Copy tunnel ID">' + ci('copy') + '</button></span>';
                 } else {
                     line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
                 }
@@ -328,6 +328,7 @@
             //incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
         } else if (['running'].includes(session.status)) {
+            incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
             incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Activate</button>');
         } else if (['not_started'].includes(session.status)) {
             incActionBtns.push('<button class="session-action-main action-start start-btn" data-session-id="' + session.id + '">' + ci('play') + ' Start</button>');

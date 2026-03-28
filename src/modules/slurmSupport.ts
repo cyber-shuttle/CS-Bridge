@@ -1,6 +1,19 @@
 import { SlurmJobStatus, SlurmSession } from "../models";
 import { SshManager } from "./sshSupport";
 
+
+export async function getSlurmJobOutput(slurmSession: SlurmSession): Promise<string> {
+    const sshManager = SshManager.getInstance();
+
+    const command = `cat ~/.cybershuttle/logs/linkspan-session-${slurmSession.jobId}.err`;
+    const commandResult = await sshManager.runRemoteCommand(slurmSession.cluster, command);
+    if (commandResult.code !== 0) {
+        throw new Error(`Failed to get job output. SSH command error: ${commandResult.stderr}`);
+    }
+
+    return commandResult.stdout.trim();
+}
+
 export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<SlurmJobStatus> {
 
     const sshManager = SshManager.getInstance();

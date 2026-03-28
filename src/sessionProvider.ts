@@ -61,8 +61,6 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     cluster: data.host,
                     status: 'not_started',
                     tunnelType: 'devtunnel',
-                    tunnelId: '',
-                    tunnelUrl: 'https://devtunnels.microsoft.com',
                     jobId: '',
                     queue: data.queue || '',
                     wallTime: data.wallTime || '',
@@ -198,33 +196,33 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         }
 
         // Generate script on demand if missing
-        if (!session.batchScript) {
-            let creds: TunnelCredential;
-            try {
-                creds = await getDevTunnelCredentials();
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
-                session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
-                updateSession(session);
-                this._logger.error('Failed to get tunnel credentials:', err);
-                throw err;
-            }
-            this._logger.info('Generating Slurm script for session:', session);
-            try {
-                session.batchScript = generateSlurmScript(session, creds);
-                this._logger.info('Generated Slurm script:', session.batchScript);
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
-                session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
-                updateSession(session);
-                this._logger.error('Failed to generate Slurm script:', err);
-                throw err;
-            }
-            this._logger.info('Generated Slurm script:', session.batchScript);
+        //if (!session.batchScript) {
+        let creds: TunnelCredential;
+        try {
+            creds = await getDevTunnelCredentials();
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
+            session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
+            updateSession(session);
+            this._logger.error('Failed to get tunnel credentials:', err);
+            throw err;
         }
+        this._logger.info('Generating Slurm script for session:', session);
+        try {
+            session.batchScript = generateSlurmScript(session, creds);
+            this._logger.info('Generated Slurm script:', session.batchScript);
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
+            session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
+            updateSession(session);
+            this._logger.error('Failed to generate Slurm script:', err);
+            throw err;
+        }
+        this._logger.info('Generated Slurm script:', session.batchScript);
+        //}
 
         session.errorMessage = '';
-        session.runtimeInfo = undefined;
+        session.connectionInfo = undefined;
         session.status = 'configuring';
         updateSession(session);
         this._refereshSessions(webView);

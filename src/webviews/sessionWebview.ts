@@ -80,12 +80,12 @@ function generateSessionDetailsHtml(session: SlurmSession): string {
         ' <span class="detail-sep">|</span> ' + ci('database') + ' ' + session.memory + gpuPart +
         ' <span class="detail-sep">|</span> ' + timePart;
 
-    const line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.tunnelId || '') +
-        ' <button class="copy-btn" data-copy="' + escapeHtml(session.tunnelUrl) + '" title="Copy tunnel URL">' + ci('copy') + '</button></span>';
+    const line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.connectionInfo ? session.connectionInfo.tunnelId : '') +
+        ' <button class="copy-btn" data-copy="' + escapeHtml(session.connectionInfo ? session.connectionInfo.tunnelId : '') + '" title="Copy tunnel ID">' + ci('copy') + '</button></span>';
 
     const incActionBtns = [];
     incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
-    incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Activate</button>');
+    incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Connect</button>');
 
 
     const statusLeft = line2 || '';

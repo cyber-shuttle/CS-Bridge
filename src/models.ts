@@ -35,19 +35,17 @@ export interface Session {
     cluster: string;
     status: 'configuring' | 'connected' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired';
     tunnelType: 'devtunnel' | 'cstunnel' | 'open';
-    tunnelId: string;
-    tunnelUrl: string;
     submittedAt: number;
     errorMessage: string;
-    runtimeInfo?: SessionRuntimeInfo;
+    connectionInfo?: SessionConnectionInfo;
 }
 
-interface SessionRuntimeInfo {
+interface SessionConnectionInfo {
     sshPort: number;
     logPort: number;
-    tunnelUrl: string;
+    tunnelId: string;
     tunnelToken: string;
-    jobId: string;
+    apiPort: number;
 }
 
 export interface SshHost {

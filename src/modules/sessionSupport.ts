@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { Logger } from './../logger';
 import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
-import { getSlurmJobStatus } from "./slurmSupport";
+import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
 
 const logger = Logger.getInstance();
 
@@ -71,9 +71,66 @@ export class JobStatusMonitor {
                         await this._lock.acquire();
                         const stillTracked = this.monitoringSessions.has(sessionId);
                         this._lock.release();
-                        if (!stillTracked) { continue; }
+                        if (!stillTracked) {
+                            logger.info(`Session ${session.name} is no longer tracked for monitoring. Skipping status update.`);
+                            continue;
+                        }
 
-                        if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'running') {
+                        if (slurmStatus === SlurmJobStatus.RUNNING && session.status === 'running') {
+                            //logger.info(`Session ${session.name} is now running. Fetching job output...`);
+                            getSlurmJobOutput(session).then(output => {
+                                //logger.info(`Fetched job output for session ${session.name}:\n${output}`);
+                                output.split('\n').forEach(line => {
+                                    if (line.includes('listening on')) { // 2026/03/28 01:56:53 listening on 0.0.0.0:40119
+                                        if (!session.connectionInfo) {
+                                            session.connectionInfo = {
+                                                sshPort: 0,
+                                                logPort: 0,
+                                                tunnelId: '',
+                                                tunnelToken: '',
+                                                apiPort: 0
+                                            };
+                                        }
+                                        session.connectionInfo.sshPort = parseInt(line.split('listening on')[1].trim().split(':')[1]);
+                                        logger.info(`Session ${session.name} is listening on: ${line}`);
+                                        updateSession(session);
+                                        webView.postMessage({ command: 'sessionUpdate', session: session });
+                                    }
+                                    if (line.includes('DevTunnel ID:')) { // 2026/03/28 01:56:56 DevTunnel ID: linkspan-tunnel-1774663013499377392
+                                        logger.info(`Extracted DevTunnel ID for session ${session.name}: ${line}`);
+                                        if (!session.connectionInfo) {
+                                            session.connectionInfo = {
+                                                sshPort: 0,
+                                                logPort: 0,
+                                                tunnelId: '',
+                                                tunnelToken: '',
+                                                apiPort: 0
+                                            };
+                                        }
+                                        session.connectionInfo.tunnelId = line.split('DevTunnel ID:')[1].trim();
+                                        updateSession(session);
+                                        webView.postMessage({ command: 'sessionUpdate', session: session });
+                                    }
+                                    if (line.includes('DevTunnel Token:')) { // 2026/03/28 01:56:56 DevTunnel Token: eyJhbG
+                                        logger.info(`Extracted DevTunnel Token for session ${session.name}: ${line}`);
+                                        if (!session.connectionInfo) {
+                                            session.connectionInfo = {
+                                                sshPort: 0,
+                                                logPort: 0,
+                                                tunnelId: '',
+                                                tunnelToken: '',
+                                                apiPort: 0
+                                            };
+                                        }
+                                        session.connectionInfo.tunnelToken = line.split('DevTunnel Token:')[1].trim();
+                                        updateSession(session);
+                                        webView.postMessage({ command: 'sessionUpdate', session: session });
+                                    }
+                                });
+                            }).catch(err => {
+                                logger.error(`Failed to get job output for session ${session.name}:`, err);
+                            });
+                        } else if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'running') {
                             session.status = 'running';
                             updateSession(session);
                             webView.postMessage({ command: 'sessionUpdate', session: session });
