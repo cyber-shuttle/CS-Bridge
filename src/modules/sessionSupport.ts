@@ -89,7 +89,8 @@ export class JobStatusMonitor {
                                                 tunnelId: '',
                                                 tunnelToken: '',
                                                 apiPort: 0,
-                                                region: ''
+                                                region: '',
+                                                sshPassword: ''
                                             };
                                         }
                                         session.connectionInfo.apiPort = parseInt(line.split('listening on')[1].trim().split(':')[1]);
@@ -106,7 +107,8 @@ export class JobStatusMonitor {
                                                 tunnelId: '',
                                                 tunnelToken: '',
                                                 apiPort: 0,
-                                                region: ''
+                                                region: '',
+                                                sshPassword: ''
                                             };
                                         }
                                         session.connectionInfo.tunnelId = line.split('DevTunnel ID:')[1].trim();
@@ -122,7 +124,8 @@ export class JobStatusMonitor {
                                                 tunnelId: '',
                                                 tunnelToken: '',
                                                 apiPort: 0,
-                                                region: ''
+                                                region: '',
+                                                sshPassword: ''
                                             };
                                         }
                                         session.connectionInfo.tunnelToken = line.split('DevTunnel Token:')[1].trim();
@@ -138,7 +141,8 @@ export class JobStatusMonitor {
                                                 tunnelId: '',
                                                 tunnelToken: '',
                                                 apiPort: 0,
-                                                region: ''
+                                                region: '',
+                                                sshPassword: ''
                                             };
                                         }
                                         session.connectionInfo.region = line.split('Devtunnel cluster id:')[1].trim();

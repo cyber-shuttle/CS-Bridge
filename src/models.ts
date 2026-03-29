@@ -50,6 +50,7 @@ interface SessionConnectionInfo {
     tunnelToken: string;
     apiPort: number;
     region: string;
+    sshPassword: string;
 }
 
 export interface SshHost {
