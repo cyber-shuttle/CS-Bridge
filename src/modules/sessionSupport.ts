@@ -53,6 +53,20 @@ export class JobStatusMonitor {
         return JobStatusMonitor.instance;
     }
 
+    private initializeConnectionInfo() {
+        return {
+            sshPort: 0,
+            logPort: 0,
+            apiTunnelId: '',
+            apiTunnelAccessToken: '',
+            apiPort: 0,
+            region: '',
+            sshPassword: '',
+            sshTunnelId: '',
+            sshTunnelForwardPort: 0
+        };
+    }
+
     // Run a while loop to periodically check the status of all sessions being monitored in background
     private async monitorSessions(webView: vscode.Webview) {
         while (true) {
@@ -83,15 +97,7 @@ export class JobStatusMonitor {
                                 output.split('\n').forEach(line => {
                                     if (line.includes('listening on')) { // 2026/03/28 01:56:53 listening on 0.0.0.0:40119
                                         if (!session.connectionInfo) {
-                                            session.connectionInfo = {
-                                                sshPort: 0,
-                                                logPort: 0,
-                                                tunnelId: '',
-                                                tunnelToken: '',
-                                                apiPort: 0,
-                                                region: '',
-                                                sshPassword: ''
-                                            };
+                                            session.connectionInfo = this.initializeConnectionInfo();
                                         }
                                         session.connectionInfo.apiPort = parseInt(line.split('listening on')[1].trim().split(':')[1]);
                                         logger.info(`Session ${session.name} is listening on: ${line}`);
@@ -101,49 +107,25 @@ export class JobStatusMonitor {
                                     if (line.includes('DevTunnel ID:')) { // 2026/03/28 01:56:56 DevTunnel ID: linkspan-tunnel-1774663013499377392
                                         logger.info(`Extracted DevTunnel ID for session ${session.name}: ${line}`);
                                         if (!session.connectionInfo) {
-                                            session.connectionInfo = {
-                                                sshPort: 0,
-                                                logPort: 0,
-                                                tunnelId: '',
-                                                tunnelToken: '',
-                                                apiPort: 0,
-                                                region: '',
-                                                sshPassword: ''
-                                            };
+                                            session.connectionInfo = this.initializeConnectionInfo();
                                         }
-                                        session.connectionInfo.tunnelId = line.split('DevTunnel ID:')[1].trim();
+                                        session.connectionInfo.apiTunnelId = line.split('DevTunnel ID:')[1].trim();
                                         updateSession(session);
                                         webView.postMessage({ command: 'sessionUpdate', session: session });
                                     }
                                     if (line.includes('DevTunnel Token:')) { // 2026/03/28 01:56:56 DevTunnel Token: eyJhbG
                                         logger.info(`Extracted DevTunnel Token for session ${session.name}: ${line}`);
                                         if (!session.connectionInfo) {
-                                            session.connectionInfo = {
-                                                sshPort: 0,
-                                                logPort: 0,
-                                                tunnelId: '',
-                                                tunnelToken: '',
-                                                apiPort: 0,
-                                                region: '',
-                                                sshPassword: ''
-                                            };
+                                            session.connectionInfo = this.initializeConnectionInfo();
                                         }
-                                        session.connectionInfo.tunnelToken = line.split('DevTunnel Token:')[1].trim();
+                                        session.connectionInfo.apiTunnelAccessToken = line.split('DevTunnel Token:')[1].trim();
                                         updateSession(session);
                                         webView.postMessage({ command: 'sessionUpdate', session: session });
                                     }
                                     if (line.includes('Devtunnel cluster id:')) { // 2026/03/28 10:59:44 Devtunnel cluster id: asse
                                         logger.info(`Extracted DevTunnel Cluster ID for session ${session.name}: ${line}`);
                                         if (!session.connectionInfo) {
-                                            session.connectionInfo = {
-                                                sshPort: 0,
-                                                logPort: 0,
-                                                tunnelId: '',
-                                                tunnelToken: '',
-                                                apiPort: 0,
-                                                region: '',
-                                                sshPassword: ''
-                                            };
+                                            session.connectionInfo = this.initializeConnectionInfo();
                                         }
                                         session.connectionInfo.region = line.split('Devtunnel cluster id:')[1].trim();
                                         updateSession(session);
@@ -159,11 +141,11 @@ export class JobStatusMonitor {
                             });
 
                             if (session.status === 'running' && session.connectionInfo &&
-                                session.connectionInfo.tunnelId && session.connectionInfo.tunnelToken &&
+                                session.connectionInfo.apiTunnelId && session.connectionInfo.apiTunnelAccessToken &&
                                 session.connectionInfo.region &&
                                 session.connectionInfo.apiPort > 0) {
                                 session.status = 'ready_to_connect';
-                                logger.info(`Session ${session.name} is ready to connect. Tunnel ID: ${session.connectionInfo.tunnelId}, SSH Port: ${session.connectionInfo.sshPort}`);
+                                logger.info(`Session ${session.name} is ready to connect. API Tunnel ID: ${session.connectionInfo.apiTunnelId}, SSH Port: ${session.connectionInfo.sshPort}`);
                                 updateSession(session);
                                 webView.postMessage({ command: 'sessionUpdate', session: session });
                                 this.stopMonitoringInternal(sessionId);

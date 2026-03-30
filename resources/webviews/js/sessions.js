@@ -293,8 +293,8 @@
                 line2 = '<span class="session-detail">' + ci('circle-slash') + ' not started</span>';
                 break;
             case 'ready_to_connect':
-                if (session.connectionInfo && session.connectionInfo.tunnelId) {
-                    line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.connectionInfo.tunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.connectionInfo.tunnelId) + '" title="Copy tunnel ID">' + ci('copy') + '</button></span>';
+                if (session.connectionInfo && session.connectionInfo.apiTunnelId) {
+                    line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.connectionInfo.apiTunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.connectionInfo.apiTunnelId) + '" title="Copy tunnel ID">' + ci('copy') + '</button></span>';
                 } else {
                     line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
                 }

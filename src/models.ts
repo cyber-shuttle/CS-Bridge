@@ -45,12 +45,14 @@ export interface Session {
 
 interface SessionConnectionInfo {
     sshPort: number;
+    sshTunnelForwardPort: number;
+    sshTunnelId: string;
+    sshPassword: string;
     logPort: number;
-    tunnelId: string;
-    tunnelToken: string;
+    apiTunnelId: string;
+    apiTunnelAccessToken: string;
     apiPort: number;
     region: string;
-    sshPassword: string;
 }
 
 export interface SshHost {
