@@ -86,16 +86,21 @@ export async function createSSHServerForSessionOverTunnel(session: SlurmSession)
     logger.info(`SSH server forward for session ${session.id} created successfully. Data: ${JSON.stringify(forwardRespData)}`);
 
     // Finally do the port forwarding connection to the Dev Tunnel so that the SSH server is accessible
-    connectSessionToTunnel(session).catch(err => {
-        logger.error(`Failed to connect session ${session.id} to tunnel after creating SSH server:`, err);
-    });
+    connectSessionToTunnel(session)
+        .then(localPort => {
+            logger.info(`Session ${session.id} connected to tunnel successfully. Local SSH port: ${localPort}`);
+
+        })
+        .catch(err => {
+            logger.error(`Failed to connect session ${session.id} to tunnel after creating SSH server:`, err);
+        });
 
     // 
     // Update the ssh config file, clean up old entries if necessary
     // Use ms remote connection URI format: ssh://user@hostname:port
 }
 
-export async function connectSessionToTunnel(session: SlurmSession): Promise<void> {
+export async function connectSessionToTunnel(session: SlurmSession): Promise<number> {
     logger.info(`Connecting session ${session.id} to tunnel...`);
 
     if (!session.connectionInfo) {
@@ -149,6 +154,7 @@ export async function connectSessionToTunnel(session: SlurmSession): Promise<voi
     updateSession(session);
 
     logger.info(`Tunnel connected for session ${session.id}. SSH available at 127.0.0.1:${localPort}`);
+    return localPort;
 }
 
 export async function getDevTunnelCredentials(): Promise<TunnelCredential> {
