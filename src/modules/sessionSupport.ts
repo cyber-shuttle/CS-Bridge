@@ -4,6 +4,7 @@ import { Logger } from './../logger';
 import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
+import { disconnectSessionFromTunnel } from "./tunnelSupport";
 
 const logger = Logger.getInstance();
 
@@ -481,6 +482,24 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
             session.errorMessage = errorMessage;
             updateSession(session);
             webView.postMessage({ command: 'sessionUpdate', session: session });
+        }
+
+        if (session.connectionInfo && session.connectionInfo.sshTunnelId) {
+            const tunnelIdToCancel = session.connectionInfo.sshTunnelId;
+            logger.info(`Session ${session.name} has an active SSH tunnel with ID ${tunnelIdToCancel}. Attempting to close the tunnel...`);
+            try {
+                // Assuming we have a function to close tunnels by ID, e.g. closeTunnelById(tunnelId)
+                await disconnectSessionFromTunnel(session);
+                logger.info(`SSH tunnel ${tunnelIdToCancel} closed successfully for session ${session.name}`);
+            } catch (err) {
+                const errorMessage = `Failed to close SSH tunnel ${tunnelIdToCancel} for session ${session.name}: ${err}`;
+                logger.error(errorMessage);
+                vscode.window.showErrorMessage(errorMessage);
+                session.status = 'failed';
+                session.errorMessage = errorMessage;
+                updateSession(session);
+                webView.postMessage({ command: 'sessionUpdate', session: session });
+            }
         }
 
         JobStatusMonitor.getInstance().stopMonitoring(session.id);

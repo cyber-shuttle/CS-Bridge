@@ -11,12 +11,16 @@ import {
     TunnelRelayTunnelClient,
 } from "@microsoft/dev-tunnels-connections";
 import { TunnelAccessScopes } from "@microsoft/dev-tunnels-contracts";
+import { createSSHConfigEntry, clearSSHConfigEntry } from "./sshSupport";
 
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
 const DEV_TUNNELS_SCOPE = `${DEV_TUNNELS_APP_ID}/.default`;
 
 const logger = Logger.getInstance();
+
+/** Active tunnel relay clients, keyed by session ID, so they can be disconnected later. */
+const activeTunnelClients = new Map<string, TunnelRelayTunnelClient>();
 
 export async function createSSHServerForSessionOverTunnel(session: SlurmSession): Promise<void> {
 
@@ -89,7 +93,8 @@ export async function createSSHServerForSessionOverTunnel(session: SlurmSession)
     connectSessionToTunnel(session)
         .then(localPort => {
             logger.info(`Session ${session.id} connected to tunnel successfully. Local SSH port: ${localPort}`);
-
+            const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPassword!);
+            logger.info(`SSH config entry created for session ${session.id} with host alias ${hostAlias}. You can connect using 'ssh ${hostAlias}'`);
         })
         .catch(err => {
             logger.error(`Failed to connect session ${session.id} to tunnel after creating SSH server:`, err);
@@ -151,10 +156,38 @@ export async function connectSessionToTunnel(session: SlurmSession): Promise<num
     const localPort = client.forwardedPorts?.find((p) => p.remotePort === sshPort)?.localPort ?? sshPort;
     session.connectionInfo!.sshTunnelForwardPort = localPort;
     session.status = 'connected';
+    activeTunnelClients.set(session.id, client);
     updateSession(session);
 
     logger.info(`Tunnel connected for session ${session.id}. SSH available at 127.0.0.1:${localPort}`);
     return localPort;
+}
+
+export async function disconnectSessionFromTunnel(session: SlurmSession): Promise<void> {
+    logger.info(`Disconnecting session ${session.id} from tunnel...`);
+
+    // Dispose the tunnel relay client if one is active
+    const client = activeTunnelClients.get(session.id);
+    if (client) {
+        try {
+            await client.dispose();
+            logger.info(`Tunnel relay client disposed for session ${session.id}`);
+        } catch (err) {
+            logger.error(`Error disposing tunnel relay client for session ${session.id}:`, err);
+        }
+        activeTunnelClients.delete(session.id);
+    }
+
+    // Remove the SSH config entry
+    const hostAlias = `cshost-${session.id}`;
+    clearSSHConfigEntry(session.id, hostAlias);
+    logger.info(`SSH config entry removed for session ${session.id}`);
+
+    if (session.connectionInfo) {
+        session.connectionInfo = undefined;
+    }
+
+    logger.info(`Session ${session.id} disconnected from tunnel.`);
 }
 
 export async function getDevTunnelCredentials(): Promise<TunnelCredential> {

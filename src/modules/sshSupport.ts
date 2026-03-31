@@ -6,8 +6,8 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
-import { generateLinkspanWorkflow } from "./linkspanSupport";
 
+const logger = Logger.getInstance();
 
 export class SshManager {
 
@@ -25,6 +25,15 @@ export class SshManager {
         if (!SshManager._instance) {
             SshManager._instance = new SshManager(extensionUri);
         }
+
+        // Create getCSSshConfigPath if not exists
+        const sshCSSConfigPath = SshManager._instance.getCSSshConfigPath();
+        if (!fs.existsSync(sshCSSConfigPath)) {
+            fs.mkdirSync(path.dirname(sshCSSConfigPath), { recursive: true, mode: 0o700 });
+            fs.writeFileSync(sshCSSConfigPath, '', { mode: 0o600 });
+        }
+
+        SshManager._instance._ensureSshInclude();
         return SshManager._instance;
     }
 
@@ -99,6 +108,10 @@ export class SshManager {
         }
 
         return hosts;
+    }
+
+    public getCSSshConfigPath(): string {
+        return path.join(os.homedir(), '.cybershuttle', 'ssh_config');
     }
 
     /**
@@ -214,6 +227,29 @@ export class SshManager {
                 reject(err);
             });
         });
+    }
+
+    private _ensureSshInclude(): void {
+        const sshDir = path.join(os.homedir(), '.ssh');
+        const sshConfigPath = path.join(sshDir, 'config');
+        const includeLine = `Include ${this.getCSSshConfigPath()}`;
+
+        try {
+            if (!fs.existsSync(sshDir)) {
+                fs.mkdirSync(sshDir, { mode: 0o700 });
+            }
+            if (!fs.existsSync(sshConfigPath)) {
+                fs.writeFileSync(sshConfigPath, `${includeLine}\n`, { mode: 0o600 });
+                return;
+            }
+            const content = fs.readFileSync(sshConfigPath, 'utf-8');
+            if (!content.includes(includeLine)) {
+                // Include must appear before any Host/Match blocks to take effect
+                fs.writeFileSync(sshConfigPath, `${includeLine}\n${content}`);
+            }
+        } catch (err: any) {
+            logger.error(`[ssh] Failed to add Include to ~/.ssh/config: ${err.message}`);
+        }
     }
 
 }
@@ -406,4 +442,53 @@ function splitTopLevelComma(value: string): string[] {
     }
 
     return result;
+}
+
+// Returns the host alias to use for SSH connections (e.g. "cshost-SESSIONID")
+export function createSSHConfigEntry(sessionId: string, localPort: number, password: string): string {
+
+    const hostAlias = `cshost-${sessionId}`;
+
+    clearSSHConfigEntry(sessionId, hostAlias);
+
+    const hostname = '127.0.0.1';
+    const user = 'cs-ssh-user'; // No need to have this as the actual username on the cluster, since we'll be using a custom SSH server that ignores it. But it needs to be set to something non-empty to avoid SSH client errors.
+    const lines = [
+        ``,
+        `# CS-Bridge auto-generated for session ${sessionId}`,
+        `Host ${hostAlias}`,
+        `    HostName ${hostname}`,
+        `    Port ${localPort}`,
+        `    User ${user}`,
+        `    StrictHostKeyChecking no`,
+        `    UserKnownHostsFile /dev/null`,
+    ];
+
+    const configBlock = lines.join('\n');
+
+    const sshManager = SshManager.getInstance();
+    const configPath = sshManager.getCSSshConfigPath();
+    try {
+        fs.appendFileSync(configPath, `\n${configBlock}\n`);
+    } catch (err) {
+        logger.error(`Failed to write SSH config for session ${sessionId}:`, err);
+    }
+    return hostAlias;
+}
+
+export function clearSSHConfigEntry(sessionId: string, hostAlias: string): void {
+
+    const sshManager = SshManager.getInstance();
+    const configPath = sshManager.getCSSshConfigPath();
+    try {
+        const content = fs.readFileSync(configPath, 'utf-8');
+        const re = new RegExp(
+            `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`,
+            'gm'
+        );
+        const cleaned = content.replace(re, '');
+        if (cleaned !== content) {
+            fs.writeFileSync(configPath, cleaned);
+        }
+    } catch { /* ignore if file doesn't exist */ }
 }
