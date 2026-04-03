@@ -22,7 +22,7 @@ const logger = Logger.getInstance();
 /** Active tunnel relay clients, keyed by session ID, so they can be disconnected later. */
 const activeTunnelClients = new Map<string, TunnelRelayTunnelClient>();
 
-export async function createSSHServerForSessionOverTunnel(session: SlurmSession): Promise<void> {
+export async function createSSHServerForSession(session: SlurmSession): Promise<void> {
 
     if (!session.connectionInfo) {
         logger.error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
@@ -59,8 +59,19 @@ export async function createSSHServerForSessionOverTunnel(session: SlurmSession)
     session.connectionInfo!.sshPort = sshPort;
     session.connectionInfo!.sshPassword = respData.password;
     updateSession(session);
+}
 
+export async function createTunnelForSSHServer(session: SlurmSession): Promise<void> {
     logger.info('Adding ssh port for existing tunnel connection...');
+
+    if (!session.connectionInfo) {
+        logger.error(`Session ${session.id} does not have connection info. Cannot create tunnel for SSH server.`);
+        throw new Error(`Session ${session.id} does not have connection info. Cannot create tunnel for SSH server.`);
+    }
+
+    const baseAPIUrl = `https://${session.connectionInfo?.apiTunnelId}-${session.connectionInfo?.apiPort}.${session.connectionInfo?.region}.devtunnels.ms/api/v1`;
+    const apiToken = `tunnel ${session.connectionInfo?.apiTunnelAccessToken}`;
+    const sshPort = session.connectionInfo!.sshPort;
 
     // We create a new dev tunnel not to disrupt existing tunnel as it is required for API
     const forwardResp = await fetch(`${baseAPIUrl}/tunnels/devtunnels`, {
@@ -88,24 +99,9 @@ export async function createSSHServerForSessionOverTunnel(session: SlurmSession)
     session.connectionInfo!.sshTunnelId = forwardRespData.tunnelID;
     updateSession(session);
     logger.info(`SSH server forward for session ${session.id} created successfully. Data: ${JSON.stringify(forwardRespData)}`);
-
-    // Finally do the port forwarding connection to the Dev Tunnel so that the SSH server is accessible
-    connectSessionToTunnel(session)
-        .then(localPort => {
-            logger.info(`Session ${session.id} connected to tunnel successfully. Local SSH port: ${localPort}`);
-            const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPassword!);
-            logger.info(`SSH config entry created for session ${session.id} with host alias ${hostAlias}. You can connect using 'ssh ${hostAlias}'`);
-        })
-        .catch(err => {
-            logger.error(`Failed to connect session ${session.id} to tunnel after creating SSH server:`, err);
-        });
-
-    // 
-    // Update the ssh config file, clean up old entries if necessary
-    // Use ms remote connection URI format: ssh://user@hostname:port
 }
 
-export async function connectSessionToTunnel(session: SlurmSession): Promise<number> {
+export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<number> {
     logger.info(`Connecting session ${session.id} to tunnel...`);
 
     if (!session.connectionInfo) {

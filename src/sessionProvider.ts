@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
-import { generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
+import { createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
 import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
-import { createSSHServerForSessionOverTunnel, getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
@@ -101,8 +101,29 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 break;
             case 'connectTunnel':
                 const connectSessionId = data.sessionId;
+                const session = findSession(connectSessionId);
+
+                if (!session) {
+                    this._logger.error(`Session with ID ${connectSessionId} not found to connect tunnel.`);
+                    vscode.window.showErrorMessage('Session not found.');
+                    webView.postMessage({ command: 'connectTunnelError', sessionId: connectSessionId, message: 'Session not found.' });
+                    this._refereshSessions(webView);
+                    return;
+                }
+
                 this._logger.info(`Connecting tunnel for session with ID: ${connectSessionId}`);
-                this._connectSessionToTunnel(webView, connectSessionId);
+                this._connectSessionToTunnel(webView, session!).then(() => {
+                    this._logger.info(`Tunnel connection process completed for session ID: ${connectSessionId}`);
+
+                }).catch((error: Error) => {
+
+                    this._logger.error(`Error connecting tunnel for session ID ${connectSessionId}:`, error);
+                    session!.status = 'connection_broken';
+                    session!.errorMessage = `Failed to connect tunnel: ${error instanceof Error ? error.message : String(error)}`;
+                    updateSession(session!);
+                    webView.postMessage({ command: 'connectTunnelError', sessionId: session!.id, message: error instanceof Error ? error.message : String(error) });
+                    this._refereshSessions(webView);
+                });
                 break;
             case 'switchAuth':
                 this._logger.info('Switching Dev Tunnels authentication account as requested by webview');
@@ -127,27 +148,39 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private _connectSessionToTunnel(webView: vscode.Webview, sessionId: string) {
-        const session = findSession(sessionId);
-        if (!session) {
-            this._logger.error(`Session with ID ${sessionId} not found to connect tunnel.`);
-            vscode.window.showErrorMessage('Session not found.');
-            webView.postMessage({ command: 'connectTunnelError', sessionId: sessionId, message: 'Session not found.' });
-            return;
+    private async _connectSessionToTunnel(webView: vscode.Webview, session: SlurmSession) {
+
+        try {
+            await createSSHServerForSession(session);
+        } catch (error) {
+            this._logger.error(`Error creating SSH server for session ID ${session.id}:`, error);
+            throw new Error(`Failed to create SSH server for session: ${error instanceof Error ? error.message : String(error)}`);
         }
 
-        createSSHServerForSessionOverTunnel(session).then(() => {
-            this._logger.info(`Tunnel connection process completed for session ID: ${sessionId}`);
-        }).catch((error: Error) => {
-            this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
-            vscode.window.showErrorMessage(`Failed to connect tunnel: ${error instanceof Error ? error.message : String(error)}. Please check your tunnel configuration and cluster status.`);
-            session.status = 'connection_broken';
-            session.errorMessage = `Failed to connect tunnel: ${error instanceof Error ? error.message : String(error)}`;
-            updateSession(session);
-            webView.postMessage({ command: 'connectTunnelError', sessionId: sessionId, message: error instanceof Error ? error.message : String(error) });
-            this._refereshSessions(webView);
-        });
-        // TODO: Implement actual tunnel connection logic here. For now, we just simulate the connection process.
+        try {
+            await createTunnelForSSHServer(session);
+        } catch (error) {
+            this._logger.error(`Error creating tunnel for SSH server for session ID ${session.id}:`, error);
+            throw new Error(`Failed to create tunnel for SSH server: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        let localPort: number;
+        try {
+            localPort = await connectSessionToSSHTunnel(session);
+
+        } catch (error) {
+            this._logger.error(`Error connecting session ID ${session.id} to SSH tunnel:`, error);
+            throw new Error(`Failed to connect session to SSH tunnel: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPassword!);
+        this._logger.info(`SSH config entry created for session ${session.id} with host alias ${hostAlias}. You can connect using 'ssh ${hostAlias}'`);
+
+        vscode.commands.executeCommand(
+            'vscode.newWindow',
+            { remoteAuthority: `ssh-remote+${hostAlias}` }
+        );
+
         session.status = 'connected';
         updateSession(session);
         this._refereshSessions(webView);
