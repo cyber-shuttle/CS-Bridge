@@ -8,16 +8,21 @@ import * as crypto from 'crypto';
 import { Logger } from "../logger";
 
 const logger = Logger.getInstance();
+const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
+const CS_SSH_KEYS_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_keys');
+const CS_SSH_CONTROL_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_control');
 
 export class SshManager {
 
     private static _instance: SshManager | undefined;
-    private _sshControlDir: string;
 
     private constructor(private readonly _extensionUri: vscode.Uri) {
-        this._sshControlDir = path.join(os.homedir(), '.cs-ssh');
-        if (!fs.existsSync(this._sshControlDir)) {
-            fs.mkdirSync(this._sshControlDir, { mode: 0o700 });
+        if (!fs.existsSync(CS_SSH_CONTROL_DIR)) {
+            fs.mkdirSync(CS_SSH_CONTROL_DIR, { mode: 0o700 });
+        }
+
+        if (!fs.existsSync(CS_SSH_KEYS_DIR)) {
+            fs.mkdirSync(CS_SSH_KEYS_DIR, { recursive: true, mode: 0o700 });
         }
     }
 
@@ -26,11 +31,10 @@ export class SshManager {
             SshManager._instance = new SshManager(extensionUri);
         }
 
-        // Create getCSSshConfigPath if not exists
-        const sshCSSConfigPath = SshManager._instance.getCSSshConfigPath();
-        if (!fs.existsSync(sshCSSConfigPath)) {
-            fs.mkdirSync(path.dirname(sshCSSConfigPath), { recursive: true, mode: 0o700 });
-            fs.writeFileSync(sshCSSConfigPath, '', { mode: 0o600 });
+        // Create CS SSH config path if not exists
+        if (!fs.existsSync(CS_SSH_CONFIG_PATH)) {
+            fs.mkdirSync(path.dirname(CS_SSH_CONFIG_PATH), { recursive: true, mode: 0o700 });
+            fs.writeFileSync(CS_SSH_CONFIG_PATH, '', { mode: 0o600 });
         }
 
         SshManager._instance._ensureSshInclude();
@@ -110,17 +114,13 @@ export class SshManager {
         return hosts;
     }
 
-    public getCSSshConfigPath(): string {
-        return path.join(os.homedir(), '.cybershuttle', 'ssh_config');
-    }
-
     /**
     * Get SSH args for connection multiplexing (ControlMaster).
     * Uses a short hashed socket name to stay under the 104-byte limit.
     */
     private getControlMasterArgs(hostName: string): string[] {
         const hash = crypto.createHash('sha256').update(hostName).digest('hex').substring(0, 16);
-        const socketPath = path.join(this._sshControlDir, hash);
+        const socketPath = path.join(CS_SSH_CONTROL_DIR, hash);
         return [
             '-o', `ControlMaster=auto`,
             '-o', `ControlPath=${socketPath}`,
@@ -232,7 +232,7 @@ export class SshManager {
     private _ensureSshInclude(): void {
         const sshDir = path.join(os.homedir(), '.ssh');
         const sshConfigPath = path.join(sshDir, 'config');
-        const includeLine = `Include ${this.getCSSshConfigPath()}`;
+        const includeLine = `Include ${CS_SSH_CONFIG_PATH}`;
 
         try {
             if (!fs.existsSync(sshDir)) {
@@ -466,10 +466,8 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, passw
 
     const configBlock = lines.join('\n');
 
-    const sshManager = SshManager.getInstance();
-    const configPath = sshManager.getCSSshConfigPath();
     try {
-        fs.appendFileSync(configPath, `\n${configBlock}\n`);
+        fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
     } catch (err) {
         logger.error(`Failed to write SSH config for session ${sessionId}:`, err);
     }
@@ -478,17 +476,15 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, passw
 
 export function clearSSHConfigEntry(sessionId: string, hostAlias: string): void {
 
-    const sshManager = SshManager.getInstance();
-    const configPath = sshManager.getCSSshConfigPath();
     try {
-        const content = fs.readFileSync(configPath, 'utf-8');
+        const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
         const re = new RegExp(
             `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`,
             'gm'
         );
         const cleaned = content.replace(re, '');
         if (cleaned !== content) {
-            fs.writeFileSync(configPath, cleaned);
+            fs.writeFileSync(CS_SSH_CONFIG_PATH, cleaned);
         }
     } catch { /* ignore if file doesn't exist */ }
 }

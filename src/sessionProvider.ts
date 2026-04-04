@@ -263,7 +263,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         //if (!session.batchScript) {
         let creds: TunnelCredential;
         try {
-            creds = await getDevTunnelCredentials();
+            creds = await getDevTunnelCredentials(true);
         } catch (err: any) {
             vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
             session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;

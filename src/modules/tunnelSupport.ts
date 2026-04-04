@@ -84,7 +84,7 @@ export async function createTunnelForSSHServer(session: SlurmSession): Promise<v
             "tunnelName": "ssh-tunnel-" + session.id,
             "open_ports": [sshPort],
             "expiration": "1d",
-            "authToken": await getDevTunnelAuthToken() // need to use the user auth token for this API call
+            "authToken": await getDevTunnelAuthToken(false) // need to use the user auth token for this API call
         })
     });
 
@@ -115,7 +115,7 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
         { name: 'cybershuttle-vscode', version: '1.0' },
         ManagementApiVersions.Version20230927preview,
         async () => {
-            const token = await getDevTunnelAuthToken();
+            const token = await getDevTunnelAuthToken(false);
             return `Bearer ${token}`;
         },
     );
@@ -186,9 +186,9 @@ export async function disconnectSessionFromTunnel(session: SlurmSession): Promis
     logger.info(`Session ${session.id} disconnected from tunnel.`);
 }
 
-export async function getDevTunnelCredentials(): Promise<TunnelCredential> {
+export async function getDevTunnelCredentials(clearSessionPreference: boolean): Promise<TunnelCredential> {
     // Placeholder for fetching credentials from local storage or configuration
-    const token = await getDevTunnelAuthToken();
+    const token = await getDevTunnelAuthToken(clearSessionPreference);
     logger.info('Obtained Dev Tunnels auth token successfully. Token ' + token);
 
     return {
@@ -207,12 +207,12 @@ export async function getFrpTunnelCredentials(): Promise<TunnelCredential> {
     };
 }
 
-export async function getDevTunnelAuthToken(): Promise<string> {
+export async function getDevTunnelAuthToken(clearSessionPreference: boolean): Promise<string> {
     try {
         const session = await vscode.authentication.getSession(
             'microsoft',
             [DEV_TUNNELS_SCOPE],
-            { clearSessionPreference: true, createIfNone: true },
+            { clearSessionPreference, createIfNone: true },
         );
         return session?.accessToken || '';
     } catch (err) {
