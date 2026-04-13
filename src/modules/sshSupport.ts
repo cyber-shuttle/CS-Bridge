@@ -479,6 +479,18 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
     return hostAlias;
 }
 
+export function removeSSHprivateKeyForSession(sessionId: string): void {
+    const hostAlias = `cshost-${sessionId}`;
+    const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
+    try {
+        if (fs.existsSync(privateKeyPath)) {
+            fs.unlinkSync(privateKeyPath);
+        }
+    } catch (err) {
+        logger.error(`Failed to remove SSH private key for session ${sessionId}:`, err);
+    }
+}
+
 export function clearSSHConfigEntry(sessionId: string, hostAlias: string): void {
 
     try {
@@ -491,5 +503,9 @@ export function clearSSHConfigEntry(sessionId: string, hostAlias: string): void 
         if (cleaned !== content) {
             fs.writeFileSync(CS_SSH_CONFIG_PATH, cleaned);
         }
-    } catch { /* ignore if file doesn't exist */ }
+
+        removeSSHprivateKeyForSession(sessionId);
+    } catch (err) {
+        logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
+    }
 }
