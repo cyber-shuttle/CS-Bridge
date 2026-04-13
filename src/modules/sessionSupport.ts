@@ -5,6 +5,7 @@ import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
 import { disconnectSessionFromTunnel } from "./tunnelSupport";
+import { checkLinkspanHealth } from "./linkspanSupport";
 
 const logger = Logger.getInstance();
 
@@ -34,7 +35,9 @@ export class JobStatusMonitor {
     private static instance: JobStatusMonitor;
 
     private monitoringSessions: Map<string, SlurmSession> = new Map();
+    private monitoringFailedCounts: Map<string, number> = new Map();
     private _lock = new AsyncLock();
+    private sessionPollingInterval = 5000; // 5 seconds
 
 
     private constructor(webView: vscode.Webview) {
@@ -69,6 +72,12 @@ export class JobStatusMonitor {
         };
     }
 
+    private doesQualifyToFail(sessionId: string): boolean {
+        const failCount = this.monitoringFailedCounts.get(sessionId) || 0;
+        this.monitoringFailedCounts.set(sessionId, failCount + 1);
+        return failCount >= 3; // Allow up to 3 failures before marking as failed
+    }
+
     // Run a while loop to periodically check the status of all sessions being monitored in background
     private async monitorSessions(webView: vscode.Webview) {
         while (true) {
@@ -77,13 +86,10 @@ export class JobStatusMonitor {
             const sessionsToCheck = [...this.monitoringSessions.entries()];
             this._lock.release();
 
-            logger.info(`Polling Slurm job status for ${sessionsToCheck.length} sessions...`);
+            logger.info(`Polling job status for ${sessionsToCheck.length} sessions...`);
             for (const [sessionId, session] of sessionsToCheck) {
                 if (session.jobId) {
                     try {
-                        const slurmStatus = await getSlurmJobStatus(session);
-                        logger.info(`Polled Slurm job status for session ${session.name}: ${slurmStatus}`);
-
                         await this._lock.acquire();
                         const stillTracked = this.monitoringSessions.has(sessionId);
                         this._lock.release();
@@ -91,6 +97,29 @@ export class JobStatusMonitor {
                             logger.info(`Session ${session.name} is no longer tracked for monitoring. Skipping status update.`);
                             continue;
                         }
+
+                        if (session.status === 'ready_to_connect' || session.status === 'connecting' || session.status === 'connected') {
+                            // Do not go with ssh check. Use the ping api to prevent repeated ssh connections
+                            logger.info(`Session ${session.name} is in status ${session.status}, skipping Slurm status check and using tunnel ping instead.`);
+
+                            checkLinkspanHealth(session).catch(err => {
+                                logger.warn(`Health check failed for session ${session.name}:`, err);
+                                if (this.doesQualifyToFail(session.id)) {
+                                    // This will happen either job was externally killed, tunnel expired or the slurm job walltime exceeded.
+                                    logger.warn(`Health check failed for session ${session.name}, and it qualifies to mark the session as failed. Updating session status to 'connection_broken'.`);
+                                    session.errorMessage = `Health check failed: ${err.message}`;
+                                    session.status = 'connection_broken';
+                                    updateSession(session);
+                                    webView.postMessage({ command: 'sessionUpdate', session: session });
+                                    this.stopMonitoringInternal(session.id);
+                                    // We can probably check for job exipiry by looking at the walltime of the job
+                                }
+                            });
+                            continue;
+                        }
+
+                        const slurmStatus = await getSlurmJobStatus(session);
+                        logger.info(`Polled Slurm job status for session ${session.name}: ${slurmStatus}`);
 
                         if (slurmStatus === SlurmJobStatus.RUNNING && session.status === 'running') {
                             //logger.info(`Session ${session.name} is now running. Fetching job output...`);
@@ -136,9 +165,14 @@ export class JobStatusMonitor {
                                 });
                             }).catch(err => {
                                 logger.error(`Failed to get job output for session ${session.name}:`, err);
+                                if (!this.doesQualifyToFail(sessionId)) {
+                                    logger.warn(`Job output retrieval failed for session ${session.name}, but it does not yet qualify to mark the session as failed. Will retry in the next polling cycle.`);
+                                    return;
+                                }
                                 session.errorMessage = `Failed to get job output: ${err.message || err}`;
                                 session.status = 'failed';
                                 updateSession(session);
+                                this.stopMonitoringInternal(sessionId);
                                 webView.postMessage({ command: 'sessionUpdate', session: session });
                             });
 
@@ -150,7 +184,6 @@ export class JobStatusMonitor {
                                 logger.info(`Session ${session.name} is ready to connect. API Tunnel ID: ${session.connectionInfo.apiTunnelId}, SSH Port: ${session.connectionInfo.sshPort}`);
                                 updateSession(session);
                                 webView.postMessage({ command: 'sessionUpdate', session: session });
-                                this.stopMonitoringInternal(sessionId);
                             }
                         } else if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'running') {
                             session.status = 'running';
@@ -188,6 +221,11 @@ export class JobStatusMonitor {
                     } catch (error: any) {
                         const errorMessage = `Error while monitoring Slurm job status for session ${session.name}: ${error.message || error}`;
                         logger.error(errorMessage, error);
+                        if (!this.doesQualifyToFail(sessionId)) {
+                            logger.warn(`Slurm job status check failed for session ${session.name}, but it does not yet qualify to mark the session as failed. Will retry in the next polling cycle.`);
+                            continue;
+                        }
+
                         vscode.window.showErrorMessage(errorMessage);
                         session.status = 'failed'; // TODO: Probably unknown or retry
                         session.errorMessage = errorMessage;
@@ -198,12 +236,13 @@ export class JobStatusMonitor {
 
                 }
             }
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Check every 5 seconds
+            await new Promise(resolve => setTimeout(resolve, this.sessionPollingInterval)); // Check every 5 seconds
         }
     }
 
     private stopMonitoringInternal(sessionId: string) {
         this.monitoringSessions.delete(sessionId);
+        this.monitoringFailedCounts.delete(sessionId);
         logger.info(`Stopped monitoring Slurm job status for session ID ${sessionId}`);
     }
 
