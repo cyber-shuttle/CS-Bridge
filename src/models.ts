@@ -48,6 +48,7 @@ interface SessionConnectionInfo {
     sshTunnelForwardPort: number;
     sshTunnelId: string;
     sshPassword: string;
+    sshPrivateKey: string;
     logPort: number;
     apiTunnelId: string;
     apiTunnelAccessToken: string;

@@ -112,6 +112,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 }
 
                 this._logger.info(`Connecting tunnel for session with ID: ${connectSessionId}`);
+
+                // NOTE: Most of the magic happens in this function
                 this._connectSessionToTunnel(webView, session!).then(() => {
                     this._logger.info(`Tunnel connection process completed for session ID: ${connectSessionId}`);
 
@@ -148,6 +150,9 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    // THIS FUNCTION CONTAINS THE CORE LOGIC FOR CONNECTING A SESSION TO AN SSH TUNNEL:
+    // This creates the SSH server on Linkspan, sets up the tunnel, and opens a new VS Code window connected to the tunnel.
+    // It also updates the session status and handles errors at each step.
     private async _connectSessionToTunnel(webView: vscode.Webview, session: SlurmSession) {
 
         try {
@@ -173,7 +178,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             throw new Error(`Failed to connect session to SSH tunnel: ${error instanceof Error ? error.message : String(error)}`);
         }
 
-        const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPassword!);
+        const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPrivateKey!);
         this._logger.info(`SSH config entry created for session ${session.id} with host alias ${hostAlias}. You can connect using 'ssh ${hostAlias}'`);
 
         vscode.commands.executeCommand(

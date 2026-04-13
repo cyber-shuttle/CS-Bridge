@@ -63,6 +63,7 @@ export class JobStatusMonitor {
             apiPort: 0,
             region: '',
             sshPassword: '',
+            sshPrivateKey: '',
             sshTunnelId: '',
             sshTunnelForwardPort: 0
         };

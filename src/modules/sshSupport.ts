@@ -445,9 +445,13 @@ function splitTopLevelComma(value: string): string[] {
 }
 
 // Returns the host alias to use for SSH connections (e.g. "cshost-SESSIONID")
-export function createSSHConfigEntry(sessionId: string, localPort: number, password: string): string {
+export function createSSHConfigEntry(sessionId: string, localPort: number, privateKey: string): string {
 
     const hostAlias = `cshost-${sessionId}`;
+
+    // Save private key to file with 600 permissions in SSH keys dir
+    const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
+    fs.writeFileSync(privateKeyPath, privateKey, { mode: 0o600 });
 
     clearSSHConfigEntry(sessionId, hostAlias);
 
@@ -462,6 +466,7 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, passw
         `    User ${user}`,
         `    StrictHostKeyChecking no`,
         `    UserKnownHostsFile /dev/null`,
+        `    IdentityFile ${privateKeyPath}`,
     ];
 
     const configBlock = lines.join('\n');

@@ -11,7 +11,7 @@ import {
     TunnelRelayTunnelClient,
 } from "@microsoft/dev-tunnels-connections";
 import { TunnelAccessScopes } from "@microsoft/dev-tunnels-contracts";
-import { createSSHConfigEntry, clearSSHConfigEntry } from "./sshSupport";
+import { clearSSHConfigEntry } from "./sshSupport";
 
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
@@ -53,11 +53,12 @@ export async function createSSHServerForSession(session: SlurmSession): Promise<
     }
 
     // {"id":"s-36327","bind_port":36327,"password":"LSqTAUXEloSRwHB8"}
-    const respData = await resp.json() as { bind_port: number; password: string; id: string };
+    const respData = await resp.json() as { bind_port: number; password: string; id: string, private_key: string };
     logger.info(`SSH server for session ${session.id} created successfully. Data: ${JSON.stringify(respData)}`);
     const sshPort = respData.bind_port;
     session.connectionInfo!.sshPort = sshPort;
     session.connectionInfo!.sshPassword = respData.password;
+    session.connectionInfo!.sshPrivateKey = respData.private_key;
     updateSession(session);
 }
 
