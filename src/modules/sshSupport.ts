@@ -12,6 +12,40 @@ const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config'
 const CS_SSH_KEYS_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_keys');
 const CS_SSH_CONTROL_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_control');
 
+/** Detect OAuth2 device flow prompts from pam_oauth2_device. */
+function parseDeviceFlowPrompt(prompt: string): string | null {
+    const urlMatch = prompt.match(/Authenticate at[ \t]*\n-+\n[ \t]*(https:\/\/[^\s\n]+)/);
+    if (!urlMatch) {
+        return null;
+    }
+    return urlMatch[1];
+}
+
+/** Show device flow auth UI, presents a modal dialog and opens up the browser on user action. Returns '' on success, undefined on cancel. */
+async function showDeviceFlowAuth(hostName: string, url: string): Promise<string | undefined> {
+    while (true) {
+        const detail = `Sign in using your browser to authenticate this SSH session.\n\nURL: ${url}\n\nClick "Open Browser" to proceed, then "Done" when finished.`;
+
+        const result = await vscode.window.showInformationMessage(
+            `SSH Authentication — ${hostName}`,
+            { modal: true, detail },
+            'Open Browser',
+            'Done',
+        );
+
+        if (result === 'Open Browser') {
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+            continue;
+        }
+
+        if (result === 'Done') {
+            return '';
+        }
+
+        return undefined;
+    }
+}
+
 export class SshManager {
 
     private static _instance: SshManager | undefined;
@@ -162,6 +196,7 @@ export class SshManager {
             let stdoutData = '';
             let stderrData = '';
             let disposed = false;
+            let handlingPrompt = false;
             const handledPrompts = new Set<string>();
 
             sshProcess.stdout.on('data', (data: Buffer) => {
@@ -174,7 +209,7 @@ export class SshManager {
 
             // Poll for prompt-* files from the askpass script
             const pollInterval = setInterval(async () => {
-                if (disposed) {
+                if (disposed || handlingPrompt) {
                     return;
                 }
 
@@ -189,21 +224,41 @@ export class SshManager {
 
                         const promptFilePath = path.join(sessionDir, file);
                         const content = fs.readFileSync(promptFilePath, 'utf-8');
-                        const { id, prompt } = JSON.parse(content);
+                        let parsed;
+                        try {
+                            parsed = JSON.parse(content);
+                        } catch {
+                            // askpass may still be writing this file, skip and retry
+                            handledPrompts.delete(file);
+                            continue;
+                        }
+                        const { id, prompt } = parsed;
                         const responseFile = path.join(sessionDir, `response-${id}`);
 
-                        const password = await vscode.window.showInputBox({
-                            title: `SSH Authentication — ${hostName}`,
-                            prompt: prompt.trim(),
-                            password: true,
-                            ignoreFocusOut: true,
-                        });
+                        handlingPrompt = true;
+                        try {
+                            const deviceFlowUrl = parseDeviceFlowPrompt(prompt);
+                            let response: string | undefined;
 
-                        if (password !== undefined) {
-                            fs.writeFileSync(responseFile, password, 'utf-8');
-                        } else {
-                            fs.writeFileSync(cancelFile, '', 'utf-8');
-                            sshProcess.kill();
+                            if (deviceFlowUrl) {
+                                response = await showDeviceFlowAuth(hostName, deviceFlowUrl);
+                            } else {
+                                response = await vscode.window.showInputBox({
+                                    title: `SSH Authentication — ${hostName}`,
+                                    prompt: prompt.trim(),
+                                    password: true,
+                                    ignoreFocusOut: true,
+                                });
+                            }
+
+                            if (response !== undefined) {
+                                fs.writeFileSync(responseFile, response, { encoding: 'utf-8', mode: 0o600 });
+                            } else {
+                                fs.writeFileSync(cancelFile, '', 'utf-8');
+                                sshProcess.kill();
+                            }
+                        } finally {
+                            handlingPrompt = false;
                         }
                     }
                 } catch {

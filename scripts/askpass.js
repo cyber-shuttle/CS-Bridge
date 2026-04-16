@@ -27,7 +27,7 @@ fs.writeFileSync(promptFile, JSON.stringify({ id: requestId, prompt: prompt }), 
 
 // Poll for the response or cancel file
 const startTime = Date.now();
-const timeout = 120000; // 2 minute timeout
+const timeout = 600000;
 
 function poll() {
     if (Date.now() - startTime > timeout) {
