@@ -1,44 +1,73 @@
-import { SlurmSession } from "./models";
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { Logger } from './logger';
+import { SlurmSession } from './models';
 
-// TODO: Replace with actual persistent storage (e.g., globalState, file, etc.)
-const sessions: SlurmSession[] = [
-    {
-        id: 'session1', name: 'Session 1',
-        cluster: 'Cluster A', status: 'not_started', tunnelType: 'devtunnel',
-        jobId: '12345', queue: 'gpu', wallTime: '01:00:00',
-        gpuCount: 2, gpuClass: 'A100', cpus: 16, memory: '64GB',
-        jobDirectory: '/home/user/job1', allocation: 'allocation1',
-        submittedAt: Date.now() - 3600000, errorMessage: ''
-    },
-];
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'expired']);
+const SESSIONS_FILENAME = 'sessions.json';
+
+let sessions: SlurmSession[] = [];
+let sessionsFilePath: string = '';
+
+export async function init(storagePath: string): Promise<void> {
+    sessionsFilePath = path.join(storagePath, SESSIONS_FILENAME);
+    try {
+        const data = await fs.readFile(sessionsFilePath, 'utf-8');
+        const loaded: SlurmSession[] = JSON.parse(data);
+        sessions = loaded.map(s => {
+            const { connectionInfo, ...rest } = s as SlurmSession & { connectionInfo?: unknown };
+            if (!TERMINAL_STATUSES.has(rest.status)) {
+                rest.status = 'connection_broken';
+            }
+            return rest;
+        });
+    } catch (err: unknown) {
+        if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+            sessions = [];
+        } else {
+            Logger.getInstance().warn('Failed to load sessions from file, starting fresh', err);
+            sessions = [];
+        }
+    }
+}
+
+async function saveToFile(): Promise<void> {
+    if (!sessionsFilePath) {
+        return;
+    }
+    try {
+        const sanitized = sessions.map(({ connectionInfo, ...rest }) => rest);
+        await fs.writeFile(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
+    } catch (err: unknown) {
+        Logger.getInstance().error('Failed to save sessions to file', err);
+    }
+}
 
 export function getAllSessions(): SlurmSession[] {
-    // Placeholder for fetching all sessions from persistent storage (e.g., globalState, file, etc.)
     return sessions;
 }
 
 export function addSession(session: SlurmSession) {
-    // Placeholder for adding a session to persistent storage (e.g., globalState, file, etc.)
     sessions.push(session);
+    saveToFile();
 }
 
 export function updateSession(updatedSession: SlurmSession) {
-    // Placeholder for updating a session in persistent storage (e.g., globalState, file, etc.)
     const index = sessions.findIndex(s => s.id === updatedSession.id);
     if (index !== -1) {
         sessions[index] = updatedSession;
+        saveToFile();
     }
 }
 
 export function deleteSession(sessionId: string) {
-    // Placeholder for deleting a session from persistent storage (e.g., globalState, file, etc.)
     const index = sessions.findIndex(s => s.id === sessionId);
     if (index !== -1) {
         sessions.splice(index, 1);
+        saveToFile();
     }
 }
 
 export function findSession(sessionId: string): SlurmSession | undefined {
-    // Placeholder for finding a session in persistent storage (e.g., globalState, file, etc.)
     return sessions.find(s => s.id === sessionId);
 }
