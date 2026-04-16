@@ -3,43 +3,55 @@ import * as path from 'path';
 import { Logger } from './logger';
 import { SlurmSession } from './models';
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'expired']);
-const SESSIONS_FILENAME = 'sessions.json';
-
+const ONGOING_STATUSES: Set<string> = new Set([
+    'configuring',
+    'submitting',
+    'deploying_agent',
+    'pending',
+    'running',
+    'ready_to_connect',
+    'connecting',
+    'connected',
+    'cancelling',
+]);
+const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
 
-export async function init(storagePath: string): Promise<void> {
-    sessionsFilePath = path.join(storagePath, SESSIONS_FILENAME);
+export async function initSessionStore(storagePath: string): Promise<void> {
+    sessionsFilePath = path.join(storagePath, 'sessions.json');
     try {
         const data = await fs.readFile(sessionsFilePath, 'utf-8');
         const loaded: SlurmSession[] = JSON.parse(data);
         sessions = loaded.map(s => {
-            const { connectionInfo, ...rest } = s as SlurmSession & { connectionInfo?: unknown };
-            if (!TERMINAL_STATUSES.has(rest.status)) {
-                rest.status = 'connection_broken';
+            s.connectionInfo = undefined; // clear stale connectionInfo on load
+            if (ONGOING_STATUSES.has(s.status)) {
+                s.status = 'connection_broken';
             }
-            return rest;
+            return s;
         });
-    } catch (err: unknown) {
-        if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-            sessions = [];
+        logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            logger.info(`No existing sessions in ${sessionsFilePath}. initializing as empty`);
         } else {
-            Logger.getInstance().warn('Failed to load sessions from file, starting fresh', err);
-            sessions = [];
+            logger.error(`Failed to load sessions from ${sessionsFilePath}. initializing as empty`, err);
         }
+        sessions = [];
     }
 }
 
 async function saveToFile(): Promise<void> {
-    if (!sessionsFilePath) {
-        return;
-    }
     try {
-        const sanitized = sessions.map(({ connectionInfo, ...rest }) => rest);
+        const sanitized = sessions.map(s => {
+            const copy = { ...s };
+            copy.connectionInfo = undefined; // clear connectionInfo on save
+            return copy;
+        });
         await fs.writeFile(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
-    } catch (err: unknown) {
-        Logger.getInstance().error('Failed to save sessions to file', err);
+    } catch (err) {
+        logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
+        throw err;
     }
 }
 

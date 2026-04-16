@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { Logger } from './logger';
-import { init as initSessionStore } from './extensionStore';
+import { initSessionStore } from './extensionStore';
 import { SessionProvider } from './sessionProvider';
 import { SshManager } from './modules/sshSupport';
 
