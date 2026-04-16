@@ -1,7 +1,10 @@
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import { Logger } from './logger';
 import { SlurmSession } from './models';
+
+export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
 const ONGOING_STATUSES: Set<string> = new Set([
     'configuring',
@@ -18,7 +21,8 @@ const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
 
-export async function initSessionStore(storagePath: string): Promise<void> {
+export async function initSessionStore(storagePath: string = CS_HOME): Promise<string> {
+    await fs.mkdir(storagePath, { recursive: true });
     sessionsFilePath = path.join(storagePath, 'sessions.json');
     try {
         const data = await fs.readFile(sessionsFilePath, 'utf-8');
@@ -39,6 +43,7 @@ export async function initSessionStore(storagePath: string): Promise<void> {
         }
         sessions = [];
     }
+    return sessionsFilePath;
 }
 
 async function saveToFile(): Promise<void> {

@@ -1,7 +1,4 @@
 import * as vscode from 'vscode';
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs/promises';
 import { Logger } from './logger';
 import { initSessionStore } from './extensionStore';
 import { SessionProvider } from './sessionProvider';
@@ -12,9 +9,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const logger = Logger.getInstance();
     logger.info('CyberShuttle extension activating');
 
-    const storagePath = path.join(os.homedir(), '.cybershuttle');
-    await fs.mkdir(storagePath, { recursive: true });
-    await initSessionStore(storagePath);
+    logger.info(`Initializing session store...`);
+    const sessionStoreLocation = await initSessionStore();
+    logger.info(`Session store initialized to ${sessionStoreLocation}`);
 
     SshManager.initInstance(context.extensionUri);
     const sessionProvider = new SessionProvider(context.extensionUri);
