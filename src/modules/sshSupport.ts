@@ -18,7 +18,7 @@ export class SshManager {
 
     private constructor(private readonly _extensionUri: vscode.Uri) {
         if (!fs.existsSync(CS_SSH_CONTROL_DIR)) {
-            fs.mkdirSync(CS_SSH_CONTROL_DIR, { mode: 0o700 });
+            fs.mkdirSync(CS_SSH_CONTROL_DIR, { recursive: true, mode: 0o700 });
         }
 
         if (!fs.existsSync(CS_SSH_KEYS_DIR)) {
