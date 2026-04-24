@@ -449,11 +449,12 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
 
     const hostAlias = `cshost-${sessionId}`;
 
+    clearSSHConfigEntry(sessionId, hostAlias);
     // Save private key to file with 600 permissions in SSH keys dir
     const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
     fs.writeFileSync(privateKeyPath, privateKey, { mode: 0o600 });
+    console.log(`Saved SSH private key for session ${sessionId} to ${privateKeyPath}`);
 
-    clearSSHConfigEntry(sessionId, hostAlias);
 
     const hostname = '127.0.0.1';
     const user = 'cs-ssh-user'; // No need to have this as the actual username on the cluster, since we'll be using a custom SSH server that ignores it. But it needs to be set to something non-empty to avoid SSH client errors.
