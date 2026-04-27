@@ -165,6 +165,11 @@
         console.log('Requesting to connect tunnel for session:', sessionId);
         vscode.postMessage({ command: 'connectTunnel', sessionId: sessionId });
     }
+
+    function removeSession(sessionId) {
+        disableSessionActions(sessionId);
+        vscode.postMessage({ command: 'removeSession', sessionId: sessionId });
+    }
     // Delegated click handler for dynamically created start/restart buttons
     document.addEventListener('click', function (e) {
 
@@ -186,6 +191,12 @@
             if (sessionId) {
                 connectTunnel(sessionId);
             }
+        }
+
+        const closeBtn = e.target.closest('.close-session-btn');
+        if (closeBtn && !closeBtn.disabled) {
+            const sessionId = closeBtn.getAttribute('data-session-id');
+            if (sessionId) { removeSession(sessionId); }
         }
 
     });

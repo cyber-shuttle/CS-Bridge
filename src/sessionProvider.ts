@@ -2,8 +2,8 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
-import { createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
-import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
+import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
+import { addSession, deleteSession, findSession, getAllSessions, updateSession } from './extensionStore';
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 
@@ -137,9 +137,54 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     webView.postMessage({ command: 'switchAuthError', message: error instanceof Error ? error.message : String(error) });
                 });
                 break;
+            case 'removeSession':
+                const removeSessionId = data.sessionId;
+                this._removeSession(webView, removeSessionId);
+                break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
+    }
+
+    private async _removeSession(webView: vscode.Webview, sessionId: string) {
+        // The webview disables this card's buttons on click, so every exit path must
+        // refresh to re-enable them (or to drop the card after a successful remove).
+        const session = findSession(sessionId);
+        if (!session) {
+            this._logger.error(`Session with ID ${sessionId} not found to remove.`);
+            vscode.window.showErrorMessage('Session not found.');
+            this._refereshSessions(webView);
+            return;
+        }
+
+        const removableStatuses = ['failed', 'completed', 'cancelled', 'not_started', 'expired'];
+        if (!removableStatuses.includes(session.status)) {
+            this._logger.warn(`Session ${sessionId} is in status ${session.status} and cannot be removed.`);
+            vscode.window.showWarningMessage(`Session cannot be removed from status: ${session.status}`);
+            this._refereshSessions(webView);
+            return;
+        }
+
+        const choice = await vscode.window.showWarningMessage(
+            'Remove session?',
+            {
+                modal: true,
+                detail: 'This removes the session record and cleans up its SSH config entry and key file.'
+            },
+            'Remove'
+        );
+        if (choice !== 'Remove') {
+            this._refereshSessions(webView);
+            return;
+        }
+
+        try {
+            clearSSHConfigEntry(sessionId, `cshost-${sessionId}`);
+        } catch (err) {
+            this._logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
+        }
+        deleteSession(sessionId);
+        this._refereshSessions(webView);
     }
 
     private _refereshSessions(webView: vscode.Webview) {
