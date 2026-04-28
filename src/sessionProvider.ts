@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
-import { createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
+import { createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
 import { addSession, findSession, getAllSessions, updateSession } from './extensionStore';
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
@@ -38,6 +38,14 @@ export class SessionProvider implements vscode.WebviewViewProvider {
 
         const command = data.command;
         switch (command) {
+            case 'refreshSessions':
+                this._logger.info('Refreshing sessions as requested by webview');
+                this._refereshSessions(webView);
+                break;
+            case 'refreshSSHHosts':
+                this._logger.info('Refreshing SSH hosts as requested by webview');
+                this._refreshSshHosts(webView);
+                break;
             case 'fetchSlurmClusterInfo':
                 // vscode.postMessage({ command: 'fetchSlurmClusterInfo', host: host });
                 const host = data.host;
@@ -140,6 +148,11 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
+    }
+
+    private _refreshSshHosts(webView: vscode.Webview) {
+        const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
+        webView.postMessage({ command: 'hostListUpdate', sshHosts: sshHosts });
     }
 
     private _refereshSessions(webView: vscode.Webview) {
