@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Session, SlurmSession } from '../models';
+import { AccountInfo, Session, SlurmSession } from '../models';
 import { Logger } from '../logger';
 import { SshManager } from '../modules/sshSupport';
 
@@ -132,7 +132,12 @@ function generateSessionsHtml(sessions: SlurmSession[]): string {
     </div>`;
 }
 
-export function getSessionWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri, sessions: SlurmSession[]): string {
+export function getSessionWebviewContent(
+    webview: vscode.Webview,
+    extensionUri: vscode.Uri,
+    sessions: SlurmSession[],
+    account: AccountInfo,
+): string {
 
     const logger = Logger.getInstance();
     const nonce = getNonce();
@@ -145,11 +150,14 @@ export function getSessionWebviewContent(webview: vscode.Webview, extensionUri: 
     const sessionsJsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'js', 'sessions.js'));
 
     const sessionsHtml = generateSessionsHtml(sessions);
+    const valueClass = account.label ? 'info-value' : 'info-value info-value-warn';
+    const valueText = account.label ? escapeHtml(account.label) : 'Not signed in';
+    const buttonText = account.label ? 'Switch' : 'Sign in';
     const authHtml = `
     <div id="account-line" class="info-line">
-        <span class="info-label">Microsoft Account:</span>
-        <span id="account-value" class="info-value 'info-value-warn'}">Dimuthu</span>
-        <button id="auth-switch-btn" class="info-action-btn">Switch</button>
+        <span class="info-label">${escapeHtml(account.type)} Account:</span>
+        <span id="account-value" class="${valueClass}">${valueText}</span>
+        <button id="auth-switch-btn" class="info-action-btn">${buttonText}</button>
     </div>
     `;
 

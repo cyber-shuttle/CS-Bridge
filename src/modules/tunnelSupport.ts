@@ -1,4 +1,4 @@
-import { SlurmSession, TunnelCredential } from "../models";
+import { AccountInfo, SlurmSession, TunnelCredential } from "../models";
 import * as vscode from 'vscode';
 import * as net from 'net';
 import { Logger } from '../logger';
@@ -232,5 +232,18 @@ export async function switchDevTunnelAccount(): Promise<void> {
         logger.info(`Dev Tunnels: switched to ${session.account.label}`);
     } catch (err: any) {
         vscode.window.showErrorMessage(`Dev Tunnels sign-in failed: ${err.message}`);
+    }
+}
+
+export async function getMicrosoftAccountInfo(): Promise<AccountInfo> {
+    try {
+        const session = await vscode.authentication.getSession(
+            'microsoft',
+            [DEV_TUNNELS_SCOPE],
+            { silent: true },
+        );
+        return { type: 'Microsoft', label: session?.account.label ?? null };
+    } catch {
+        return { type: 'Microsoft', label: null };
     }
 }

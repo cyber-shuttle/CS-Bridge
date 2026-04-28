@@ -86,6 +86,11 @@ export interface TunnelCredential {
     serverUrl?: string;
 }
 
+export interface AccountInfo {
+    type: string;
+    label: string | null;
+}
+
 export enum SlurmJobStatus {
     PENDING = 'pending',
     RUNNING = 'running',

@@ -4,7 +4,7 @@ import { SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent } from './webviews/sessionWebview';
 import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
 import { addSession, deleteSession, findSession, getAllSessions, updateSession } from './extensionStore';
-import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 
 export class SessionProvider implements vscode.WebviewViewProvider {
@@ -23,6 +23,12 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         };
 
         webviewView.webview.onDidReceiveMessage((data) => this._onMessageFromJs(data, webviewView.webview));
+        const authSub = vscode.authentication.onDidChangeSessions((e) => {
+            if (e.provider.id === 'microsoft') {
+                this._refereshSessions(webviewView.webview);
+            }
+        });
+        webviewView.onDidDispose(() => authSub.dispose());
         JobStatusMonitor.init(webviewView.webview);
         try {
             this._refereshSessions(webviewView.webview);
@@ -187,9 +193,10 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         this._refereshSessions(webView);
     }
 
-    private _refereshSessions(webView: vscode.Webview) {
+    private async _refereshSessions(webView: vscode.Webview) {
         const sessions = getAllSessions();
-        webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions);
+        const account = await getMicrosoftAccountInfo();
+        webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions, account);
         for (const session of sessions) {
             webView.postMessage({ command: 'sessionUpdate', session: session });
         }
