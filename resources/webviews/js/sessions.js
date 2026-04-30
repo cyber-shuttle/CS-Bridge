@@ -16,14 +16,10 @@
         console.log('Received message from extension:', msg);
         switch (msg.command) {
             case 'slurmClusterInfo':
-                // webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
-                const host = msg.host;
-                const clusterInfo = msg.clusterInfo;
-                updateFormWithClusterInfo(host, clusterInfo);
-
+                updateFormWithClusterInfo(msg.host, msg.clusterInfo);
                 break;
             case 'slurmClusterInfoError':
-                // Todo: show error message in form
+                showFormError(msg.host, msg.message || 'Failed to fetch cluster info.');
                 console.error('Error fetching slurm cluster info for host:', msg.host, 'error:', msg.message);
                 break;
             case 'sessionUpdate':
@@ -216,6 +212,16 @@
             }
         });
         return foundForm;
+    }
+
+    function showFormError(host, message) {
+        const form = getFormForHost(host);
+        if (!form) { return; }
+        form.querySelector('.job-form-loading').style.display = 'none';
+        form.querySelector('.job-form-fields').style.display = 'none';
+        const err = form.querySelector('.job-form-error');
+        err.querySelector('.job-form-error-text').textContent = message;
+        err.style.display = 'block';
     }
 
     function updateSessionDetailsSection(session) {
