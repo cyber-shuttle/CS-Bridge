@@ -11,6 +11,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
 
     private readonly _logger = Logger.getInstance();
+    private readonly _clusterHomeDirs = new Map<string, string>();
 
     constructor(private readonly _extensionUri: vscode.Uri) {
     }
@@ -50,7 +51,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 this._logger.info(`Fetching slurm cluster info for host: ${host}`);
                 getSlurmClusterInfo(host).then(clusterInfo => {
                     this._logger.info('Fetched slurm cluster info:', clusterInfo);
-                    // Send back to sessions.js
+                    if (clusterInfo.homeDir) { this._clusterHomeDirs.set(host, clusterInfo.homeDir); }
                     webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
                 }).catch(error => {
                     this._logger.error('Error fetching slurm cluster info:', error);
@@ -77,7 +78,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     jobDirectory: '',
                     allocation: data.allocation || '',
                     submittedAt: Date.now(),
-                    errorMessage: ''
+                    errorMessage: '',
+                    workingDirectory: this._clusterHomeDirs.get(data.host),
                 };
                 addSession(newSession);
                 this._refereshSessions(webView);

@@ -41,6 +41,7 @@ export interface Session {
     submittedAt: number;
     errorMessage: string;
     connectionInfo?: SessionConnectionInfo;
+    workingDirectory?: string;
 }
 
 interface SessionConnectionInfo {
@@ -65,7 +66,8 @@ export interface SshHost {
 export interface SlurmClusterInfo {
     host: string;
     accounts: string[];
-    partitions: SlurmPartitionInfo[]
+    partitions: SlurmPartitionInfo[];
+    homeDir?: string;
 }
 
 export interface SlurmPartitionInfo {

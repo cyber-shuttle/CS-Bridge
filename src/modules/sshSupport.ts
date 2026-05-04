@@ -320,6 +320,13 @@ export async function getSlurmClusterInfo(hostName: string): Promise<SlurmCluste
         // Don't throw, since accounts info may still be useful
     }
 
+    try {
+        const homeResult = await sshManager.runRemoteCommand(hostName, 'echo $HOME');
+        if (homeResult.code === 0) { clusterInfo.homeDir = homeResult.stdout.trim(); }
+    } catch (err) {
+        log.warn(`Failed to query $HOME: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     return clusterInfo;
 }
 
