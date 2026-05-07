@@ -6,17 +6,6 @@ import { SlurmSession } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
-const ONGOING_STATUSES: Set<string> = new Set([
-    'configuring',
-    'submitting',
-    'deploying_agent',
-    'pending',
-    'running',
-    'ready_to_connect',
-    'connecting',
-    'connected',
-    'cancelling',
-]);
 const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
@@ -27,13 +16,7 @@ export async function initSessionStore(storagePath: string = CS_HOME): Promise<s
     try {
         const data = await fs.readFile(sessionsFilePath, 'utf-8');
         const loaded: SlurmSession[] = JSON.parse(data);
-        sessions = loaded.map(s => {
-            s.connectionInfo = undefined; // clear stale connectionInfo on load
-            if (ONGOING_STATUSES.has(s.status)) {
-                s.status = 'connection_broken';
-            }
-            return s;
-        });
+        sessions = loaded.map(s => { s.connectionInfo = undefined; return s; });
         logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {

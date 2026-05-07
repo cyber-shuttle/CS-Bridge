@@ -1,26 +1,26 @@
 import * as vscode from 'vscode';
-import { AccountInfo, Session, SlurmSession } from '../models';
-import { Logger } from '../logger';
-import { SshManager } from '../modules/sshSupport';
+import type { AccountInfo, SlurmSession, SshHost } from '../models';
+
+export type UiState = { pickerOpen: boolean; openHosts: string[] };
 
 function ci(name: string) { return '<i class="codicon codicon-' + name + '"></i>'; }
 
-const buildHostPickerHtml = (): string => {
-
-    const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
-
+const buildHostPickerHtml = (sshHosts: SshHost[], openHosts: string[]): string => {
     if (sshHosts.length === 0) {
         return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
     }
-    return sshHosts.map(host => `
+    const openSet = new Set(openHosts);
+    return sshHosts.map(host => {
+        const open = openSet.has(host.name);
+        return `
         <div class="host-picker-item">
             <div class="host-picker-row" data-host="${escapeHtml(host.name)}"  title="${host.hostname ? escapeHtml((host.user ? host.user + '@' : '') + host.hostname) : escapeHtml(host.name)}">
-                <span class="host-picker-chevron">&#x203A;</span>
+                <span class="host-picker-chevron${open ? ' expanded' : ''}">&#x203A;</span>
                 <span class="host-picker-name">${escapeHtml(host.name)}</span>
                 ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
             </div>
-            <div class="host-picker-form" id="host-form-${escapeHtml(host.name)}" style="display:none;">
-                <div class="job-form-loading" style="display:none;"><span class="spinner"></span>Fetching partitions...</div>
+            <div class="host-picker-form" id="host-form-${escapeHtml(host.name)}" style="display:${open ? 'block' : 'none'};">
+                <div class="job-form-loading" style="display:${open ? 'flex' : 'none'};"><span class="spinner"></span>Fetching partitions...</div>
                 <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
                 <div class="job-form-fields" style="display:none;">
                     <div class="resource-tabs" data-host="${escapeHtml(host.name)}">
@@ -57,7 +57,8 @@ const buildHostPickerHtml = (): string => {
                 </div>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 };
 
 function generateSessionDetailsHtml(session: SlurmSession): string {
@@ -110,7 +111,7 @@ function generateSessionCardHtml(session: SlurmSession): string {
     `;
 }
 
-function generateSessionsHtml(sessions: SlurmSession[]): string {
+function generateSessionsHtml(sessions: SlurmSession[], sshHosts: SshHost[], uiState: UiState): string {
 
     const sessionsHtml = sessions.map(generateSessionCardHtml).join('');
     const sessionsWrapperHtml = sessions.length > 0 ?
@@ -119,15 +120,14 @@ function generateSessionsHtml(sessions: SlurmSession[]): string {
             <div class="workspace-runtimes">${sessionsHtml}</div>
         </div>` : '';
 
-    const hostPickerHtml = buildHostPickerHtml();
     return `
     <div class="workspace-section">
         ${sessionsWrapperHtml}
         <div class="add-session-placeholder">
             <i class="codicon codicon-add"></i> Add Session
         </div>
-        <div class="workspace-host-picker" id="host-picker" style="display:none;">
-            ${hostPickerHtml}
+        <div class="workspace-host-picker" id="host-picker" style="display:${uiState.pickerOpen ? 'block' : 'none'};">
+            ${buildHostPickerHtml(sshHosts, uiState.openHosts)}
         </div>
     </div>`;
 }
@@ -137,29 +137,22 @@ export function getSessionWebviewContent(
     extensionUri: vscode.Uri,
     sessions: SlurmSession[],
     account: AccountInfo,
+    sshHosts: SshHost[],
+    uiState: UiState,
+    previewSession: SlurmSession | null,
 ): string {
 
-    const logger = Logger.getInstance();
     const nonce = getNonce();
     const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'codicons', 'codicon.ttf'));
     const codiconsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'codicons', 'codicon.css'));
     const commonCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'common.css'));
     const sessionsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'sessions.css'));
     const infoCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'info.css'));
-
     const sessionsJsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'js', 'sessions.js'));
 
-    const sessionsHtml = generateSessionsHtml(sessions);
     const valueClass = account.label ? 'info-value' : 'info-value info-value-warn';
     const valueText = account.label ? escapeHtml(account.label) : 'Not signed in';
     const buttonText = account.label ? 'Switch' : 'Sign in';
-    const authHtml = `
-    <div id="account-line" class="info-line">
-        <span class="info-label">${escapeHtml(account.type)} Account:</span>
-        <span id="account-value" class="${valueClass}">${valueText}</span>
-        <button id="auth-switch-btn" class="info-action-btn">${buttonText}</button>
-    </div>
-    `;
 
     return `
     <!DOCTYPE html>
@@ -173,24 +166,24 @@ export function getSessionWebviewContent(
             <link rel="stylesheet" href="${commonCssUri}">
             <link rel="stylesheet" href="${sessionsCssUri}">
             <link rel="stylesheet" href="${infoCssUri}">
-            <style>
-                ${getCommonStyles(codiconsFontUri)}
-            </style>
+            <style>@font-face { font-family: "codicon"; font-display: block; src: url("${codiconsFontUri}") format("truetype"); }</style>
         </head>
         <body>
-            <!-- ${sessions.length > 0 ? '<div id="sessions-loading" class="panel-loading"><span class="spinner"></span></div>' : ''} -->
             <div id="auth">
-                ${authHtml}
+                <div id="account-line" class="info-line">
+                    <span class="info-label">${escapeHtml(account.type)} Account:</span>
+                    <span id="account-value" class="${valueClass}">${valueText}</span>
+                    <button id="auth-switch-btn" class="info-action-btn">${buttonText}</button>
+                </div>
             </div>
             <div id="sessions">
-                ${sessionsHtml}
+                ${generateSessionsHtml(sessions, sshHosts, uiState)}
             </div>
 
-            <!-- Script preview overlay -->
-            <div id="script-preview-overlay" preview-session-id="" class="script-preview-overlay">
+            <div id="script-preview-overlay" preview-session-id="${previewSession ? escapeHtml(previewSession.id) : ''}" class="script-preview-overlay${previewSession ? ' visible' : ''}">
                 <div class="script-preview-header">SLURM Job Script Preview</div>
-                <div id="script-preview-host" class="script-preview-host"></div>
-                <div id="script-preview-code" class="script-preview-code"></div>
+                <div id="script-preview-host" class="script-preview-host">${previewSession ? `Host: ${escapeHtml(previewSession.cluster)}` : ''}</div>
+                <div id="script-preview-code" class="script-preview-code">${previewSession ? escapeHtml(previewSession.batchScript ?? '') : ''}</div>
                 <div class="script-preview-actions">
                     <button id="cancel-preview-btn" class="cancel-preview-btn">Cancel</button>
                     <button id="confirm-preview-btn">Submit Job</button>
@@ -200,16 +193,6 @@ export function getSessionWebviewContent(
             <script nonce="${nonce}" src="${sessionsJsUri}"></script>
         </body>
     </html>`;
-}
-
-export function getCommonStyles(codiconsFontUri: vscode.Uri): string {
-    return `
-        @font-face {
-            font-family: "codicon";
-            font-display: block;
-            src: url("${codiconsFontUri}") format("truetype");
-        }
-        `;
 }
 
 export function escapeHtml(text: string): string {

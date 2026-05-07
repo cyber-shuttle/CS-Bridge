@@ -9,6 +9,15 @@
         return div.innerHTML;
     }
 
+    setInterval(() => {
+        document.querySelectorAll('.session-queued-timer').forEach(el => {
+            const submittedAt = parseInt(el.getAttribute('data-submitted'), 10);
+            if (!submittedAt) { return; }
+            const elapsed = Math.floor((Date.now() - submittedAt) / 1000);
+            el.textContent = elapsed >= 60 ? ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)' : ' (' + elapsed + 's)';
+        });
+    }, 1000);
+
     const vscode = acquireVsCodeApi();
 
     window.addEventListener('message', event => {
@@ -46,10 +55,10 @@
     document.querySelectorAll('.add-session-placeholder').forEach(btn => {
         btn.addEventListener('click', () => {
             const picker = document.getElementById('host-picker');
-            if (picker) {
-                const show = picker.style.display === 'none';
-                picker.style.display = show ? 'block' : 'none';
-            }
+            if (!picker) { return; }
+            const show = picker.style.display === 'none';
+            picker.style.display = show ? 'block' : 'none';
+            vscode.postMessage({ command: 'setPickerOpen', value: show });
         });
     });
 
@@ -63,6 +72,7 @@
             const isExpanding = form.style.display === 'none';
             form.style.display = isExpanding ? 'block' : 'none';
             if (chevron) { chevron.classList.toggle('expanded', isExpanding); }
+            vscode.postMessage({ command: 'setHostOpen', host: host, open: isExpanding });
             if (isExpanding) {
                 form.querySelector('.job-form-loading').style.display = 'flex';
                 form.querySelector('.job-form-fields').style.display = 'none';
@@ -105,15 +115,11 @@
 
         }
     });
-    // Close script preview overlay
+    // Close script preview overlay (just dismiss; no session state change)
     document.getElementById('cancel-preview-btn')?.addEventListener('click', () => {
-        const previewSessionId = document.getElementById('script-preview-overlay')?.getAttribute('preview-session-id');
-        if (previewSessionId && previewSessionId !== '') {
-            stopSession(previewSessionId);
-        }
-        console.log('Closing script preview overlay');
         document.getElementById('script-preview-overlay')?.classList.remove('visible');
         document.getElementById('script-preview-overlay')?.setAttribute('preview-session-id', '');
+        vscode.postMessage({ command: 'dismissPreview' });
     });
 
 
@@ -193,6 +199,12 @@
         if (closeBtn && !closeBtn.disabled) {
             const sessionId = closeBtn.getAttribute('data-session-id');
             if (sessionId) { removeSession(sessionId); }
+        }
+
+        const copyBtn = e.target.closest('.copy-btn');
+        if (copyBtn) {
+            const text = copyBtn.getAttribute('data-copy');
+            if (text) { navigator.clipboard?.writeText(text); }
         }
 
     });
@@ -326,7 +338,7 @@
                 line2 = '<span class="session-detail"><span class="spinner"></span> Attempting to connect tunnel...</span>';
                 break;
             case 'deploying_agent':
-                line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(session.host) + '...</span>';
+                line2 = '<span class="session-detail"><span class="spinner"></span> deploying agent to ' + escapeHtml(session.cluster) + '...</span>';
                 break;
             case 'submitting':
                 line2 = '<span class="session-detail"><span class="spinner"></span> submitting job...</span>';
