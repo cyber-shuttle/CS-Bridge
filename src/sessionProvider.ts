@@ -3,11 +3,22 @@ import { Logger } from './logger';
 import { SlurmClusterInfo, SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent, UiState } from './webviews/sessionWebview';
 import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
-import { addSession, deleteSession, findSession, getAllSessions, updateSession } from './extensionStore';
+import { addSession, deleteSession, findSession, getAllSessions, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
+
+function openSessionWindow(sessionId: string): void {
+    const path = findSession(sessionId)?.workingDirectory ?? '';
+    const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
+    vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+}
+
+function isPidAlive(pid: number | undefined): boolean {
+    if (pid === undefined) { return false; }
+    try { process.kill(pid, 0); return true; } catch { return false; }
+}
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
@@ -17,7 +28,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     private _uiState: UiState = { pickerOpen: false, openHosts: [] };
     private _previewSession: SlurmSession | null = null;
 
-    constructor(private readonly _extensionUri: vscode.Uri) {
+    constructor(private readonly _extensionUri: vscode.Uri, private readonly _myId?: string) {
     }
 
     resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext,
@@ -36,10 +47,24 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         const visSub = webviewView.onDidChangeVisibility(() => {
             if (webviewView.visible) { this._refereshSessions(webviewView.webview); }
         });
-        webviewView.onDidDispose(() => { authSub.dispose(); visSub.dispose(); });
+        // cshost windows only react to changes in their own session.
+        let lastMine: string | undefined;
+        const sessionsWatcher = watchSessions(() => {
+            const mine = this._myId ? JSON.stringify(findSession(this._myId)) : undefined;
+            if (mine !== undefined && mine === lastMine) { return; }
+            lastMine = mine;
+            for (const s of this._scopedSessions()) {
+                webviewView.webview.postMessage({ command: 'sessionUpdate', session: { ...s, isCurrent: s.windowPid === process.pid, windowAlive: isPidAlive(s.windowPid) } });
+            }
+            this._autoCloseIfTerminal();
+        });
+        webviewView.onDidDispose(() => { authSub.dispose(); visSub.dispose(); sessionsWatcher.close(); });
         JobStatusMonitor.init(webviewView.webview);
-        for (const s of getAllSessions()) {
-            if (s.jobId && !TERMINAL_STATUSES.has(s.status)) { JobStatusMonitor.getInstance().startMonitoring(s); }
+        // Sidebar only - cshost windows observe one session and don't drive monitoring.
+        if (!this._myId) {
+            for (const s of getAllSessions()) {
+                if (s.jobId && !TERMINAL_STATUSES.has(s.status)) { JobStatusMonitor.getInstance().startMonitoring(s); }
+            }
         }
         try {
             this._refereshSessions(webviewView.webview);
@@ -221,24 +246,44 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         this._refereshSessions(webView);
     }
 
+    private _scopedSessions(): SlurmSession[] {
+        return this._myId ? getAllSessions().filter(s => s.id === this._myId) : getAllSessions();
+    }
+
+    // closeWindow (not process.kill) so we don't tear down the SSH extension host mid-cancel.
+    private _autoCloseIfTerminal(): void {
+        if (!this._myId) { return; }
+        const s = findSession(this._myId);
+        if (s && TERMINAL_STATUSES.has(s.status)) {
+            vscode.commands.executeCommand('workbench.action.closeWindow');
+        }
+    }
+
     private async _refereshSessions(webView: vscode.Webview) {
-        const sessions = getAllSessions();
+        const sessions = this._scopedSessions();
         const account = await getMicrosoftAccountInfo();
         const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
         webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions, account, sshHosts, this._uiState, this._previewSession);
-        for (const session of sessions) {
-            webView.postMessage({ command: 'sessionUpdate', session: session });
+        for (const s of sessions) {
+            webView.postMessage({ command: 'sessionUpdate', session: { ...s, isCurrent: s.windowPid === process.pid, windowAlive: isPidAlive(s.windowPid) } });
         }
         for (const host of this._uiState.openHosts) {
             const cached = this._clusterInfo.get(host);
             if (cached) { webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo: cached }); }
         }
+        this._autoCloseIfTerminal();
     }
 
     // THIS FUNCTION CONTAINS THE CORE LOGIC FOR CONNECTING A SESSION TO AN SSH TUNNEL:
     // This creates the SSH server on Linkspan, sets up the tunnel, and opens a new VS Code window connected to the tunnel.
     // It also updates the session status and handles errors at each step.
     private async _connectSessionToTunnel(webView: vscode.Webview, session: SlurmSession) {
+        // Tunnel already up - just open another window against the existing SSH config entry.
+        if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
+            this._logger.info(`Reusing existing tunnel for session ${session.id}; opening new window`);
+            openSessionWindow(session.id);
+            return;
+        }
 
         session.status = 'connecting';
         updateSession(session);
@@ -269,10 +314,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPrivateKey!);
         this._logger.info(`SSH config entry created for session ${session.id} with host alias ${hostAlias}. You can connect using 'ssh ${hostAlias}'`);
 
-        vscode.commands.executeCommand(
-            'vscode.newWindow',
-            { remoteAuthority: `ssh-remote+${hostAlias}` }
-        );
+        openSessionWindow(session.id);
 
         session.status = 'connected';
         updateSession(session);
