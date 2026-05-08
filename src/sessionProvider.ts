@@ -6,6 +6,7 @@ import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlur
 import { addSession, deleteSession, findSession, getAllSessions, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
+import { isPidAlive } from './modules/fsSupport';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
 
@@ -13,11 +14,6 @@ function openSessionWindow(sessionId: string): void {
     const path = findSession(sessionId)?.workingDirectory ?? '';
     const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
-}
-
-function isPidAlive(pid: number | undefined): boolean {
-    if (pid === undefined) { return false; }
-    try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 export class SessionProvider implements vscode.WebviewViewProvider {
@@ -28,6 +24,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     private _uiState: UiState = { pickerOpen: false, openHosts: [] };
     private _previewSession: SlurmSession | null = null;
 
+    // _myId: undefined in sidebar/non-remote windows (sees all sessions, drives monitoring); set to sessionId in cshost remote windows (scoped to that session, observes only).
     constructor(private readonly _extensionUri: vscode.Uri, private readonly _myId?: string) {
     }
 
@@ -246,6 +243,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         this._refereshSessions(webView);
     }
 
+    // Cshost windows see only their own session; sidebar windows see all.
     private _scopedSessions(): SlurmSession[] {
         return this._myId ? getAllSessions().filter(s => s.id === this._myId) : getAllSessions();
     }

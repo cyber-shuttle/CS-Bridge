@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import { Logger } from './logger';
+import { lock, release } from './modules/fsSupport';
 import { SlurmSession } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
@@ -13,6 +15,7 @@ let sessionsFilePath: string = '';
 export function initSessionStore(storagePath: string = CS_HOME): string {
     fs.mkdirSync(storagePath, { recursive: true });
     sessionsFilePath = path.join(storagePath, 'sessions.json');
+    lock(sessionsFilePath);
     try {
         const loaded: SlurmSession[] = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
         sessions = loaded.map(s => { s.connectionInfo = undefined; return s; });
@@ -24,6 +27,8 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
             logger.error(`Failed to load sessions from ${sessionsFilePath}. initializing as empty`, err);
         }
         sessions = [];
+    } finally {
+        release(sessionsFilePath);
     }
     return sessionsFilePath;
 }
@@ -34,11 +39,17 @@ function readSessionsFromDisk(): SlurmSession[] {
 
 // Preserves windowPid from disk - patchSession owns that field via atomic field-level write.
 function saveToFile(): void {
+    lock(sessionsFilePath);
     try {
         const onDisk = readSessionsFromDisk();
         const sanitized = sessions.map(s => ({ ...s, connectionInfo: undefined, windowPid: onDisk.find(x => x.id === s.id)?.windowPid }));
         fs.writeFileSync(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
-    } catch (err) { logger.error(`Failed to save sessions to ${sessionsFilePath}`, err); }
+    } catch (err) {
+        logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
+        vscode.window.showErrorMessage(`Failed to save sessions: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+        release(sessionsFilePath);
+    }
 }
 
 export function getAllSessions(): SlurmSession[] {
@@ -72,22 +83,32 @@ export function findSession(sessionId: string): SlurmSession | undefined {
 
 // Atomic field-level patch - saveToFile's whole-array write would clobber it otherwise.
 export function patchSession(sessionId: string, patch: Partial<SlurmSession>): void {
-    const memSession = sessions.find(x => x.id === sessionId);
-    if (memSession) { Object.assign(memSession, patch); }
-    const onDisk = readSessionsFromDisk();
-    const s = onDisk.find(s => s.id === sessionId);
-    if (!s) { return; }
-    Object.assign(s, patch);
-    try { fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8'); }
-    catch (err) { logger.error('patchSession failed', err); }
+    lock(sessionsFilePath);
+    try {
+        const onDisk = readSessionsFromDisk();
+        const memIdx = sessions.findIndex(x => x.id === sessionId);
+        const diskIdx = onDisk.findIndex(s => s.id === sessionId);
+        if (memIdx < 0 && diskIdx < 0) { logger.error(`patchSession: session ${sessionId} not found`); return; }
+        const merged = { ...(diskIdx >= 0 ? onDisk[diskIdx] : {}), ...(memIdx >= 0 ? sessions[memIdx] : {}), ...patch } as SlurmSession;
+        sessions[memIdx >= 0 ? memIdx : sessions.length] = merged;
+        onDisk[diskIdx >= 0 ? diskIdx : onDisk.length] = { ...merged, connectionInfo: undefined };
+        fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8');
+    } finally {
+        release(sessionsFilePath);
+    }
 }
 
-// Reloads in-memory state before notifying. connectionInfo is in-memory only; preserved across reload.
+// Cross-window sync: sessions.json is shared across windows; reload in-mem state when another window writes (preserve connectionInfo since it's in-mem only).
 export function watchSessions(callback: () => void): fs.FSWatcher {
     return fs.watch(CS_HOME, (_, filename) => {
         if (filename !== 'sessions.json') { return; }
-        const oldById = new Map(sessions.map(s => [s.id, s]));
-        sessions = readSessionsFromDisk().map(s => ({ ...s, connectionInfo: oldById.get(s.id)?.connectionInfo }));
+        lock(sessionsFilePath);
+        try {
+            const oldById = new Map(sessions.map(s => [s.id, s]));
+            sessions = readSessionsFromDisk().map(s => ({ ...s, connectionInfo: oldById.get(s.id)?.connectionInfo }));
+        } finally {
+            release(sessionsFilePath);
+        }
         callback();
     });
 }
