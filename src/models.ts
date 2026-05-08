@@ -93,6 +93,43 @@ export interface AccountInfo {
     label: string | null;
 }
 
+export interface RecentJob {
+    jobId: string;
+    name: string;
+    state: string;
+    partition: string;
+    elapsed: string;
+    timeLimit: string;
+    reason?: string;
+    exitCode?: string;
+}
+
+export interface RecentJobsResult {
+    active: RecentJob[];
+    recent: RecentJob[];
+}
+
+export interface JobOutput {
+    stdout?: string;
+    stderr?: string;
+    stdoutPath?: string;
+    stderrPath?: string;
+    state?: string;
+    name?: string;
+    partition?: string;
+    submitTime?: string;
+    startTime?: string;
+    endTime?: string;
+    nodeList?: string;
+    workDir?: string;
+    account?: string;
+    exitCode?: string;
+    reason?: string;
+    timeLimit?: string;
+    elapsed?: string;
+    rawScontrol?: string;
+}
+
 export enum SlurmJobStatus {
     PENDING = 'pending',
     RUNNING = 'running',
