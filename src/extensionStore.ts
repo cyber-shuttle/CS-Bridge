@@ -37,12 +37,12 @@ function readSessionsFromDisk(): SlurmSession[] {
     try { return JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8')); } catch { return []; }
 }
 
-// Preserves windowPid from disk - patchSession owns that field via atomic field-level write.
+// Preserves windowPids from disk - mutateWindowPids owns that field via atomic field-level write.
 function saveToFile(): void {
     lock(sessionsFilePath);
     try {
         const onDisk = readSessionsFromDisk();
-        const sanitized = sessions.map(s => ({ ...s, connectionInfo: undefined, windowPid: onDisk.find(x => x.id === s.id)?.windowPid }));
+        const sanitized = sessions.map(s => ({ ...s, connectionInfo: undefined, windowPids: onDisk.find(x => x.id === s.id)?.windowPids }));
         fs.writeFileSync(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
     } catch (err) {
         logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
@@ -92,6 +92,23 @@ export function patchSession(sessionId: string, patch: Partial<SlurmSession>): v
         const merged = { ...(diskIdx >= 0 ? onDisk[diskIdx] : {}), ...(memIdx >= 0 ? sessions[memIdx] : {}), ...patch } as SlurmSession;
         sessions[memIdx >= 0 ? memIdx : sessions.length] = merged;
         onDisk[diskIdx >= 0 ? diskIdx : onDisk.length] = { ...merged, connectionInfo: undefined };
+        fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8');
+    } finally {
+        release(sessionsFilePath);
+    }
+}
+
+// Locked read-modify-write on windowPids. Used for window registration/unregistration and dead-pid cleanup.
+export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
+    lock(sessionsFilePath);
+    try {
+        const onDisk = readSessionsFromDisk();
+        const diskIdx = onDisk.findIndex(s => s.id === sessionId);
+        if (diskIdx < 0) { return; }
+        const newPids = transform(onDisk[diskIdx].windowPids ?? []);
+        onDisk[diskIdx].windowPids = newPids;
+        const memSession = sessions.find(s => s.id === sessionId);
+        if (memSession) { memSession.windowPids = newPids; }
         fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8');
     } finally {
         release(sessionsFilePath);

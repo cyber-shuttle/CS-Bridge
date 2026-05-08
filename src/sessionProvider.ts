@@ -3,7 +3,7 @@ import { Logger } from './logger';
 import { SlurmClusterInfo, SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent, UiState } from './webviews/sessionWebview';
 import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
-import { addSession, deleteSession, findSession, getAllSessions, updateSession, watchSessions } from './extensionStore';
+import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
@@ -14,6 +14,14 @@ function openSessionWindow(sessionId: string): void {
     const path = findSession(sessionId)?.workingDirectory ?? '';
     const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+}
+
+// Probe all windowPids; lazily evict dead ones. Drives the Current/Switch/Connect button.
+function liveAndCleanup(s: SlurmSession): { isCurrent: boolean, windowAlive: boolean } {
+    const pids = s.windowPids ?? [];
+    const live = pids.filter(isPidAlive);
+    if (live.length !== pids.length) { mutateWindowPids(s.id, () => live); }
+    return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
 }
 
 export class SessionProvider implements vscode.WebviewViewProvider {
@@ -51,7 +59,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             if (mine !== undefined && mine === lastMine) { return; }
             lastMine = mine;
             for (const s of this._scopedSessions()) {
-                webviewView.webview.postMessage({ command: 'sessionUpdate', session: { ...s, isCurrent: s.windowPid === process.pid, windowAlive: isPidAlive(s.windowPid) } });
+                webviewView.webview.postMessage({ command: 'sessionUpdate', session: { ...s, ...liveAndCleanup(s) } });
             }
             this._autoCloseIfTerminal();
         });
@@ -263,7 +271,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
         webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions, account, sshHosts, this._uiState, this._previewSession);
         for (const s of sessions) {
-            webView.postMessage({ command: 'sessionUpdate', session: { ...s, isCurrent: s.windowPid === process.pid, windowAlive: isPidAlive(s.windowPid) } });
+            webView.postMessage({ command: 'sessionUpdate', session: { ...s, ...liveAndCleanup(s) } });
         }
         for (const host of this._uiState.openHosts) {
             const cached = this._clusterInfo.get(host);

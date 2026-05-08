@@ -42,7 +42,7 @@ export interface Session {
     errorMessage: string;
     connectionInfo?: SessionConnectionInfo;
     workingDirectory?: string;
-    windowPid?: number;
+    windowPids?: number[];
 }
 
 interface SessionConnectionInfo {

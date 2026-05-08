@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { initSessionStore, patchSession } from './extensionStore';
+import { initSessionStore, mutateWindowPids } from './extensionStore';
+import { isPidAlive } from './modules/fsSupport';
 import { SessionProvider } from './sessionProvider';
 import { SshManager } from './modules/sshSupport';
 
@@ -16,12 +17,12 @@ export async function activate(context: vscode.ExtensionContext) {
     const id = currentWindowSessionId();
     if (id) {
         logger.info(`Window is connected to CyberShuttle session ${id}; pid=${process.pid}`);
-        try { patchSession(id, { windowPid: process.pid }); }
-        catch (err) { logger.error(`Failed to persist windowPid for session ${id}`, err); }
+        try { mutateWindowPids(id, pids => [...new Set([...pids.filter(isPidAlive), process.pid])]); }
+        catch (err) { logger.error(`Failed to register windowPid for session ${id}`, err); }
         context.subscriptions.push({
             dispose: () => {
-                try { patchSession(id, { windowPid: undefined }); }
-                catch (err) { logger.error(`Failed to clear windowPid for session ${id}`, err); }
+                try { mutateWindowPids(id, pids => pids.filter(p => p !== process.pid)); }
+                catch (err) { logger.error(`Failed to unregister windowPid for session ${id}`, err); }
             }
         });
     }
