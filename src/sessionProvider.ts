@@ -288,6 +288,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
             this._logger.info(`Reusing existing tunnel for session ${session.id}; opening new window`);
             openSessionWindow(session.id);
+            // Optimistic windowAlive flip - real pid registration arrives later via fs.watch when the new window activates.
+            webView.postMessage({ command: 'sessionUpdate', session: { ...session, isCurrent: false, windowAlive: true } });
             return;
         }
 
@@ -325,6 +327,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         session.status = 'connected';
         updateSession(session);
         this._refereshSessions(webView);
+        // Optimistic windowAlive flip - real pid registration arrives later via fs.watch when the new window activates.
+        webView.postMessage({ command: 'sessionUpdate', session: { ...session, isCurrent: false, windowAlive: true } });
     }
 
     private async _cancelSessionExecution(webView: vscode.Webview, sessionId: string) {
