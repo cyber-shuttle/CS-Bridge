@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // SSH_ASKPASS helper script for CyberShuttle extension.
 // SSH calls this script with the prompt as the first argument.
 // It writes a unique request file and waits for the extension

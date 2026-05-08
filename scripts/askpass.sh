@@ -1,0 +1,2 @@
+#!/bin/sh
+ELECTRON_RUN_AS_NODE=1 exec "$CS_NODE_BIN" "$CS_ASKPASS_JS" "$@"

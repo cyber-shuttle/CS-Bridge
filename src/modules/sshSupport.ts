@@ -139,8 +139,11 @@ export class SshManager {
             const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
             const cancelFile = path.join(sessionDir, 'cancel');
 
-            // Path to our askpass helper script
+            // Bundled askpass helper - JS does the IPC; the platform-specific wrapper invokes it via VS Code's electron-as-node.
             const askpassScript = path.join(this._extensionUri.fsPath, 'scripts', 'askpass.js');
+            const isWin = process.platform === 'win32';
+            const askpassWrapper = path.join(this._extensionUri.fsPath, 'scripts', isWin ? 'askpass.cmd' : 'askpass.sh');
+            if (!isWin) { try { fs.chmodSync(askpassWrapper, 0o755); } catch { /* best-effort - vsix should already have +x */ } }
 
             // Detach stdin so SSH is forced to use SSH_ASKPASS
             const sshProcess = spawn('ssh', [
@@ -151,9 +154,11 @@ export class SshManager {
             ], {
                 env: {
                     ...process.env,
-                    SSH_ASKPASS: askpassScript,
+                    SSH_ASKPASS: askpassWrapper,
                     SSH_ASKPASS_REQUIRE: 'force',
                     CS_ASKPASS_DIR: sessionDir,
+                    CS_ASKPASS_JS: askpassScript,
+                    CS_NODE_BIN: process.execPath,
                     DISPLAY: ':0',
                 },
                 stdio: ['ignore', 'pipe', 'pipe'],
