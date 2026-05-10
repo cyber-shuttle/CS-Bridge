@@ -57,12 +57,13 @@ export class Logger {
             return;
         }
 
-        const timestamp = new Date().toISOString();
-        const label = LogLevel[level].toUpperCase();
-        const suffix = args.length > 0
-            ? ' ' + args.map(a => a instanceof Error ? a.stack ?? a.message : String(a)).join(' ')
-            : '';
-
-        this._outputChannel.appendLine(`[${timestamp}] [${label}] ${message}${suffix}`);
+        const prefix = `[${new Date().toISOString()}] [${LogLevel[level].toUpperCase()}] `;
+        // Re-prefix every line so multi-line messages (stack traces, SSH banners) stay aligned.
+        const body = [message, ...args.map(a => {
+            if (a instanceof Error) { return a.stack ?? a.message; }
+            if (a === null || typeof a !== 'object') { return String(a); }
+            try { return JSON.stringify(a); } catch { return String(a); }
+        })].join(' ');
+        for (const line of body.split('\n')) { this._outputChannel.appendLine(prefix + line); }
     }
 }

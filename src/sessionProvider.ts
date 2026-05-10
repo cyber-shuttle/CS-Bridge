@@ -1,17 +1,21 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { SlurmSession, TunnelCredential } from './models';
-import { getSessionWebviewContent } from './webviews/sessionWebview';
-import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo } from './modules/sshSupport';
+import { SlurmClusterInfo, SlurmSession, TunnelCredential } from './models';
+import { getSessionWebviewContent, UiState } from './webviews/sessionWebview';
+import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
 import { addSession, deleteSession, findSession, getAllSessions, updateSession } from './extensionStore';
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
+
+const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
 
 export class SessionProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'cybershuttle.sessionsView';
 
     private readonly _logger = Logger.getInstance();
-    private readonly _clusterHomeDirs = new Map<string, string>();
+    private readonly _clusterInfo = new Map<string, SlurmClusterInfo>();
+    private _uiState: UiState = { pickerOpen: false, openHosts: [] };
+    private _previewSession: SlurmSession | null = null;
 
     constructor(private readonly _extensionUri: vscode.Uri) {
     }
@@ -29,8 +33,14 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 this._refereshSessions(webviewView.webview);
             }
         });
-        webviewView.onDidDispose(() => authSub.dispose());
+        const visSub = webviewView.onDidChangeVisibility(() => {
+            if (webviewView.visible) { this._refereshSessions(webviewView.webview); }
+        });
+        webviewView.onDidDispose(() => { authSub.dispose(); visSub.dispose(); });
         JobStatusMonitor.init(webviewView.webview);
+        for (const s of getAllSessions()) {
+            if (s.jobId && !TERMINAL_STATUSES.has(s.status)) { JobStatusMonitor.getInstance().startMonitoring(s); }
+        }
         try {
             this._refereshSessions(webviewView.webview);
         } catch (error) {
@@ -46,17 +56,32 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         const command = data.command;
         switch (command) {
             case 'fetchSlurmClusterInfo':
-                // vscode.postMessage({ command: 'fetchSlurmClusterInfo', host: host });
                 const host = data.host;
+                const cached = this._clusterInfo.get(host);
+                if (cached) {
+                    webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo: cached });
+                    break;
+                }
                 this._logger.info(`Fetching slurm cluster info for host: ${host}`);
                 getSlurmClusterInfo(host).then(clusterInfo => {
-                    this._logger.info('Fetched slurm cluster info:', clusterInfo);
-                    if (clusterInfo.homeDir) { this._clusterHomeDirs.set(host, clusterInfo.homeDir); }
+                    this._clusterInfo.set(host, clusterInfo);
                     webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
                 }).catch(error => {
                     this._logger.error('Error fetching slurm cluster info:', error);
                     webView.postMessage({ command: 'slurmClusterInfoError', host, message: error instanceof Error ? error.message : String(error) });
                 });
+                break;
+            case 'setPickerOpen':
+                this._uiState.pickerOpen = data.value;
+                break;
+            case 'setHostOpen': {
+                const hosts = new Set(this._uiState.openHosts);
+                data.open ? hosts.add(data.host) : hosts.delete(data.host);
+                this._uiState.openHosts = [...hosts];
+                break;
+            }
+            case 'dismissPreview':
+                this._previewSession = null;
                 break;
             case 'addSession':
                 // Handle adding a new session based on data from the webview
@@ -79,9 +104,10 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                     allocation: data.allocation || '',
                     submittedAt: Date.now(),
                     errorMessage: '',
-                    workingDirectory: this._clusterHomeDirs.get(data.host),
+                    workingDirectory: this._clusterInfo.get(data.host)?.homeDir,
                 };
                 addSession(newSession);
+                this._uiState = { pickerOpen: false, openHosts: [] };
                 this._refereshSessions(webView);
                 break;
             case 'prepareLaunchSession':
@@ -198,9 +224,14 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     private async _refereshSessions(webView: vscode.Webview) {
         const sessions = getAllSessions();
         const account = await getMicrosoftAccountInfo();
-        webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions, account);
+        const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
+        webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions, account, sshHosts, this._uiState, this._previewSession);
         for (const session of sessions) {
             webView.postMessage({ command: 'sessionUpdate', session: session });
+        }
+        for (const host of this._uiState.openHosts) {
+            const cached = this._clusterInfo.get(host);
+            if (cached) { webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo: cached }); }
         }
     }
 
@@ -208,6 +239,9 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     // This creates the SSH server on Linkspan, sets up the tunnel, and opens a new VS Code window connected to the tunnel.
     // It also updates the session status and handles errors at each step.
     private async _connectSessionToTunnel(webView: vscode.Webview, session: SlurmSession) {
+
+        session.status = 'connecting';
+        updateSession(session);
 
         try {
             await createSSHServerForSession(session);
@@ -245,7 +279,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         this._refereshSessions(webView);
     }
 
-    private _cancelSessionExecution(webView: vscode.Webview, sessionId: string) {
+    private async _cancelSessionExecution(webView: vscode.Webview, sessionId: string) {
         const session = findSession(sessionId);
         if (!session) {
             this._logger.error(`Session with ID ${sessionId} not found to cancel.`);
@@ -256,7 +290,13 @@ export class SessionProvider implements vscode.WebviewViewProvider {
 
         // For simplicity, we just update the status here. In a real implementation, you'd also want to cancel the job on the cluster and clean up any resources.
         // TODO: Implement actual job cancellation logic (e.g., scancel for Slurm, API call for cloud provider, etc.)
-        if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent' || session.status === 'connected' || session.status === 'connection_broken') {
+        if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent' || session.status === 'connected' || session.status === 'connection_broken' || session.status === 'ready_to_connect' || session.status === 'connecting') {
+            const choice = await vscode.window.showWarningMessage(
+                'Stop session?',
+                { modal: true, detail: 'This cancels the running job.' },
+                'Stop'
+            );
+            if (choice !== 'Stop') { this._refereshSessions(webView); return; }
             session.status = 'cancelling';
             session.errorMessage = '';
             cancelRunningSession(session, webView).then(() => {
@@ -270,10 +310,6 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 updateSession(session);
                 this._refereshSessions(webView);
             });
-        } else if (session.status === 'configuring') {
-            session.status = 'cancelled';
-            vscode.window.showWarningMessage(`Session cancelled while configuring. If the session was already submitted to the cluster, please check the cluster for any running jobs and cancel them manually if needed.`);
-            session.errorMessage = '';
         } else {
             this._logger.warn(`Session with ID ${sessionId} is in status ${session.status} and cannot be cancelled.`);
             vscode.window.showWarningMessage(`Session cannot be cancelled from status: ${session.status}`);
@@ -293,6 +329,9 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             return;
         }
         this._logger.info(`Launching session with IDs: ${sessionId}`);
+        this._previewSession = null;
+        session.connectionInfo = undefined;
+        session.errorMessage = '';
         session.status = 'submitting';
         updateSession(session);
         this._refereshSessions(webView);
@@ -345,9 +384,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         //}
 
         session.errorMessage = '';
-        session.connectionInfo = undefined;
-        session.status = 'configuring';
         updateSession(session);
+        this._previewSession = session;
         this._refereshSessions(webView);
 
         // Show preview and let user confirm

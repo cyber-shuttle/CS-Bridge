@@ -98,8 +98,8 @@ export class JobStatusMonitor {
                             continue;
                         }
 
-                        if (session.status === 'ready_to_connect' || session.status === 'connecting' || session.status === 'connected') {
-                            // Do not go with ssh check. Use the ping api to prevent repeated ssh connections
+                        if (session.connectionInfo?.apiTunnelId && (session.status === 'ready_to_connect' || session.status === 'connecting' || session.status === 'connected')) {
+                            // Skip when connectionInfo is missing (after a window reload) - the slurm branch re-derives tunnel info.
                             logger.info(`Session ${session.name} is in status ${session.status}, skipping Slurm status check and using tunnel ping instead.`);
 
                             checkLinkspanHealth(session).catch(err => {
