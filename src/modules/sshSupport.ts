@@ -119,6 +119,11 @@ export class SshManager {
     * Uses a short hashed socket name to stay under the 104-byte limit.
     */
     private getControlMasterArgs(hostName: string): string[] {
+        // Windows OpenSSH doesn't support Unix-socket-based ControlMaster
+        // ("getsockname failed: Not a socket"). Skip multiplexing on Windows.
+        if (process.platform === 'win32') {
+            return [];
+        }
         const hash = crypto.createHash('sha256').update(hostName).digest('hex').substring(0, 16);
         const socketPath = path.join(CS_SSH_CONTROL_DIR, hash);
         return [
