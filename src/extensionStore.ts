@@ -81,23 +81,6 @@ export function findSession(sessionId: string): SlurmSession | undefined {
     return sessions.find(s => s.id === sessionId);
 }
 
-// Atomic field-level patch - saveToFile's whole-array write would clobber it otherwise.
-export function patchSession(sessionId: string, patch: Partial<SlurmSession>): void {
-    lock(sessionsFilePath);
-    try {
-        const onDisk = readSessionsFromDisk();
-        const memIdx = sessions.findIndex(x => x.id === sessionId);
-        const diskIdx = onDisk.findIndex(s => s.id === sessionId);
-        if (memIdx < 0 && diskIdx < 0) { logger.error(`patchSession: session ${sessionId} not found`); return; }
-        const merged = { ...(diskIdx >= 0 ? onDisk[diskIdx] : {}), ...(memIdx >= 0 ? sessions[memIdx] : {}), ...patch } as SlurmSession;
-        sessions[memIdx >= 0 ? memIdx : sessions.length] = merged;
-        onDisk[diskIdx >= 0 ? diskIdx : onDisk.length] = { ...merged, connectionInfo: undefined };
-        fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8');
-    } finally {
-        release(sessionsFilePath);
-    }
-}
-
 // Locked read-modify-write on windowPids. Used for window registration/unregistration and dead-pid cleanup.
 export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
     lock(sessionsFilePath);
