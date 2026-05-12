@@ -50,6 +50,12 @@
 					"type": "webview",
 					"id": "cybershuttle.sessionsView",
 					"name": "Sessions"
+				},
+				{
+					"type": "tree",
+					"id": "cybershuttle.usageView",
+					"name": "Usage",
+					"visibility": "collapsed"
 				}
 			]
 		},
