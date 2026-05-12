@@ -382,9 +382,7 @@
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
             incActionBtns.push(session.isCurrent
                 ? '<button class="session-action-main" disabled>' + ci('check') + ' Current</button>'
-                : session.windowAlive
-                    ? '<button class="session-action-main action-switch switch-btn" data-session-id="' + session.id + '">' + ci('arrow-swap') + ' Switch</button>'
-                    : '<button class="session-action-main action-switch switch-btn" data-session-id="' + session.id + '">' + ci('arrow-swap') + ' Connect</button>');
+                : '<button class="session-action-main action-switch switch-btn" data-session-id="' + session.id + '">' + ci('arrow-swap') + ' ' + (session.windowAlive ? 'Switch' : 'Connect') + '</button>');
         } else if (['pending', 'cancelling', 'submitting', 'deploying_agent', 'running', 'connection_broken', 'connecting'].includes(session.status)) {
             //incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
