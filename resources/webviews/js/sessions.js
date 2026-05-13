@@ -378,9 +378,14 @@
 
         if (['failed', 'cancelled', 'expired', 'completed'].includes(session.status)) {
             incActionBtns.push('<button class="session-action-main action-start start-btn" data-session-id="' + session.id + '">' + ci('debug-restart') + ' Restart</button>');
-        } else if (['pending', 'cancelling', 'submitting', 'deploying_agent', 'connected', 'running', 'connection_broken', 'connecting'].includes(session.status)) {
+        } else if (['pending', 'cancelling', 'submitting', 'deploying_agent', 'running', 'connection_broken', 'connecting'].includes(session.status)) {
             //incActionBtns.push('<button class="session-action-main btn-loading" disabled><span class="spinner"></span> Activating...</button>');
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
+        } else if (session.status === 'connected') {
+            incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
+            incActionBtns.push(session.isCurrent
+                ? '<button class="session-action-main" disabled>' + ci('check') + ' Current</button>'
+                : '<button class="session-action-main action-switch switch-btn" data-session-id="' + session.id + '">' + ci('arrow-swap') + ' ' + (session.windowAlive ? 'Switch' : 'Connect') + '</button>');
         } else if (['ready_to_connect'].includes(session.status)) {
             incActionBtns.push('<button class="session-action-main action-stop stop-btn" data-session-id="' + session.id + '">' + ci('debug-stop') + ' Stop</button>');
             incActionBtns.push('<button class="session-action-main action-switch switch-btn session-btn-switch-here" data-session-id="' + session.id + '" data-direction="remote"' + '>' + ci('arrow-swap') + ' Connect</button>');

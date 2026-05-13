@@ -1,7 +1,9 @@
-import * as fs from 'fs/promises';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as vscode from 'vscode';
 import { Logger } from './logger';
+import { lock, release } from './modules/fsSupport';
 import { SlurmSession } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
@@ -10,12 +12,12 @@ const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
 
-export async function initSessionStore(storagePath: string = CS_HOME): Promise<string> {
-    await fs.mkdir(storagePath, { recursive: true });
+export function initSessionStore(storagePath: string = CS_HOME): string {
+    fs.mkdirSync(storagePath, { recursive: true });
     sessionsFilePath = path.join(storagePath, 'sessions.json');
+    lock(sessionsFilePath);
     try {
-        const data = await fs.readFile(sessionsFilePath, 'utf-8');
-        const loaded: SlurmSession[] = JSON.parse(data);
+        const loaded: SlurmSession[] = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
         sessions = loaded.map(s => { s.connectionInfo = undefined; return s; });
         logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
     } catch (err) {
@@ -25,21 +27,28 @@ export async function initSessionStore(storagePath: string = CS_HOME): Promise<s
             logger.error(`Failed to load sessions from ${sessionsFilePath}. initializing as empty`, err);
         }
         sessions = [];
+    } finally {
+        release(sessionsFilePath);
     }
     return sessionsFilePath;
 }
 
-async function saveToFile(): Promise<void> {
+function readSessionsFromDisk(): SlurmSession[] {
+    try { return JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8')); } catch { return []; }
+}
+
+// Preserves windowPids from disk - mutateWindowPids owns that field via atomic field-level write.
+function saveToFile(): void {
+    lock(sessionsFilePath);
     try {
-        const sanitized = sessions.map(s => {
-            const copy = { ...s };
-            copy.connectionInfo = undefined; // clear connectionInfo on save
-            return copy;
-        });
-        await fs.writeFile(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
+        const onDisk = readSessionsFromDisk();
+        const sanitized = sessions.map(s => ({ ...s, connectionInfo: undefined, windowPids: onDisk.find(x => x.id === s.id)?.windowPids }));
+        fs.writeFileSync(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
     } catch (err) {
         logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
-        throw err;
+        vscode.window.showErrorMessage(`Failed to save sessions: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+        release(sessionsFilePath);
     }
 }
 
@@ -70,4 +79,36 @@ export function deleteSession(sessionId: string) {
 
 export function findSession(sessionId: string): SlurmSession | undefined {
     return sessions.find(s => s.id === sessionId);
+}
+
+// Locked read-modify-write on windowPids. Used for window registration/unregistration and dead-pid cleanup.
+export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
+    lock(sessionsFilePath);
+    try {
+        const onDisk = readSessionsFromDisk();
+        const diskIdx = onDisk.findIndex(s => s.id === sessionId);
+        if (diskIdx < 0) { return; }
+        const newPids = transform(onDisk[diskIdx].windowPids ?? []);
+        onDisk[diskIdx].windowPids = newPids;
+        const memSession = sessions.find(s => s.id === sessionId);
+        if (memSession) { memSession.windowPids = newPids; }
+        fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8');
+    } finally {
+        release(sessionsFilePath);
+    }
+}
+
+// Cross-window sync: sessions.json is shared across windows; reload in-mem state when another window writes (preserve connectionInfo since it's in-mem only).
+export function watchSessions(callback: () => void): fs.FSWatcher {
+    return fs.watch(CS_HOME, (_, filename) => {
+        if (filename !== 'sessions.json') { return; }
+        lock(sessionsFilePath);
+        try {
+            const oldById = new Map(sessions.map(s => [s.id, s]));
+            sessions = readSessionsFromDisk().map(s => ({ ...s, connectionInfo: oldById.get(s.id)?.connectionInfo }));
+        } finally {
+            release(sessionsFilePath);
+        }
+        callback();
+    });
 }
