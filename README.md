@@ -52,15 +52,9 @@ Launch with one click. **Connect** opens a new VS Code window attached through a
 
 ## Installation
 
-**Marketplace:** search for **CyberShuttle** in VS Code Extensions (`Cmd+Shift+X`).
+Search for **CyberShuttle** in VS Code Extensions (`Cmd+Shift+X`), or install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle).
 
-**From source:**
-
-```sh
-git clone https://github.com/cyber-shuttle/CS-Bridge.git
-cd CS-Bridge
-npm run dev
-```
+Building from source? See [CONTRIBUTING.md](CONTRIBUTING.md#installation-from-source).
 
 ## Quick Start
 
