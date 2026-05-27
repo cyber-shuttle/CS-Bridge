@@ -1,6 +1,6 @@
 # CS-Bridge (CyberShuttle VS Code Extension)
 
-VS Code extension enabling local development with remote HPC computation. Mounts local workspace on remote machines via SSH tunneling, manages SLURM jobs, and orchestrates linkspan agents on compute nodes.
+VS Code extension for remote HPC development. Connects to SSH hosts that have SLURM, submits a job that runs the **linkspan** agent on the allocated compute node, opens a Microsoft Dev Tunnel, forwards the remote SSH server to a local port in-process, writes a per-session entry to `~/.cybershuttle/ssh_config`, and ends by opening a `vscode-remote://ssh-remote+cshost-<sessionId>/...` URI that any remote-SSH URI handler (typically `ms-vscode-remote.remote-ssh`) dispatches to the OS `ssh` binary. CyberShuttle does not bundle, depend on, or call into Remote-SSH itself — the OS native `ssh` is the actual transport, with a CyberShuttle-managed ControlMaster pool. There is no local-filesystem mounting today.
 
 ## Prerequisites
 
@@ -23,61 +23,79 @@ npm run dev          # Install + compile + package + install into VS Code
 
 Press F5 in VS Code to launch Extension Development Host for testing.
 
-## Architecture
+## Source Layout
 
 ```
 src/
-  extension.ts                    # Entry point: command registration, activation
-  CybershuttleViewProvider.ts     # Core orchestrator (~5600 lines): SSH, SLURM, webview logic
-  SshManager.ts                   # SSH connection pooling via ControlMaster
-  TunnelManager.ts                # Tunnel provider abstraction (devtunnel vs FRP)
-  StorageBrowserManager.ts        # Remote file browser state
-  LocalLinkspan.ts                # Local linkspan process lifecycle + persistence
-  csstorage.ts                    # VS Code SecretStorage wrapper
-  instrumentation/                # Telemetry: sql.js SQLite metrics collection
-  vfs/                            # Virtual filesystem: mutagen sync, sshfs mount
-webview-ui/
-  sessions/sessions.js            # Sessions sidebar (plain JS, no TS compilation)
-  storages/storages.js            # Storages sidebar
-webview-dashboard/                # Metrics dashboard webview panel
+  extension.ts                       # Entry point; registers the SessionViewProvider
+  sessionProvider.ts                 # Main webview provider; handles all sidebar commands
+  extensionStore.ts                  # Sessions persistence (~/.cybershuttle/sessions.json) + cross-window file watcher
+  models.ts                          # SlurmSession + status type definitions
+  logger.ts                          # Output-channel logger
+  webviews/
+    sessionWebview.ts                # HTML/CSP generation for the sidebar webview
+  modules/
+    sshSupport.ts                    # OS-ssh ControlMaster pool, askpass IPC, SLURM script construction, ~/.cybershuttle/ssh_config writer, ~/.ssh/config Include patcher
+    sessionSupport.ts                # Launch flow, linkspan deployment (curl|tar from GitHub releases), JobStatusMonitor
+    slurmSupport.ts                  # sacct-based job status polling
+    tunnelSupport.ts                 # Dev Tunnels SDK integration (in-process); Microsoft auth via vscode.authentication('microsoft')
+    linkspanSupport.ts               # linkspan YAML config generation
+    fsSupport.ts                     # Filesystem helpers (PID liveness check)
+
+resources/
+  webviews/
+    js/sessions.js                   # Plain JS sidebar UI (~31KB; not compiled)
+    css/{common,info,sessions}.css   # Webview styling
+
+scripts/
+  askpass.{js,sh,cmd}                # SSH_ASKPASS helpers (cross-platform)
+  info.sh                            # SLURM capabilities probe (sinfo + sacctmgr; exits 0 even if SLURM is missing — but the launch path still requires it)
 ```
 
 ## Key Patterns
 
-- **CybershuttleViewProvider** is the main orchestrator — nearly all user-facing logic lives here
-- **Webview UIs** are plain JS/CSS (not compiled TypeScript). Communication via `postMessage`/`onDidReceiveMessage`
-- All webviews use nonce-based Content Security Policy
-- Manager classes: `FooManager` pattern. Private fields: `_fieldName` prefix
-- Metrics/instrumentation wrapped in try-catch to never crash the extension
-- SLURM query failures fall back to "plain SSH" mode (no job scheduling)
+- **`sessionProvider.ts`** is the only webview provider. All user actions flow through its `case` dispatch on webview messages: `addSession`, `prepareLaunchSession`, `launchSession`, `connectTunnel`, `cancelSessionExecution`, `removeSession`, `switchAuth`, `fetchSlurmClusterInfo`, etc. Capability logic lives in `modules/`.
+- **Webview UI is plain JS/CSS** (`resources/webviews/`) — not compiled from TypeScript. Communicates via `postMessage` / `onDidReceiveMessage`. All webviews use nonce-based CSP.
+- **Microsoft auth** uses `vscode.authentication.getSession('microsoft', [DEV_TUNNELS_SCOPE], ...)`. There is no OAuth/device-flow against any CyberShuttle-hosted endpoint.
+- **OS-native ssh + ControlMaster** — every remote command (info.sh, linkspan deploy, status polling, sbatch) goes through the system `ssh` binary multiplexed over a ControlMaster socket. CyberShuttle does not bundle an SSH client. Socket name = SHA-256 hash of host name to stay under the 104-byte Unix socket path limit (`modules/sshSupport.ts:118-131`). ControlMaster is skipped on Windows (no Unix-socket ControlMaster support).
+- **Per-session SSH config** — `modules/sshSupport.ts` writes `cshost-<sessionId>` Host entries to `~/.cybershuttle/ssh_config`, and prepends `Include ~/.cybershuttle/ssh_config` to `~/.ssh/config` so the system `ssh` resolves the aliases (`_ensureSshInclude`, `createSSHConfigEntry`).
+- **Tunnel forwarding is in-process** — `@microsoft/dev-tunnels-management` opens a `TunnelRelayTunnelClient` that forwards the remote SSH port to `127.0.0.1:<localPort>`. No separate `devtunnel` CLI binary is downloaded or invoked.
+- **Final attach** — `vscode.commands.executeCommand('vscode.openFolder', vscode-remote://ssh-remote+cshost-<sessionId>/..., { forceNewWindow: true })`. CyberShuttle does not call Remote-SSH APIs or commands; it relies on whichever extension registers the `ssh-remote+` authority resolver.
+- **Cross-window session sync** via `fs.watch` on `sessions.json` in `extensionStore.ts:101+` — multiple VS Code windows share session state. The `fsSupport` lock keeps concurrent writes safe; don't propose removing it.
+- **SLURM is required for launch** — `checkSlurmAvailability` (`modules/sessionSupport.ts:271`) runs `sinfo` and fails the session if it exits non-zero. The `info.sh` script handles missing SLURM gracefully (exits 0 with no output) for the capabilities probe, but the launch path itself has no plain-SSH fallback yet. See README Roadmap.
+- **Job status polling** uses `sacct -j <jobid>` (not `squeue`).
 
-## External Tools (auto-downloaded to ~/.cybershuttle/bin/)
+## External Processes / Binaries
 
-- **linkspan** — VS Code Server + tunnel management on compute nodes
-- **mutagen** — Bidirectional file sync
-- **devtunnel** — Microsoft Dev Tunnels CLI
-- **sshfs** — FUSE-based SSH filesystem
+- **linkspan** — runs on the remote at `~/.cybershuttle/bin/linkspan`. Downloaded by `sessionSupport.ts:353` via `curl -fsSL ... | tar -xz` from the latest GitHub release if missing or out of date.
+- **OpenSSH (`ssh`, `ssh-add`)** — system binary; CyberShuttle invokes it for every remote command and for ControlMaster multiplexing. SSH_ASKPASS bridge in `scripts/askpass.{js,sh,cmd}` routes password/passphrase prompts to VS Code dialogs.
+- **`@microsoft/dev-tunnels-*` npm packages** — used in-process to manage Dev Tunnels; no external `devtunnel` CLI.
 
 ## Persistence
 
-| Data | Location | Notes |
-|------|----------|-------|
-| Access tokens | VS Code SecretStorage | OS-encrypted |
-| Sessions | ~/.cybershuttle/sessions.json | Survives reloads |
-| Metrics | ~/.cybershuttle/metrics.db | sql.js SQLite, 90-day TTL |
-| Local linkspan | ~/.cybershuttle/local-linkspan-state.json | Running instances |
+- **Microsoft account token** — managed by VS Code's built-in authentication provider; not stored by the extension.
+- **Sessions** — `~/.cybershuttle/sessions.json` (JSON list of `SlurmSession`; cross-window file watcher reloads on external writes).
+- **Generated SSH config** — `~/.cybershuttle/ssh_config` (composed config that OS `ssh` consumes via `Include` in `~/.ssh/config`).
+- **Generated SSH keys** — `~/.cybershuttle/ssh_keys/id_cshost-<sessionId>` (per-session, 0600).
+- **SSH ControlMaster sockets** — `~/.cybershuttle/ssh_control/` (hashed socket names).
+- **linkspan binary** — (remote) `~/.cybershuttle/bin/linkspan`.
+- **linkspan logs** — (remote) `~/.cybershuttle/logs/linkspan-session-<jobid>.{out,err}` — tailed during the connect loop to discover the tunnel.
+
+## Declared but unimplemented (do not document as features)
+
+The following are declared in `package.json` `contributes.configuration` but **no code reads them**. They are forward declarations for planned work (see README Roadmap):
+
+- `cybershuttle.tunnelProvider` — always uses `devtunnel`; `frp` branch in `tunnelSupport.ts:202` returns a placeholder credential.
+- `cybershuttle.frpServerUrl` / `cybershuttle.frpApiKey`
+- `cybershuttle.enableFilesystemSync` — no FUSE/mutagen/sshfs code exists; the setting is unread.
+- `cybershuttle.adminServerUrl` — no metrics-reporting code exists; `sql.js` is a dependency but unused.
+
+Other not-implemented items occasionally referenced in older docs: plain-SSH (non-SLURM) launch path, storages sidebar, webview-dashboard, telemetry consent flow, local linkspan runtime, OAuth against `auth.cybershuttle.org`. None of these exist in code.
 
 ## Gotchas
 
-- SSH ControlMaster socket paths have 104-byte limit — uses SHA256 hash prefix for compliance
-- `sessions.js` is ~43KB of plain JS — not TypeScript, changes require manual testing
-- Metrics use WASM-based sql.js (no native binaries), auto-save every 30s with dirty flag
-- Workspace state includes `windowId` to disambiguate multi-window sessions
-- Telemetry consent is version-based — bumping version forces re-consent
-
-## Configuration (VS Code settings)
-
-- `cybershuttle.tunnelProvider`: `"devtunnel"` (default) or `"frp"`
-- `cybershuttle.frpServerUrl` / `cybershuttle.frpApiKey`: FRP server config
-- `cybershuttle.enableFilesystemSync`: Experimental FUSE + mutagen (default false)
-- `cybershuttle.adminServerUrl`: Admin server for metrics reporting
+- SSH ControlMaster socket path 104-byte limit → SHA-256 hash prefix (`sshSupport.ts:127`).
+- `resources/webviews/js/sessions.js` is ~31KB of plain JS — not TypeScript; changes require manual UI testing.
+- `sessions.json` is shared across VS Code windows; the cross-window file watcher in `extensionStore.ts` is load-bearing.
+- The Restart button in the webview re-invokes `launchSession` against the existing stored session, which is how "restart with same config" is achieved — there is no separate restart command.
+- CyberShuttle prepends an `Include ~/.cybershuttle/ssh_config` line to the user's `~/.ssh/config`. Removing it without also removing CS-Bridge will leave broken `cshost-*` references.

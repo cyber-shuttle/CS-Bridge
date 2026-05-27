@@ -5,60 +5,80 @@ Thank you for your interest in contributing to CS-Bridge. This document covers t
 ## Architecture
 
 ```text
-Local VS Code                        Remote HPC Cluster
-┌─────────────────────┐              ┌──────────────────────────┐
-│  CS-Bridge sidebar  │──── SSH ────▶│  SLURM (sbatch/squeue)   │
-│  (webview UI)       │              │                          │
-│                     │              │  Compute Node:           │
-│  SSH ControlMaster  │              │  ┌──────────────────┐    │
-│  (connection pool)  │              │  │  linkspan         │    │
-│                     │              │  │  ├─ VS Code Server│    │
-│  Persistent shells  │              │  │  └─ Dev Tunnel ───┼────┼──▶ devtunnels.ms
-│  (file browser,     │              │  └──────────────────┘    │
-│   job monitoring)   │              └──────────────────────────┘
-└─────────────────────┘
+Local VS Code                              Remote HPC Cluster
+┌──────────────────────────┐               ┌──────────────────────────┐
+│  CS-Bridge sidebar       │── OS ssh ────▶│  SLURM login node        │
+│  (webview UI)            │               │  (sbatch, sacct, sinfo)  │
+│                          │               │                          │
+│  SSH ControlMaster pool  │               │  Compute Node:           │
+│  ~/.cybershuttle/        │               │  ┌──────────────────┐    │
+│    ssh_config            │               │  │  linkspan        │    │
+│    ssh_keys/             │               │  │  ├─ sshd         │    │
+│    ssh_control/          │               │  │  └─ Dev Tunnel ──┼────┼──▶ devtunnels.ms
+│                          │               │  └──────────────────┘    │
+│  Dev Tunnels SDK         │◀── tunnel ────│                          │
+│  (forwards 127.0.0.1:N   │               └──────────────────────────┘
+│   to compute-node sshd)  │
+└──────────────────────────┘
          │
          ▼
-  Remote-SSH window
-  (connects via tunnel)
+  vscode-remote://ssh-remote+cshost-<sessionId>/…
+  (OS ssh dials 127.0.0.1:N using the per-session
+   alias in ~/.cybershuttle/ssh_config)
 ```
 
 ## How a Session Works
 
-1. **Host Selection**: The user selects an SSH host and configures resources (CPUs, memory, GPU, wall time).
-2. **Cluster Capabilities**: The extension queries SLURM partitions and accounts via `scripts/info.sh` over SSH.
-3. **Job Submission**: Generates and submits a SLURM batch script that runs **linkspan** on the allocated compute node.
-4. **Tunneling**: `linkspan` initiates a VS Code Server, sets up a Dev Tunnel, and emits the necessary connection details.
-5. **Connection Loop**: The extension periodically polls `squeue`/`sacct` and tails `linkspan` logs to capture the newly formed tunnel URL and SSH port.
-6. **Connect**: The user clicks **Connect**, spinning up a Remote-SSH VS Code window straight into the compute node through the active tunnel.
+1. **Host Selection**: The user selects an SSH host from `~/.ssh/config` and configures resources (CPUs, memory, GPU, wall time).
+2. **Cluster Capabilities**: The extension queries SLURM partitions, accounts, and limits via `scripts/info.sh` over SSH (which calls `sinfo` and `sacctmgr`).
+3. **SLURM Required**: `checkSlurmAvailability` runs `sinfo` on the host; if it fails, the launch is aborted. Plain-SSH support is on the roadmap.
+4. **Job Submission**: Generates and submits a SLURM batch script that runs **linkspan** on the allocated compute node (`modules/sessionSupport.ts`, `modules/sshSupport.ts`).
+5. **Tunneling**: `linkspan` starts an SSH server on the compute node and opens a Microsoft Dev Tunnel.
+6. **Connection Loop**: The extension polls job status via `sacct` and tails `linkspan`'s logs from `~/.cybershuttle/logs/` on the remote to discover the tunnel ID and SSH port (`modules/slurmSupport.ts`, `modules/sessionSupport.ts`).
+7. **Tunnel Forwarding**: The Microsoft Dev Tunnels SDK (`@microsoft/dev-tunnels-management`) forwards the remote SSH port to a local port (`127.0.0.1:N`) inside the extension process.
+8. **SSH Config Plumbing**: An entry for `cshost-<sessionId>` is appended to `~/.cybershuttle/ssh_config` pointing at `127.0.0.1:N` with the per-session key. CS-Bridge ensures `Include ~/.cybershuttle/ssh_config` is at the top of `~/.ssh/config` so the system SSH client picks the alias up.
+9. **Connect**: The user clicks **Connect**; the extension issues `vscode.openFolder(vscode-remote://ssh-remote+cshost-<sessionId>/…)`. VS Code's remote-SSH URI handler invokes the OS `ssh` binary against the alias and attaches a new window to the compute node.
 
 ## Source Layout
 
 ```text
 src/
-├── extension.ts                 # Entry point — registers sidebar view + auth command
-├── CybershuttleViewProvider.ts  # Main provider — webview UI, SSH, SLURM, tunnels (~3k lines)
-├── cscommands.ts                # OAuth device flow auth against auth.cybershuttle.org
-├── csstorage.ts                 # Thin wrapper around VS Code SecretStorage for tokens
-└── test/
-    └── extension.test.ts
-
-scripts/
-├── askpass.js    # SSH_ASKPASS helper — bridges SSH prompts to VS Code UI dialogs
-└── info.sh       # Queries SLURM partitions, accounts, capabilities via sinfo/sacctmgr
+├── extension.ts                       # Entry point — registers the sidebar webview provider
+├── sessionProvider.ts                 # Main webview provider (~450 lines): all user actions
+├── extensionStore.ts                  # Sessions persistence + cross-window file watcher
+├── models.ts                          # SlurmSession + session status types
+├── logger.ts                          # Output-channel logger
+├── webviews/
+│   └── sessionWebview.ts              # Webview HTML/CSP generation
+└── modules/
+    ├── sshSupport.ts                  # SSH ControlMaster pool, askpass IPC, SLURM script construction
+    ├── sessionSupport.ts              # Launch flow, linkspan deployment, status monitor
+    ├── slurmSupport.ts                # sacct job-status polling
+    ├── tunnelSupport.ts               # Microsoft Dev Tunnels integration
+    ├── linkspanSupport.ts             # linkspan YAML config generation
+    └── fsSupport.ts                   # Filesystem helpers (sessions file lock)
 
 resources/
-└── cybershuttle.svg   # Activity bar icon
+├── webviews/
+│   ├── js/sessions.js                 # Plain JS sidebar UI (~31KB; not compiled)
+│   └── css/{common,info,sessions}.css # Webview styling
+├── codicons/                          # Bundled VS Code codicons
+├── cybershuttle.svg                   # Activity bar icon
+└── cybershuttle.png                   # Marketplace icon
+
+scripts/
+├── askpass.{js,sh,cmd}                # SSH_ASKPASS helpers (cross-platform)
+└── info.sh                            # SLURM capabilities probe (sinfo / sacctmgr)
 ```
+
+Authentication uses `vscode.authentication.getSession('microsoft', ...)` — there is no custom OAuth server.
 
 ## External Dependencies
 
-| Dependency | Purpose |
-|---|---|
-| [linkspan](https://github.com/cyber-shuttle/linkspan) | Custom agent managing the VS Code Server + Dev Tunnel on the compute node. Auto-deployed by CS-Bridge to `~/.cybershuttle/bin/linkspan`. |
-| [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) | VS Code extension utilized to natively attach the remote session. |
-| Microsoft Dev Tunnels | Port-forwarding service. Requires Microsoft account sign-in from the sidebar. |
-| OpenSSH (`~/.ssh/config`) | System SSH properties fetched to build the host directory in the UI. |
+- **[linkspan](https://github.com/cyber-shuttle/linkspan)** — agent that runs on the compute node and manages an SSH server + Dev Tunnel. Auto-deployed by CS-Bridge to `~/.cybershuttle/bin/linkspan` on first launch (downloaded from the latest GitHub release via `curl | tar -xz`).
+- **Microsoft Dev Tunnels SDK** — npm packages `@microsoft/dev-tunnels-{management,connections,contracts}`. Used in-process to create and forward tunnels. Authentication via VS Code's built-in `microsoft` authentication provider (no custom OAuth server).
+- **OS-native OpenSSH** — every SSH connection (host info probes, ControlMaster pool, and the final tunnelled session) is made by the system `ssh` binary. CS-Bridge writes its per-session config to `~/.cybershuttle/ssh_config` and ensures `~/.ssh/config` `Include`s it.
+- **VS Code remote-SSH URI handler** — at the end of the connect flow CS-Bridge opens a `vscode-remote://ssh-remote+cshost-<sessionId>/…` URI; the user's installed remote-SSH provider (typically [ms-vscode-remote.remote-ssh](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh)) handles this URI by invoking the OS `ssh` binary against the alias. It is not a hard `extensionDependencies` declaration.
 
 ## Development Setup
 
@@ -86,7 +106,7 @@ npm run watch
 2. **Interact**: The CyberShuttle icon will appear in the sidebar of the new window.
 3. **Reload**: Reload the Extension Development Host window (`Cmd+Shift+P` > "Developer: Reload Window") to reflect your newest code changes.
 
-> **Note:** Development mode only loads the extension in the Extension Development Host window. If you open a new Remote-SSH window directly from there, the extension won't automatically propagate. To test in Remote-SSH windows across the board, compile and manually install the `.vsix` packaged extension natively.
+> **Note:** Development mode only loads the extension in the Extension Development Host window. If you open a new remote window directly from there, the extension won't automatically propagate. To test across all windows, compile and manually install the `.vsix` packaged extension natively.
 
 ### Linting
 
