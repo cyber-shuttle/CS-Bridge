@@ -16,7 +16,7 @@
 		"type": "git",
 		"url": "https://github.com/cyber-shuttle/CS-Bridge.git"
 	},
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"engines": {
 		"vscode": "^1.98.0"
 	},
@@ -58,7 +58,7 @@
 		"check-types": "tsc -p ./",
 		"lint": "eslint src",
 		"package": "npx @vscode/vsce package",
-		"install-ext": "code --install-extension cybershuttle-0.0.2.vsix",
+		"install-ext": "code --install-extension cybershuttle-0.0.3.vsix",
 		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {

@@ -4,6 +4,14 @@ All notable changes to the Cybershuttle VS Code extension will be documented in 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.3] - 2026-05-28
+
+### Changed
+
+- Updated the demo-overview video in the README
+- Replaced retired shields.io Marketplace badges (version and installs) with `vsmarketplacebadges.dev` equivalents
+- Pointed the README header logo at `resources/cybershuttle.png`
+
 ## [0.0.2] - 2026-05-28
 
 ### Changed
