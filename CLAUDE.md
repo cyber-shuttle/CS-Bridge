@@ -13,15 +13,19 @@ npm install          # Install dependencies first
 ## Commands
 
 ```bash
-npm run compile      # TypeScript -> JS (out/)
-npm run watch        # Auto-compile on save
+npm run compile      # esbuild bundle src/extension.ts -> out/extension.js (+ copies codicons -> out/codicons/)
+npm run watch        # esbuild watch mode
+npm run check-types  # tsc --noEmit type check
 npm run lint         # ESLint on src/**/*.ts
-npm run test         # VS Code extension tests
-npm run package      # Generate .vsix
-npm run dev          # Install + compile + package + install into VS Code
+npm run package      # vsce package -> .vsix (triggers vscode:prepublish: check-types + production esbuild)
+npm run dev          # Install + package + install into VS Code
 ```
 
 Press F5 in VS Code to launch Extension Development Host for testing.
+
+## Build pipeline
+
+`esbuild.js` does two things: copies `node_modules/@vscode/codicons/dist/codicon.{css,ttf}` into `out/codicons/`, then bundles `src/extension.ts` into a single CJS `out/extension.js` (externals: `vscode`, `node-rsa`). `tsc` is used only for type-checking (`noEmit: true`). The .vsix ships `out/`, `resources/`, `scripts/`, README/LICENSE/CHANGELOG, and the extension manifest — no `node_modules/`.
 
 ## Source Layout
 
@@ -81,16 +85,14 @@ scripts/
 - **linkspan binary** — (remote) `~/.cybershuttle/bin/linkspan`.
 - **linkspan logs** — (remote) `~/.cybershuttle/logs/linkspan-session-<jobid>.{out,err}` — tailed during the connect loop to discover the tunnel.
 
-## Declared but unimplemented (do not document as features)
+## Unimplemented (do not document as features)
 
-The following are declared in `package.json` `contributes.configuration` but **no code reads them**. They are forward declarations for planned work (see README Roadmap):
+The following are referenced in older docs but **do not exist in code** (see README Roadmap):
 
-- `cybershuttle.tunnelProvider` — always uses `devtunnel`; `frp` branch in `tunnelSupport.ts:202` returns a placeholder credential.
-- `cybershuttle.frpServerUrl` / `cybershuttle.frpApiKey`
-- `cybershuttle.enableFilesystemSync` — no FUSE/mutagen/sshfs code exists; the setting is unread.
-- `cybershuttle.adminServerUrl` — no metrics-reporting code exists; `sql.js` is a dependency but unused.
-
-Other not-implemented items occasionally referenced in older docs: plain-SSH (non-SLURM) launch path, storages sidebar, webview-dashboard, telemetry consent flow, local linkspan runtime, OAuth against `auth.cybershuttle.org`. None of these exist in code.
+- FRP tunnel provider — `tunnelSupport.ts` `frp` branch returns a placeholder credential; only `devtunnel` works end-to-end.
+- Filesystem sync / FUSE / mutagen / sshfs — no code exists.
+- Admin server / metrics reporting — no code exists.
+- Plain-SSH (non-SLURM) launch path, storages sidebar, webview-dashboard, telemetry consent flow, local linkspan runtime, OAuth against `auth.cybershuttle.org`.
 
 ## Gotchas
 
