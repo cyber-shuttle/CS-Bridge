@@ -1,8 +1,8 @@
 {
 	"name": "cybershuttle",
-	"displayName": "CyberShuttle",
+	"displayName": "Cybershuttle",
 	"publisher": "cybershuttle",
-	"description": "Manage SSH sessions, HPC jobs, Dev Tunnels, and remote storage from VS Code",
+	"description": "Manage SSH sessions and HPC jobs from VS Code",
 	"license": "Apache-2.0",
 	"icon": "resources/cybershuttle.png",
 	"keywords": [
@@ -16,7 +16,7 @@
 		"type": "git",
 		"url": "https://github.com/cyber-shuttle/CS-Bridge.git"
 	},
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"engines": {
 		"vscode": "^1.98.0"
 	},
@@ -31,15 +31,11 @@
 	],
 	"main": "./out/extension.js",
 	"contributes": {
-		"commands": [],
-		"menus": {
-			"view/title": []
-		},
 		"viewsContainers": {
 			"activitybar": [
 				{
 					"id": "cybershuttle",
-					"title": "CyberShuttle",
+					"title": "Cybershuttle",
 					"icon": "resources/cybershuttle.svg"
 				}
 			]
@@ -49,78 +45,35 @@
 				{
 					"type": "webview",
 					"id": "cybershuttle.sessionsView",
-					"name": "Sessions"
+					"name": "Sessions",
+					"icon": "resources/cybershuttle.svg"
 				}
 			]
-		},
-		"configuration": {
-			"title": "CyberShuttle",
-			"properties": {
-				"cybershuttle.adminServerUrl": {
-					"type": "string",
-					"default": "https://admin.dev.cybershuttle.org",
-					"description": "URL of the CS-Bridge admin server for metrics reporting."
-				},
-				"cybershuttle.tunnelProvider": {
-					"type": "string",
-					"enum": [
-						"devtunnel",
-						"frp"
-					],
-					"default": "devtunnel",
-					"description": "Tunnel provider for linkspan connections. 'devtunnel' uses Microsoft Dev Tunnels, 'frp' uses a self-hosted FRP relay."
-				},
-				"cybershuttle.frpServerUrl": {
-					"type": "string",
-					"default": "",
-					"description": "FRP relay server address (host:port). Required when tunnelProvider is 'frp'."
-				},
-				"cybershuttle.frpApiKey": {
-					"type": "string",
-					"default": "",
-					"description": "API key for the FRP relay server. Required when tunnelProvider is 'frp'."
-				},
-				"cybershuttle.enableFilesystemSync": {
-					"type": "boolean",
-					"default": true,
-					"markdownDescription": "**Experimental.** When enabled, CS-Bridge sets up overlay filesystems, FUSE mounts, and mutagen sync between local and remote workspaces. When disabled, sessions open a plain Remote-SSH window without any filesystem mounting or sync — the user browses remote files directly."
-				}
-			}
 		}
 	},
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./",
-		"pretest": "npm run compile && npm run lint",
+		"vscode:prepublish": "npm run check-types && node esbuild.js --production",
+		"compile": "node esbuild.js",
+		"watch": "node esbuild.js --watch",
+		"check-types": "tsc -p ./",
 		"lint": "eslint src",
-		"test": "vscode-test",
 		"package": "npx @vscode/vsce package",
-		"install-ext": "code --install-extension cybershuttle-0.0.1.vsix",
-		"dev": "npm install && npm run compile && npm run package && npm run install-ext"
+		"install-ext": "code --install-extension cybershuttle-0.0.2.vsix",
+		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {
-		"@types/mocha": "^10.0.10",
 		"@types/node": "20.x",
 		"@types/vscode": "^1.98.0",
-		"@types/websocket": "^1.0.10",
 		"@typescript-eslint/eslint-plugin": "^8.25.0",
 		"@typescript-eslint/parser": "^8.25.0",
-		"@vscode/test-cli": "^0.0.10",
-		"@vscode/test-electron": "^2.4.1",
+		"@vscode/codicons": "^0.0.44",
+		"esbuild": "^0.28.0",
 		"eslint": "^9.21.0",
 		"typescript": "^5.7.3"
 	},
 	"dependencies": {
 		"@microsoft/dev-tunnels-connections": "^1.3.6",
 		"@microsoft/dev-tunnels-contracts": "^1.3.6",
-		"@microsoft/dev-tunnels-management": "^1.3.6",
-		"@vscode/codicons": "^0.0.44",
-		"sql.js": "^1.14.0"
-	},
-	"__metadata": {
-		"installedTimestamp": 1773025451091,
-		"targetPlatform": "undefined",
-		"size": 627168
+		"@microsoft/dev-tunnels-management": "^1.3.6"
 	}
 }

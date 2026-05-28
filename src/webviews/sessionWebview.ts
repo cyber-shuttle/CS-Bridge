@@ -143,8 +143,8 @@ export function getSessionWebviewContent(
 ): string {
 
     const nonce = getNonce();
-    const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'codicons', 'codicon.ttf'));
-    const codiconsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'codicons', 'codicon.css'));
+    const codiconsFontUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', 'codicons', 'codicon.ttf'));
+    const codiconsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', 'codicons', 'codicon.css'));
     const commonCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'common.css'));
     const sessionsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'sessions.css'));
     const infoCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'resources', 'webviews', 'css', 'info.css'));

@@ -1,8 +1,21 @@
 # Changelog
 
-All notable changes to the CS Bridge VS Code extension will be documented in this file.
+All notable changes to the Cybershuttle VS Code extension will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [0.0.2] - 2026-05-28
+
+### Changed
+
+- Migrated the build to esbuild — ships a single bundled, minified `out/extension.js`; `tsc` is now used for type-checking only
+- Renamed the extension to "Cybershuttle" (display name and sidebar title)
+- Refreshed the extension logo
+
+### Removed
+
+- Forward-declared, unimplemented settings from the manifest (admin server URL, tunnel provider, FRP relay address/API key, filesystem sync)
+- Unused dependencies (`sql.js`, `@types/websocket`) and the unused test harness (`@vscode/test-*`, mocha)
 
 ## [0.0.1] - 2026-05-27
 
