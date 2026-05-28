@@ -1,13 +1,13 @@
 <div>
-  <img src="resources/cs-logo.png" alt="" align="left" width="48" hspace="10" />
+  <img src="resources/cybershuttle.png" alt="" align="left" width="48" hspace="10" />
   <strong>CyberShuttle</strong> &nbsp; Remote HPC development from VS Code
   <br>
   <small><a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle">VS Code Marketplace</a> · <a href="#quick-start">Quick Start</a> · <a href="CONTRIBUTING.md">Contributing</a></small>
   <br clear="all">
   &nbsp;
   <br>
-  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle"><img src="https://img.shields.io/visual-studio-marketplace/v/cybershuttle.cybershuttle?label=VS%20Code%20Marketplace&color=007ACC" alt="VS Code Marketplace" /></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle"><img src="https://img.shields.io/visual-studio-marketplace/i/cybershuttle.cybershuttle?label=installs" alt="Installs" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle"><img src="https://vsmarketplacebadges.dev/version-short/cybershuttle.cybershuttle.svg?label=VS%20Code%20Marketplace&color=007ACC" alt="VS Code Marketplace" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.cybershuttle"><img src="https://vsmarketplacebadges.dev/installs-short/cybershuttle.cybershuttle.svg?label=installs" alt="Installs" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/cyber-shuttle/CS-Bridge?color=blue" alt="License" /></a>
 </div>
 
