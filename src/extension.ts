@@ -32,6 +32,14 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SessionProvider.viewType, sessionProvider));
 
+    // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.
+    const marker = vscode.Uri.joinPath(context.globalStorageUri, 'opened.marker');
+    if (!(await vscode.workspace.fs.stat(marker).then(() => true, () => false))) {
+        await vscode.workspace.fs.writeFile(marker, new Uint8Array());
+        void vscode.window.showInformationMessage('Completed installing CS Bridge.', 'Open')
+            .then(c => c === 'Open' && vscode.commands.executeCommand(`${SessionProvider.viewType}.focus`));
+    }
+
     logger.info('CS Bridge extension activated');
 }
 
