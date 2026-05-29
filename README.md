@@ -2,7 +2,7 @@
   <img src="resources/csbridge.png" alt="" align="left" width="48" hspace="10" />
   <strong>CS Bridge</strong> &nbsp; Remote HPC development from VS Code
   <br>
-  <small><a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.csbridge">VS Code Marketplace</a> · <a href="#quick-start">Quick Start</a> · <a href="CONTRIBUTING.md">Contributing</a></small>
+  <small><a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.csbridge">VS Code Marketplace</a> · <a href="#quick-start">Quick Start</a> · <a href="#contributing">Contributing</a></small>
   <br clear="all">
   &nbsp;
   <br>
