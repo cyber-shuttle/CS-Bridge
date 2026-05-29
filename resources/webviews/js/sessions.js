@@ -9,12 +9,31 @@
         return div.innerHTML;
     }
 
+    // Wall-time: "HH:MM:SS" -> ms, and ms -> "1h 0m" / "30m 0s" / "45s".
+    function wallMs(session) {
+        const p = (session.wallTime || '').split(':').map(Number);
+        return ((p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0)) * 1000;
+    }
+    function fmtTime(ms) {
+        const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+        return ci('watch') + ' ' + (h ? h + 'h ' + m + 'm' : m + 'm ' + s % 60 + 's');
+    }
+    // Live remaining-time badge; the 1s interval re-renders it from data-deadline.
+    function remainingBadge(session) {
+        const total = wallMs(session), d = session.startedAt ? session.startedAt + total : 0;
+        return '<span class="session-countdown-badge" data-deadline="' + d + '">' + fmtTime(d ? d - Date.now() : total) + ' remaining</span>';
+    }
+
     setInterval(() => {
         document.querySelectorAll('.session-queued-timer').forEach(el => {
             const submittedAt = parseInt(el.getAttribute('data-submitted'), 10);
             if (!submittedAt) { return; }
             const elapsed = Math.floor((Date.now() - submittedAt) / 1000);
             el.textContent = elapsed >= 60 ? ' (' + Math.floor(elapsed / 60) + 'm ' + (elapsed % 60) + 's)' : ' (' + elapsed + 's)';
+        });
+        document.querySelectorAll('.session-countdown-badge[data-deadline]').forEach(el => {
+            const d = +el.getAttribute('data-deadline');
+            if (d) { el.innerHTML = fmtTime(d - Date.now()) + ' remaining'; }
         });
     }, 1000);
 
@@ -296,20 +315,12 @@
         // Update bottom details section
         const existingDetails = sessionCard.querySelector('.runtime-details');
 
-        const deadMs = 2000;
-        const totalMs = 5000;
-        const _remStr = Math.ceil(deadMs / 1000) + 's';
-        const _reqStr = Math.ceil(totalMs / 1000) + 's';
-        const _initText = ci('watch') + ' ' + _remStr + ' / ' + _reqStr;
-        const timePart = '<span class="session-countdown-badge" data-deadline="' + deadMs + '" data-total="' + totalMs + '">' + _initText + '</span>';
-        const rem = Math.max(0, deadMs - Date.now());
-        const pct = totalMs > 0 ? (rem / totalMs) * 100 : 0;
-        const progressHtml = '<div class="session-progress-bar"><div class="session-progress-fill" data-deadline="' + deadMs + '" data-total="' + totalMs + '" style="width:' + pct.toFixed(1) + '%"></div></div>';
+        const timePart = fmtTime(wallMs(session));
 
         const gpuPart = session.gpuClass !== 'None' ? ' <span class="detail-sep">|</span> ' + ci('circuit-board') + ' ' + escapeHtml(session.gpuClass) : '';
 
-        const line1 = ci('server-environment') + ' ' + escapeHtml(session.queue) +
-            ' <span class="detail-sep">|</span> ' + ci('account') + ' ' + escapeHtml(session.allocation) +
+        const line1 = ci('account') + ' ' + escapeHtml(session.allocation) +
+            ' <span class="detail-sep">|</span> ' + ci('server-environment') + ' ' + escapeHtml(session.queue) +
             ' <span class="detail-sep">|</span> ' + ci('vm') + ' ' + session.cpus +
             ' <span class="detail-sep">|</span> ' + ci('database') + ' ' + session.memory + gpuPart +
             ' <span class="detail-sep">|</span> ' + timePart;
@@ -322,11 +333,7 @@
                 line2 = '<span class="session-detail">' + ci('circle-slash') + ' not started</span>';
                 break;
             case 'ready_to_connect':
-                if (session.connectionInfo && session.connectionInfo.apiTunnelId) {
-                    line2 = '<span class="session-detail">' + ci('cloud') + ' ' + escapeHtml(session.connectionInfo.apiTunnelId) + ' <button class="copy-btn" data-copy="' + escapeHtml(session.connectionInfo.apiTunnelId) + '" title="Copy tunnel ID">' + ci('copy') + '</button></span>';
-                } else {
-                    line2 = '<span class="session-detail"><span class="spinner"></span> setting up tunnel...</span>';
-                }
+                line2 = '<span class="session-detail">' + remainingBadge(session) + '</span>';
                 break;
             case 'running':
                 line2 = '<span class="session-detail"><span class="spinner"></span> Fetching connection info...</span>';
@@ -369,7 +376,7 @@
                 line2 = '<span class="session-detail">' + ci('history') + ' expired</span>';
                 break;
             case 'connected':
-                line2 = '<span class="session-detail">' + ci('check') + ' connected</span>';
+                line2 = '<span class="session-detail">' + remainingBadge(session) + '</span>';
                 break;
         }
 

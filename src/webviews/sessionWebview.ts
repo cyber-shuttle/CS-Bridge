@@ -20,7 +20,7 @@ const buildHostPickerHtml = (sshHosts: SshHost[], openHosts: string[]): string =
                 ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
             </div>
             <div class="host-picker-form" id="host-form-${escapeHtml(host.name)}" style="display:${open ? 'block' : 'none'};">
-                <div class="job-form-loading" style="display:${open ? 'flex' : 'none'};"><span class="spinner"></span>Fetching partitions...</div>
+                <div class="job-form-loading" style="display:${open ? 'flex' : 'none'};"><span class="spinner"></span>Fetching runtime details...</div>
                 <div class="job-form-error" style="display:none;"><span class="job-form-error-text"></span></div>
                 <div class="job-form-fields" style="display:none;">
                     <div class="resource-tabs" data-host="${escapeHtml(host.name)}">
@@ -63,20 +63,13 @@ const buildHostPickerHtml = (sshHosts: SshHost[], openHosts: string[]): string =
 
 function generateSessionDetailsHtml(session: SlurmSession): string {
 
-    const deadMs = 2000;
-    const totalMs = 5000;
-    const _remStr = Math.ceil(deadMs / 1000) + 's';
-    const _reqStr = Math.ceil(totalMs / 1000) + 's';
-    const _initText = ci('watch') + ' ' + _remStr + ' / ' + _reqStr;
-    const timePart = '<span class="session-countdown-badge" data-deadline="' + deadMs + '" data-total="' + totalMs + '">' + _initText + '</span>';
-    const rem = Math.max(0, deadMs - Date.now());
-    const pct = totalMs > 0 ? (rem / totalMs) * 100 : 0;
-    const progressHtml = '<div class="session-progress-bar"><div class="session-progress-fill" data-deadline="' + deadMs + '" data-total="' + totalMs + '" style="width:' + pct.toFixed(1) + '%"></div></div>';
+    // The wall-time badge is rendered client-side by sessions.js on the first update.
+    const timePart = '<span class="session-countdown-badge"></span>';
 
     const gpuPart = session.gpuClass !== 'None' ? ' <span class="detail-sep">|</span> ' + ci('circuit-board') + ' ' + escapeHtml(session.gpuClass) : '';
 
-    const line1 = ci('server-environment') + ' ' + escapeHtml(session.queue) +
-        ' <span class="detail-sep">|</span> ' + ci('account') + ' ' + escapeHtml(session.allocation) +
+    const line1 = ci('account') + ' ' + escapeHtml(session.allocation) +
+        ' <span class="detail-sep">|</span> ' + ci('server-environment') + ' ' + escapeHtml(session.queue) +
         ' <span class="detail-sep">|</span> ' + ci('vm') + ' ' + session.cpus +
         ' <span class="detail-sep">|</span> ' + ci('database') + ' ' + session.memory + gpuPart +
         ' <span class="detail-sep">|</span> ' + timePart;

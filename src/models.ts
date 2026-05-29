@@ -39,6 +39,7 @@ export interface Session {
     status: 'configuring' | 'connecting' | 'connected' | 'ready_to_connect' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired' | 'connection_broken';
     tunnelType: 'devtunnel' | 'cstunnel' | 'open';
     submittedAt: number;
+    startedAt?: number; // epoch ms when the job first started running; anchors the wall-time countdown
     errorMessage: string;
     connectionInfo?: SessionConnectionInfo;
     workingDirectory?: string;
