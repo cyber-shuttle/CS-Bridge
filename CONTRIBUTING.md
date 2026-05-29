@@ -63,8 +63,8 @@ resources/
 │   ├── js/sessions.js                 # Plain JS sidebar UI (~31KB; not compiled)
 │   └── css/{common,info,sessions}.css # Webview styling
 ├── codicons/                          # Bundled VS Code codicons
-├── cybershuttle.svg                   # Activity bar icon
-└── cybershuttle.png                   # Marketplace icon
+├── csbridge.svg                       # Activity bar icon
+└── csbridge.png                       # Marketplace icon
 
 scripts/
 ├── askpass.{js,sh,cmd}                # SSH_ASKPASS helpers (cross-platform)

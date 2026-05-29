@@ -1,4 +1,4 @@
-// SSH_ASKPASS helper script for CyberShuttle extension.
+// SSH_ASKPASS helper script for CS Bridge extension.
 // SSH calls this script with the prompt as the first argument.
 // It writes a unique request file and waits for the extension
 // to write the password to a corresponding response file.

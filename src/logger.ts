@@ -13,7 +13,7 @@ export class Logger {
     private _logLevel: LogLevel = LogLevel.Info;
 
     private constructor() {
-        this._outputChannel = vscode.window.createOutputChannel('CyberShuttle');
+        this._outputChannel = vscode.window.createOutputChannel('CS Bridge');
     }
 
     static getInstance(): Logger {

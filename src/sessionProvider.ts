@@ -25,7 +25,7 @@ function liveAndCleanup(s: SlurmSession): { isCurrent: boolean, windowAlive: boo
 }
 
 export class SessionProvider implements vscode.WebviewViewProvider {
-    public static readonly viewType = 'cybershuttle.sessionsView';
+    public static readonly viewType = 'csbridge.sessionsView';
 
     private readonly _logger = Logger.getInstance();
     private readonly _clusterInfo = new Map<string, SlurmClusterInfo>();
