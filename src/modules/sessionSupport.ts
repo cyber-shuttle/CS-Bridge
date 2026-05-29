@@ -118,8 +118,14 @@ export class JobStatusMonitor {
                             continue;
                         }
 
-                        const slurmStatus = await getSlurmJobStatus(session);
+                        const { status: slurmStatus, elapsedSec } = await getSlurmJobStatus(session);
                         logger.info(`Polled Slurm job status for session ${session.name}: ${slurmStatus}`);
+
+                        // Anchor the wall-time countdown to SLURM's reported elapsed run-time, not the poll time.
+                        if (slurmStatus === SlurmJobStatus.RUNNING && !session.startedAt) {
+                            session.startedAt = Date.now() - elapsedSec * 1000;
+                            updateSession(session);
+                        }
 
                         if (slurmStatus === SlurmJobStatus.RUNNING && session.status === 'running') {
                             //logger.info(`Session ${session.name} is now running. Fetching job output...`);
