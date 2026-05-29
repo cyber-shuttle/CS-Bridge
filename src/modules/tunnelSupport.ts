@@ -113,7 +113,7 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
 
     // Create management client with AAD user token for auth
     const mgmtClient = new TunnelManagementHttpClient(
-        { name: 'cybershuttle-vscode', version: '1.0' },
+        { name: 'csbridge-vscode', version: '1.0' },
         ManagementApiVersions.Version20230927preview,
         async () => {
             const token = await getDevTunnelAuthToken(false);

@@ -1,10 +1,10 @@
 {
-	"name": "cybershuttle",
-	"displayName": "Cybershuttle",
+	"name": "csbridge",
+	"displayName": "CS Bridge",
 	"publisher": "cybershuttle",
 	"description": "Manage SSH sessions and HPC jobs from VS Code",
 	"license": "Apache-2.0",
-	"icon": "resources/cybershuttle.png",
+	"icon": "resources/csbridge.png",
 	"keywords": [
 		"ssh",
 		"hpc",
@@ -16,7 +16,7 @@
 		"type": "git",
 		"url": "https://github.com/cyber-shuttle/CS-Bridge.git"
 	},
-	"version": "0.0.3",
+	"version": "0.0.1",
 	"engines": {
 		"vscode": "^1.98.0"
 	},
@@ -34,19 +34,19 @@
 		"viewsContainers": {
 			"activitybar": [
 				{
-					"id": "cybershuttle",
-					"title": "Cybershuttle",
-					"icon": "resources/cybershuttle.svg"
+					"id": "csbridge",
+					"title": "CS Bridge",
+					"icon": "resources/csbridge.svg"
 				}
 			]
 		},
 		"views": {
-			"cybershuttle": [
+			"csbridge": [
 				{
 					"type": "webview",
-					"id": "cybershuttle.sessionsView",
+					"id": "csbridge.sessionsView",
 					"name": "Sessions",
-					"icon": "resources/cybershuttle.svg"
+					"icon": "resources/csbridge.svg"
 				}
 			]
 		}
@@ -58,7 +58,7 @@
 		"check-types": "tsc -p ./",
 		"lint": "eslint src",
 		"package": "npx @vscode/vsce package",
-		"install-ext": "code --install-extension cybershuttle-0.0.3.vsix",
+		"install-ext": "code --install-extension csbridge-0.0.1.vsix",
 		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {

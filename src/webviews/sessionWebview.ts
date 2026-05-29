@@ -161,7 +161,7 @@ export function getSessionWebviewContent(
             <meta charset="UTF-8">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>CyberShuttle Sessions</title>
+            <title>CS Bridge Sessions</title>
             <link rel="stylesheet" href="${codiconsCssUri}">
             <link rel="stylesheet" href="${commonCssUri}">
             <link rel="stylesheet" href="${sessionsCssUri}">

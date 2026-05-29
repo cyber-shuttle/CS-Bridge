@@ -8,7 +8,7 @@ import { SshManager } from './modules/sshSupport';
 
 export async function activate(context: vscode.ExtensionContext) {
     const logger = Logger.getInstance();
-    logger.info('CyberShuttle extension activating');
+    logger.info('CS Bridge extension activating');
 
     logger.info(`Initializing session store...`);
     const sessionStoreLocation = initSessionStore();
@@ -16,7 +16,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const id = currentWindowSessionId();
     if (id) {
-        logger.info(`Window is connected to CyberShuttle session ${id}; pid=${process.pid}`);
+        logger.info(`Window is connected to CS Bridge session ${id}; pid=${process.pid}`);
         try { mutateWindowPids(id, pids => [...new Set([...pids.filter(isPidAlive), process.pid])]); }
         catch (err) { logger.error(`Failed to register windowPid for session ${id}`, err); }
         context.subscriptions.push({
@@ -32,7 +32,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(SessionProvider.viewType, sessionProvider));
 
-    logger.info('CyberShuttle extension activated');
+    logger.info('CS Bridge extension activated');
 }
 
 function currentWindowSessionId(): string | undefined {
