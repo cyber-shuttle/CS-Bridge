@@ -6,8 +6,8 @@
   <br clear="all">
   &nbsp;
   <br>
-  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.csbridge"><img src="https://vsmarketplacebadges.dev/version-short/cybershuttle.csbridge.svg?label=VS%20Code%20Marketplace&color=007ACC" alt="VS Code Marketplace" /></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.csbridge"><img src="https://vsmarketplacebadges.dev/installs-short/cybershuttle.csbridge.svg?label=installs" alt="Installs" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.csbridge"><img src="https://img.shields.io/visual-studio-marketplace/v/cybershuttle.csbridge?label=VS%20Code%20Marketplace&color=007ACC" alt="VS Code Marketplace" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=cybershuttle.csbridge"><img src="https://img.shields.io/visual-studio-marketplace/i/cybershuttle.csbridge?label=installs" alt="Installs" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/cyber-shuttle/CS-Bridge?color=blue" alt="License" /></a>
 </div>
 
