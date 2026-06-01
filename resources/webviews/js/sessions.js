@@ -102,6 +102,21 @@
         });
     });
 
+    // "Add SSH Host" row -> open the native input-box flow on the extension host.
+    document.querySelectorAll('.add-ssh-host-row').forEach(row => {
+        row.addEventListener('click', () => {
+            vscode.postMessage({ command: 'addSshHost' });
+        });
+    });
+
+    // Per-row delete (managed hosts only). stopPropagation so it doesn't toggle the form.
+    document.querySelectorAll('.host-delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            vscode.postMessage({ command: 'removeSshHost', name: btn.getAttribute('data-host') });
+        });
+    });
+
     // Add click handlers to provision a session from config view
     document.querySelectorAll('.submit-job-btn').forEach(btn => {
         btn.addEventListener('click', () => {
