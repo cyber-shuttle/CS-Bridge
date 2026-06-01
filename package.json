@@ -57,23 +57,29 @@
 		"watch": "node esbuild.js --watch",
 		"check-types": "tsc -p ./",
 		"lint": "eslint src",
+		"test": "node --import tsx --test src/modules/*.test.ts",
 		"package": "npx @vscode/vsce package",
 		"install-ext": "code --install-extension csbridge-0.0.1.vsix",
 		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {
 		"@types/node": "20.x",
+		"@types/shell-quote": "^1.7.5",
 		"@types/vscode": "^1.98.0",
 		"@typescript-eslint/eslint-plugin": "^8.25.0",
 		"@typescript-eslint/parser": "^8.25.0",
 		"@vscode/codicons": "^0.0.44",
 		"esbuild": "^0.28.0",
 		"eslint": "^9.21.0",
+		"tsx": "^4.19.0",
 		"typescript": "^5.7.3"
 	},
 	"dependencies": {
 		"@microsoft/dev-tunnels-connections": "^1.3.6",
 		"@microsoft/dev-tunnels-contracts": "^1.3.6",
-		"@microsoft/dev-tunnels-management": "^1.3.6"
+		"@microsoft/dev-tunnels-management": "^1.3.6",
+		"posix-getopt": "^1.2.1",
+		"shell-quote": "^1.8.1",
+		"ssh-config": "^5.0.2"
 	}
 }
