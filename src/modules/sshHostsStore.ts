@@ -65,5 +65,5 @@ export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): vo
 export function removeManagedHost(name: string): void {
     if (!fs.existsSync(MANAGED_HOSTS_PATH)) { return; }
     const text = fs.readFileSync(MANAGED_HOSTS_PATH, 'utf-8');
-    fs.writeFileSync(MANAGED_HOSTS_PATH, removeHostFromConfigText(text, name));
+    fs.writeFileSync(MANAGED_HOSTS_PATH, removeHostFromConfigText(text, name), { mode: 0o600 });
 }

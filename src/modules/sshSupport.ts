@@ -32,8 +32,10 @@ export class SshManager {
             SshManager._instance = new SshManager(extensionUri);
         }
 
-        // Both files are Include'd at the TOP of ~/.ssh/config so their entries override global ones.
-        // Order is immaterial (disjoint namespaces: cshost-* vs user aliases).
+        // Both files are Include'd ABOVE the user's existing global entries, so managed (and
+        // session) aliases override same-named global ones via SSH first-match-wins. The two
+        // includes' relative order does not matter — their namespaces are disjoint
+        // (cshost-* session aliases vs. user host aliases), and both land above global content.
         for (const file of [CS_SSH_CONFIG_PATH, MANAGED_HOSTS_PATH]) {
             if (!fs.existsSync(file)) {
                 fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });

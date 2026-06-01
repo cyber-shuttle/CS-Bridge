@@ -65,3 +65,11 @@ test('assertValidHost rejects leading dash', () => {
 test('assertValidHost rejects backtick', () => {
     assert.throws(() => assertValidHost({ Host: 'h', HostName: 'h`x' }), CommandParseError);
 });
+
+test('assertValidHost rejects User starting with dash', () => {
+    assert.throws(() => assertValidHost({ Host: 'h', HostName: 'h', User: '-bad' }), CommandParseError);
+});
+
+test('assertValidHost rejects backtick in User', () => {
+    assert.throws(() => assertValidHost({ Host: 'h', HostName: 'h', User: 'a`id`' }), CommandParseError);
+});
