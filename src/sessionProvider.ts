@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
+import * as path from 'path';
 import { Logger } from './logger';
 import { SlurmClusterInfo, SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent, UiState } from './webviews/sessionWebview';
@@ -7,6 +9,8 @@ import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPid
 import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
+import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
+import { MANAGED_HOSTS_PATH, addHostToConfigFile, removeManagedHost } from './modules/sshHostsStore';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
 
@@ -86,20 +90,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         const command = data.command;
         switch (command) {
             case 'fetchSlurmClusterInfo':
-                const host = data.host;
-                const cached = this._clusterInfo.get(host);
-                if (cached) {
-                    webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo: cached });
-                    break;
-                }
-                this._logger.info(`Fetching slurm cluster info for host: ${host}`);
-                getSlurmClusterInfo(host).then(clusterInfo => {
-                    this._clusterInfo.set(host, clusterInfo);
-                    webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
-                }).catch(error => {
-                    this._logger.error('Error fetching slurm cluster info:', error);
-                    webView.postMessage({ command: 'slurmClusterInfoError', host, message: error instanceof Error ? error.message : String(error) });
-                });
+                this._fetchClusterInfo(webView, data.host);
                 break;
             case 'setPickerOpen':
                 this._uiState.pickerOpen = data.value;
@@ -205,6 +196,12 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 const removeSessionId = data.sessionId;
                 this._removeSession(webView, removeSessionId);
                 break;
+            case 'addSshHost':
+                this._addSshHost(webView);
+                break;
+            case 'removeSshHost':
+                this._removeSshHost(webView, data.name);
+                break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
@@ -251,6 +248,98 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         this._refereshSessions(webView);
     }
 
+    // Shared by the fetchSlurmClusterInfo message and the post-add "Connect" action.
+    private _fetchClusterInfo(webView: vscode.Webview, host: string): void {
+        const cached = this._clusterInfo.get(host);
+        if (cached) {
+            webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo: cached });
+            return;
+        }
+        this._logger.info(`Fetching slurm cluster info for host: ${host}`);
+        getSlurmClusterInfo(host).then(clusterInfo => {
+            this._clusterInfo.set(host, clusterInfo);
+            webView.postMessage({ command: 'slurmClusterInfo', host, clusterInfo });
+        }).catch(error => {
+            this._logger.error('Error fetching slurm cluster info:', error);
+            webView.postMessage({ command: 'slurmClusterInfoError', host, message: error instanceof Error ? error.message : String(error) });
+        });
+    }
+
+    // Remote-SSH-parity add-host flow: input box -> parse -> validate -> pick file -> write -> notify.
+    private async _addSshHost(webView: vscode.Webview): Promise<void> {
+        const command = (await vscode.window.showInputBox({
+            title: 'Enter SSH Connection Command',
+            placeHolder: 'E.g. ssh hello@microsoft.com -A',
+            ignoreFocusOut: true,
+        }))?.trim();
+        if (!command) { return; }
+
+        let entry: SshConfigEntry;
+        try {
+            entry = sshCommandToConfig(command);
+            assertValidHost(entry);
+        } catch (err) {
+            vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+            return;
+        }
+
+        const target = await this._pickConfigFile();
+        if (!target) { return; }
+
+        try {
+            addHostToConfigFile(target, entry);
+        } catch (err) {
+            this._logger.error(`Failed to write SSH host to ${target}:`, err);
+            vscode.window.showErrorMessage(`Failed to save SSH host: ${err instanceof Error ? err.message : String(err)}`);
+            return;
+        }
+
+        this._refereshSessions(webView);
+
+        const choice = await vscode.window.showInformationMessage('Host added!', 'Open Config', 'Connect');
+        if (choice === 'Open Config') {
+            const doc = await vscode.workspace.openTextDocument(target);
+            await vscode.window.showTextDocument(doc);
+        } else if (choice === 'Connect') {
+            this._openHostForm(webView, entry.Host);
+        }
+    }
+
+    // Parity "Select SSH configuration file to update" step; managed file is the default top choice.
+    private async _pickConfigFile(): Promise<string | undefined> {
+        const systemConfig = process.platform === 'win32'
+            ? path.join(process.env.ALLUSERSPROFILE || process.env.PROGRAMDATA || 'C:\\ProgramData', 'ssh', 'ssh_config')
+            : '/etc/ssh/ssh_config';
+        const items: (vscode.QuickPickItem & { path: string })[] = [
+            { label: 'CS Bridge (managed)', description: '~/.cybershuttle/ssh_hosts — overrides global', path: MANAGED_HOSTS_PATH },
+            { label: '~/.ssh/config', description: 'User SSH config', path: path.join(os.homedir(), '.ssh', 'config') },
+            { label: systemConfig, description: 'System SSH config', path: systemConfig },
+        ];
+        const pick = await vscode.window.showQuickPick(items, {
+            title: 'Select SSH configuration file to update',
+            placeHolder: 'Where should this host be saved?',
+        });
+        return pick?.path;
+    }
+
+    // "Connect" lands the user on the host's launch form (CS-Bridge launches sessions; it doesn't open a window directly).
+    private _openHostForm(webView: vscode.Webview, host: string): void {
+        this._uiState.pickerOpen = true;
+        if (!this._uiState.openHosts.includes(host)) { this._uiState.openHosts.push(host); }
+        this._refereshSessions(webView);
+        this._fetchClusterInfo(webView, host);
+    }
+
+    private _removeSshHost(webView: vscode.Webview, name: string): void {
+        try {
+            removeManagedHost(name);
+        } catch (err) {
+            this._logger.error(`Failed to remove managed SSH host ${name}:`, err);
+            vscode.window.showErrorMessage(`Failed to remove SSH host: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        this._refereshSessions(webView);
+    }
+
     // Cshost windows see only their own session; sidebar windows see all.
     private _scopedSessions(): SlurmSession[] {
         return this._myId ? getAllSessions().filter(s => s.id === this._myId) : getAllSessions();
@@ -268,7 +357,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     private async _refereshSessions(webView: vscode.Webview) {
         const sessions = this._scopedSessions();
         const account = await getMicrosoftAccountInfo();
-        const sshHosts = SshManager.getInstance().getSshHostsFromConfig();
+        const sshHosts = SshManager.getInstance().getMergedHosts();
         webView.html = getSessionWebviewContent(webView, this._extensionUri, sessions, account, sshHosts, this._uiState, this._previewSession);
         for (const s of sessions) {
             webView.postMessage({ command: 'sessionUpdate', session: { ...s, ...liveAndCleanup(s) } });
