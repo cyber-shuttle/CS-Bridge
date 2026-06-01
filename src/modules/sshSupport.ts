@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
-import { MANAGED_HOSTS_PATH, listManagedHosts, mergeHostsManagedWins, parseHostsFromConfigText } from './sshHostsStore';
+import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, listManagedHosts, mergeHostsByPriority, parseHostsFromConfigText } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -53,25 +53,30 @@ export class SshManager {
         return SshManager._instance;
     }
 
-    /**
-    * Parse the literal ~/.ssh/config for top-level Host entries (global hosts).
-    * Does not follow Include directives, so the managed file's entries are not double-counted.
-    */
-    public getSshHostsFromConfig(): SshHost[] {
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
+    private _readHostsFile(filePath: string, source: 'user' | 'system'): SshHost[] {
         try {
-            if (!fs.existsSync(sshConfigPath)) { return []; }
-            const text = fs.readFileSync(sshConfigPath, 'utf-8');
-            return parseHostsFromConfigText(text).map(h => ({ ...h, managed: false }));
+            if (!fs.existsSync(filePath)) { return []; }
+            const text = fs.readFileSync(filePath, 'utf-8');
+            return parseHostsFromConfigText(text).map(h => ({ ...h, source }));
         } catch (err) {
-            logger.error('Error reading SSH config:', err);
+            logger.error(`Error reading SSH config ${filePath}:`, err);
             return [];
         }
     }
 
-    // Global hosts plus managed hosts, deduped with managed taking priority.
+    // User ~/.ssh/config hosts (editable). Reads the file literally (no Include follow-through),
+    // so managed/session aliases are not double-counted.
+    public getSshHostsFromConfig(): SshHost[] {
+        return this._readHostsFile(USER_SSH_CONFIG_PATH, 'user');
+    }
+
+    // Managed (highest) + user + system, deduped first-wins so managed overrides user overrides system.
     public getMergedHosts(): SshHost[] {
-        return mergeHostsManagedWins(this.getSshHostsFromConfig(), listManagedHosts());
+        return mergeHostsByPriority(
+            listManagedHosts(),
+            this.getSshHostsFromConfig(),
+            this._readHostsFile(SYSTEM_SSH_CONFIG_PATH, 'system'),
+        );
     }
 
     /**

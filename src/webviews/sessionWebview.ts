@@ -17,9 +17,9 @@ const buildHostPickerHtml = (sshHosts: SshHost[], openHosts: string[]): string =
             <div class="host-picker-row" data-host="${escapeHtml(host.name)}"  title="${host.hostname ? escapeHtml((host.user ? host.user + '@' : '') + host.hostname) : escapeHtml(host.name)}">
                 <span class="host-picker-chevron${open ? ' expanded' : ''}">&#x203A;</span>
                 <span class="host-picker-name">${escapeHtml(host.name)}</span>
-                ${host.managed ? '<span class="host-managed-badge" title="Managed by CS Bridge">CS</span>' : ''}
+                ${host.source === 'managed' ? '<span class="host-managed-badge" title="Managed by CS Bridge">CS</span>' : host.source === 'system' ? '<span class="host-managed-badge host-system-badge" title="System SSH config (read-only)">system</span>' : ''}
                 ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
-                ${host.managed ? `<button class="host-delete-btn" data-host="${escapeHtml(host.name)}" title="Remove SSH host">${ci('trash')}</button>` : ''}
+                ${(host.source === 'managed' || host.source === 'user') ? `<button class="host-delete-btn" data-host="${escapeHtml(host.name)}" data-source="${host.source}" title="Remove SSH host">${ci('trash')}</button>` : ''}
             </div>
             <div class="host-picker-form" id="host-form-${escapeHtml(host.name)}" style="display:${open ? 'block' : 'none'};">
                 <div class="job-form-loading" style="display:${open ? 'flex' : 'none'};"><span class="spinner"></span>Fetching runtime details...</div>

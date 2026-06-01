@@ -63,7 +63,7 @@ export interface SshHost {
     name: string;
     hostname?: string;
     user?: string;
-    managed?: boolean; // true => stored in ~/.cybershuttle/ssh_hosts (deletable); false/undefined => global ~/.ssh/config
+    source?: 'managed' | 'user' | 'system'; // origin config file. managed/user are editable+deletable; system is read-only.
 }
 
 export interface SlurmClusterInfo {

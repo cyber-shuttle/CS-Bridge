@@ -536,3 +536,9 @@
 .host-delete-btn .codicon {
     font-size: 13px;
 }
+
+.host-system-badge {
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid var(--vscode-panel-border);
+}

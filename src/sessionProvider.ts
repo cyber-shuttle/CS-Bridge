@@ -1,6 +1,4 @@
 import * as vscode from 'vscode';
-import * as os from 'os';
-import * as path from 'path';
 import { Logger } from './logger';
 import { SlurmClusterInfo, SlurmSession, TunnelCredential } from './models';
 import { getSessionWebviewContent, UiState } from './webviews/sessionWebview';
@@ -10,7 +8,7 @@ import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSS
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
-import { MANAGED_HOSTS_PATH, addHostToConfigFile, removeManagedHost } from './modules/sshHostsStore';
+import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } from './modules/sshHostsStore';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
 
@@ -200,7 +198,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
                 this._addSshHost(webView);
                 break;
             case 'removeSshHost':
-                this._removeSshHost(webView, data.name);
+                this._removeSshHost(webView, data.name, data.source);
                 break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
@@ -306,14 +304,11 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     }
 
     // Parity "Select SSH configuration file to update" step; managed file is the default top choice.
+    // System config is read-only, so only the two writable targets are offered.
     private async _pickConfigFile(): Promise<string | undefined> {
-        const systemConfig = process.platform === 'win32'
-            ? path.join(process.env.ALLUSERSPROFILE || process.env.PROGRAMDATA || 'C:\\ProgramData', 'ssh', 'ssh_config')
-            : '/etc/ssh/ssh_config';
         const items: (vscode.QuickPickItem & { path: string })[] = [
             { label: 'CS Bridge (managed)', description: '~/.cybershuttle/ssh_hosts — overrides global', path: MANAGED_HOSTS_PATH },
-            { label: '~/.ssh/config', description: 'User SSH config', path: path.join(os.homedir(), '.ssh', 'config') },
-            { label: systemConfig, description: 'System SSH config', path: systemConfig },
+            { label: '~/.ssh/config', description: 'User SSH config', path: USER_SSH_CONFIG_PATH },
         ];
         const pick = await vscode.window.showQuickPick(items, {
             title: 'Select SSH configuration file to update',
@@ -330,11 +325,23 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         this._fetchClusterInfo(webView, host);
     }
 
-    private _removeSshHost(webView: vscode.Webview, name: string): void {
+    private async _removeSshHost(webView: vscode.Webview, name: string, source: string): Promise<void> {
+        const filePath = source === 'managed' ? MANAGED_HOSTS_PATH : source === 'user' ? USER_SSH_CONFIG_PATH : undefined;
+        if (!filePath) {
+            vscode.window.showWarningMessage(`Cannot remove '${name}': the system SSH config is read-only.`);
+            return;
+        }
+        const where = source === 'managed' ? '~/.cybershuttle/ssh_hosts' : '~/.ssh/config';
+        const choice = await vscode.window.showWarningMessage(
+            `Remove SSH host '${name}'?`,
+            { modal: true, detail: `This removes the Host entry from ${where}.` },
+            'Remove'
+        );
+        if (choice !== 'Remove') { return; }
         try {
-            removeManagedHost(name);
+            removeHostFromConfigFile(filePath, name);
         } catch (err) {
-            this._logger.error(`Failed to remove managed SSH host ${name}:`, err);
+            this._logger.error(`Failed to remove SSH host ${name} from ${filePath}:`, err);
             vscode.window.showErrorMessage(`Failed to remove SSH host: ${err instanceof Error ? err.message : String(err)}`);
         }
         this._refereshSessions(webView);

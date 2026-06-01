@@ -113,7 +113,7 @@
     document.querySelectorAll('.host-delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            vscode.postMessage({ command: 'removeSshHost', name: btn.getAttribute('data-host') });
+            vscode.postMessage({ command: 'removeSshHost', name: btn.getAttribute('data-host'), source: btn.getAttribute('data-source') });
         });
     });
 

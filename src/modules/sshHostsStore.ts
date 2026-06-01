@@ -7,6 +7,10 @@ import { SshConfigEntry } from './sshCommandParser';
 
 // User-managed login hosts. Distinct from the session-managed ~/.cybershuttle/ssh_config (cshost-* aliases).
 export const MANAGED_HOSTS_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_hosts');
+export const USER_SSH_CONFIG_PATH = path.join(os.homedir(), '.ssh', 'config');
+export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
+    ? path.join(process.env.ALLUSERSPROFILE || process.env.PROGRAMDATA || 'C:\\ProgramData', 'ssh', 'ssh_config')
+    : '/etc/ssh/ssh_config';
 
 export function parseHostsFromConfigText(text: string): SshHost[] {
     const config = parse(text);
@@ -45,15 +49,24 @@ export function removeHostFromConfigText(text: string, name: string): string {
     return config.toString();
 }
 
-export function mergeHostsManagedWins(global: SshHost[], managed: SshHost[]): SshHost[] {
-    const managedNames = new Set(managed.map(h => h.name));
-    return [...managed, ...global.filter(h => !managedNames.has(h.name))];
+// Concatenate host lists in priority order (highest priority first); the first occurrence of each name wins.
+export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
+    const seen = new Set<string>();
+    const result: SshHost[] = [];
+    for (const list of lists) {
+        for (const host of list) {
+            if (seen.has(host.name)) { continue; }
+            seen.add(host.name);
+            result.push(host);
+        }
+    }
+    return result;
 }
 
 export function listManagedHosts(): SshHost[] {
     if (!fs.existsSync(MANAGED_HOSTS_PATH)) { return []; }
     const text = fs.readFileSync(MANAGED_HOSTS_PATH, 'utf-8');
-    return parseHostsFromConfigText(text).map(h => ({ ...h, managed: true }));
+    return parseHostsFromConfigText(text).map(h => ({ ...h, source: 'managed' as const }));
 }
 
 export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): void {
@@ -62,8 +75,8 @@ export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): vo
     fs.writeFileSync(filePath, addHostToConfigText(text, entry), { mode: 0o600 });
 }
 
-export function removeManagedHost(name: string): void {
-    if (!fs.existsSync(MANAGED_HOSTS_PATH)) { return; }
-    const text = fs.readFileSync(MANAGED_HOSTS_PATH, 'utf-8');
-    fs.writeFileSync(MANAGED_HOSTS_PATH, removeHostFromConfigText(text, name), { mode: 0o600 });
+export function removeHostFromConfigFile(filePath: string, name: string): void {
+    if (!fs.existsSync(filePath)) { return; }
+    const text = fs.readFileSync(filePath, 'utf-8');
+    fs.writeFileSync(filePath, removeHostFromConfigText(text, name), { mode: 0o600 });
 }

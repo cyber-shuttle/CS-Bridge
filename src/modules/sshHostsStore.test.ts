@@ -4,7 +4,7 @@ import {
     parseHostsFromConfigText,
     addHostToConfigText,
     removeHostFromConfigText,
-    mergeHostsManagedWins,
+    mergeHostsByPriority,
 } from './sshHostsStore';
 
 test('parseHostsFromConfigText reads Host/HostName/User and skips wildcards', () => {
@@ -34,10 +34,12 @@ test('removeHostFromConfigText removes the named entry', () => {
     assert.deepEqual(parseHostsFromConfigText(removeHostFromConfigText(text, 'h')), []);
 });
 
-test('mergeHostsManagedWins puts managed first and overrides clashes', () => {
-    const global = [{ name: 'a', managed: false }, { name: 'b', hostname: 'global-b', managed: false }];
-    const managed = [{ name: 'b', hostname: 'managed-b', managed: true }];
-    const merged = mergeHostsManagedWins(global, managed);
-    assert.deepEqual(merged.map(h => h.name), ['b', 'a']);
+test('mergeHostsByPriority keeps the first occurrence of each name', () => {
+    const managed = [{ name: 'b', hostname: 'managed-b', source: 'managed' as const }];
+    const user = [{ name: 'a', source: 'user' as const }, { name: 'b', hostname: 'user-b', source: 'user' as const }];
+    const system = [{ name: 'c', source: 'system' as const }];
+    const merged = mergeHostsByPriority(managed, user, system);
+    assert.deepEqual(merged.map(h => h.name), ['b', 'a', 'c']);
     assert.equal(merged.find(h => h.name === 'b')?.hostname, 'managed-b');
+    assert.equal(merged.find(h => h.name === 'b')?.source, 'managed');
 });
