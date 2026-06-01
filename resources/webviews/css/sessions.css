@@ -479,3 +479,60 @@
 .cancel-preview-btn:hover {
     background: var(--vscode-button-secondaryHoverBackground);
 }
+
+.add-ssh-host-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    margin: 2px 6px 6px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    border: 1px dashed var(--vscode-panel-border);
+    border-radius: 4px;
+    justify-content: center;
+}
+
+.add-ssh-host-row:hover {
+    background: var(--vscode-list-hoverBackground);
+    color: var(--vscode-foreground);
+}
+
+.add-ssh-host-row .codicon {
+    font-size: 12px;
+}
+
+.host-managed-badge {
+    font-size: 9px;
+    padding: 0 4px;
+    border-radius: 6px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    flex-shrink: 0;
+}
+
+.host-delete-btn {
+    margin-left: 4px;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0;
+    display: inline-flex;
+    align-items: center;
+}
+
+.host-picker-row:hover .host-delete-btn {
+    opacity: 1;
+}
+
+.host-delete-btn:hover {
+    color: var(--vscode-errorForeground);
+}
+
+.host-delete-btn .codicon {
+    font-size: 13px;
+}
