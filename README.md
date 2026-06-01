@@ -124,14 +124,17 @@ In other words: Remote-SSH alone is enough if you SSH into a static dev box. CS 
 
 ## Roadmap
 
-These items are planned but not yet implemented. A few have placeholder entries in VS Code settings already (`csbridge.tunnelProvider`, `csbridge.frpServerUrl`, `csbridge.frpApiKey`, `csbridge.enableFilesystemSync`, `csbridge.adminServerUrl`) — those settings don't do anything yet.
+These items are in the development roadmap. Note that these may be subject to change.
 
-- **Plain-SSH / non-SLURM hosts** — connect directly to lab workstations or dev VMs without a scheduler.
-- **Self-hosted FRP relay** as an alternative to Microsoft Dev Tunnels for institutions that disallow them.
-- **Local-workspace mounting** on the remote via FUSE + sshfs, so the remote VS Code window sees your local files.
-- **Opt-in anonymous usage metrics** with an explicit consent flow.
-- **Better queue visibility** — position in queue and estimated start time.
-- **An alternative to the Microsoft account** requirement for sign-in.
+- [ ] **UI for adding new ssh config entries** - Direct users to remote-ssh extension UI to create new ssh config entries.
+- [ ] **UI to report issues** - Reporting issues as they happen in the extension. take in an issue description, and report with auto-captured stacktrace.
+- [ ] **UI for queue visibility** — UI showing queued jobs, their positions in queue, and estimated start times.
+- [ ] **Opt-in anonymous usage metrics** with an explicit consent flow, and report telemetry to a central place.
+- [ ] **Login to Non-SLURM hosts** — connect directly to lab workstations or dev VMs without a SLURM scheduler.
+- [ ] **Login with Nexus account** alternative to MS account sign-in that tunnels over FRP instead of MS devtunnels.
+- [ ] **Self-hosted FRP relay** - alternative to MS devtunnels for institutions that disallow them.
+- [ ] **Local-workspace mounting** on the remote via FUSE + sshfs, so the remote VS Code window sees your local files.
+- [ ] Followup with pilot testers and get them to report issues on GitHub.
 
 Have a feature request or found a bug? [Open an issue](https://github.com/cyber-shuttle/CS-Bridge/issues).
 
