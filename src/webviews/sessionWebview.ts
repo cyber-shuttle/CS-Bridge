@@ -7,7 +7,7 @@ function ci(name: string) { return '<i class="codicon codicon-' + name + '"></i>
 
 const buildHostPickerHtml = (sshHosts: SshHost[], openHosts: string[]): string => {
     if (sshHosts.length === 0) {
-        return '<p class="empty-message" style="margin:8px;">No SSH hosts found in ~/.ssh/config</p>';
+        return '<p class="empty-message" style="margin:8px;">No SSH hosts yet — add one above.</p>';
     }
     const openSet = new Set(openHosts);
     return sshHosts.map(host => {
@@ -17,7 +17,9 @@ const buildHostPickerHtml = (sshHosts: SshHost[], openHosts: string[]): string =
             <div class="host-picker-row" data-host="${escapeHtml(host.name)}"  title="${host.hostname ? escapeHtml((host.user ? host.user + '@' : '') + host.hostname) : escapeHtml(host.name)}">
                 <span class="host-picker-chevron${open ? ' expanded' : ''}">&#x203A;</span>
                 <span class="host-picker-name">${escapeHtml(host.name)}</span>
+                ${host.managed ? '<span class="host-managed-badge" title="Managed by CS Bridge">CS</span>' : ''}
                 ${host.hostname ? `<span class="host-picker-detail">${host.user ? escapeHtml(host.user) + '@' : ''}${escapeHtml(host.hostname)}</span>` : ''}
+                ${host.managed ? `<button class="host-delete-btn" data-host="${escapeHtml(host.name)}" title="Remove SSH host">${ci('trash')}</button>` : ''}
             </div>
             <div class="host-picker-form" id="host-form-${escapeHtml(host.name)}" style="display:${open ? 'block' : 'none'};">
                 <div class="job-form-loading" style="display:${open ? 'flex' : 'none'};"><span class="spinner"></span>Fetching runtime details...</div>
@@ -120,6 +122,9 @@ function generateSessionsHtml(sessions: SlurmSession[], sshHosts: SshHost[], uiS
             <i class="codicon codicon-add"></i> Add Session
         </div>
         <div class="workspace-host-picker" id="host-picker" style="display:${uiState.pickerOpen ? 'block' : 'none'};">
+            <div class="add-ssh-host-row" title="Add a new SSH host">
+                <i class="codicon codicon-add"></i> Add SSH Host
+            </div>
             ${buildHostPickerHtml(sshHosts, uiState.openHosts)}
         </div>
     </div>`;
