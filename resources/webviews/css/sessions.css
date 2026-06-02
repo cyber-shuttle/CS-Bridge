@@ -236,6 +236,7 @@
 }
 
 .host-picker-row {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -490,13 +491,16 @@
 }
 
 .host-delete-btn {
-    margin-left: 4px;
-    padding: 2px;
-    background: transparent;
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 2px 4px;
+    background: var(--vscode-list-hoverBackground);
     border: none;
+    border-radius: 3px;
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
-    flex-shrink: 0;
     opacity: 0;
     display: inline-flex;
     align-items: center;
