@@ -496,7 +496,9 @@
     top: 50%;
     transform: translateY(-50%);
     padding: 2px 4px;
-    background: var(--vscode-list-hoverBackground);
+    /* Opaque base + hover tint on top = exact hovered-row color with no see-through text. */
+    background-color: var(--vscode-editor-background);
+    background-image: linear-gradient(var(--vscode-list-hoverBackground), var(--vscode-list-hoverBackground));
     border: none;
     border-radius: 3px;
     color: var(--vscode-descriptionForeground);
