@@ -326,11 +326,8 @@ export class SessionProvider implements vscode.WebviewViewProvider {
     }
 
     private async _removeSshHost(webView: vscode.Webview, name: string, source: string): Promise<void> {
-        const filePath = source === 'managed' ? MANAGED_HOSTS_PATH : source === 'user' ? USER_SSH_CONFIG_PATH : undefined;
-        if (!filePath) {
-            vscode.window.showWarningMessage(`Cannot remove '${name}': the system SSH config is read-only.`);
-            return;
-        }
+        // Only managed/user rows render a delete control, so source is never 'system' here.
+        const filePath = source === 'managed' ? MANAGED_HOSTS_PATH : USER_SSH_CONFIG_PATH;
         const where = source === 'managed' ? '~/.cybershuttle/ssh_hosts' : '~/.ssh/config';
         const choice = await vscode.window.showWarningMessage(
             `Remove SSH host '${name}'?`,

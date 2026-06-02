@@ -24,7 +24,6 @@ export function parseHostsFromConfigText(text: string): SshHost[] {
         const raw = Array.isArray(section.value) ? section.value[0] : section.value;
         const alias = typeof raw === 'string' ? raw.trim().split(/\s+/)[0] : '';
         if (!alias || alias.includes('*') || alias.includes('?')) { continue; }
-        if (/^(cshost-|cs-session-|cs-tunnel-)/.test(alias)) { continue; }
         const host: SshHost = { name: alias };
         for (const child of section.config) {
             if (child.type !== LineType.DIRECTIVE) { continue; }
