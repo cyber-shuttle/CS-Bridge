@@ -480,29 +480,6 @@
     background: var(--vscode-button-secondaryHoverBackground);
 }
 
-.add-ssh-host-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 8px;
-    margin: 2px 6px 6px;
-    font-size: 11px;
-    color: var(--vscode-descriptionForeground);
-    cursor: pointer;
-    border: 1px dashed var(--vscode-panel-border);
-    border-radius: 4px;
-    justify-content: center;
-}
-
-.add-ssh-host-row:hover {
-    background: var(--vscode-list-hoverBackground);
-    color: var(--vscode-foreground);
-}
-
-.add-ssh-host-row .codicon {
-    font-size: 12px;
-}
-
 .host-managed-badge {
     font-size: 9px;
     padding: 0 4px;

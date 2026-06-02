@@ -63,12 +63,6 @@ export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
     return result;
 }
 
-export function listManagedHosts(): SshHost[] {
-    if (!fs.existsSync(MANAGED_HOSTS_PATH)) { return []; }
-    const text = fs.readFileSync(MANAGED_HOSTS_PATH, 'utf-8');
-    return parseHostsFromConfigText(text).map(h => ({ ...h, source: 'managed' as const }));
-}
-
 export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
     const text = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';

@@ -122,7 +122,7 @@ function generateSessionsHtml(sessions: SlurmSession[], sshHosts: SshHost[], uiS
             <i class="codicon codicon-add"></i> Add Session
         </div>
         <div class="workspace-host-picker" id="host-picker" style="display:${uiState.pickerOpen ? 'block' : 'none'};">
-            <div class="add-ssh-host-row" title="Add a new SSH host">
+            <div class="add-session-placeholder add-ssh-host-row" title="Add a new SSH host">
                 <i class="codicon codicon-add"></i> Add SSH Host
             </div>
             ${buildHostPickerHtml(sshHosts, uiState.openHosts)}

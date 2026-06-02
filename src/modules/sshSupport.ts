@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
-import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, listManagedHosts, mergeHostsByPriority, parseHostsFromConfigText } from './sshHostsStore';
+import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -53,7 +53,9 @@ export class SshManager {
         return SshManager._instance;
     }
 
-    private _readHostsFile(filePath: string, source: 'user' | 'system'): SshHost[] {
+    // Top-level Host entries of a config file, tagged with their source; [] if missing/unreadable.
+    // Read literally (no Include follow-through), so managed/session aliases aren't double-counted.
+    private _readHostsFile(filePath: string, source: 'managed' | 'user' | 'system'): SshHost[] {
         try {
             if (!fs.existsSync(filePath)) { return []; }
             const text = fs.readFileSync(filePath, 'utf-8');
@@ -64,17 +66,11 @@ export class SshManager {
         }
     }
 
-    // User ~/.ssh/config hosts (editable). Reads the file literally (no Include follow-through),
-    // so managed/session aliases are not double-counted.
-    public getSshHostsFromConfig(): SshHost[] {
-        return this._readHostsFile(USER_SSH_CONFIG_PATH, 'user');
-    }
-
-    // Managed (highest) + user + system, deduped first-wins so managed overrides user overrides system.
+    // Managed + user + system, deduped first-wins so managed overrides user overrides system.
     public getMergedHosts(): SshHost[] {
         return mergeHostsByPriority(
-            listManagedHosts(),
-            this.getSshHostsFromConfig(),
+            this._readHostsFile(MANAGED_HOSTS_PATH, 'managed'),
+            this._readHostsFile(USER_SSH_CONFIG_PATH, 'user'),
             this._readHostsFile(SYSTEM_SSH_CONFIG_PATH, 'system'),
         );
     }
