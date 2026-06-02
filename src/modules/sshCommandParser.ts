@@ -12,8 +12,9 @@ export interface SshConfigEntry {
 // Verbatim getopt option string from Remote-SSH 0.123.0.
 const OPTSTRING = ':1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:PQ:R:S:TVw:W:XYy';
 
-// Verbatim flag -> ssh_config directive map. `null` = consumed but ignored.
-const OPTION_MAP: Record<string, ((c: Record<string, string>, arg: string) => void) | null> = {
+// Flag -> ssh_config directive (Remote-SSH 0.123.0). Flags in OPTSTRING but absent here are still
+// recognized and consumed by getopt; they just produce no directive.
+const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => void> = {
     '1': c => { c.Protocol = '1'; },
     '2': c => { c.Protocol = '2'; },
     '4': c => { c.AddressFamily = 'inet'; },
@@ -23,9 +24,6 @@ const OPTION_MAP: Record<string, ((c: Record<string, string>, arg: string) => vo
     C: c => { c.Compression = 'yes'; },
     c: (c, a) => { c.Cipher = a; },
     D: (c, a) => { c.DynamicForward = a; },
-    e: null,
-    F: null,
-    f: null,
     g: c => { c.GatewayPorts = 'yes'; },
     I: (c, a) => { c.SmartcardDevice = a; },
     i: (c, a) => { c.IdentityFile = a; },
@@ -47,28 +45,20 @@ const OPTION_MAP: Record<string, ((c: Record<string, string>, arg: string) => vo
     l: (c, a) => { c.User = a; },
     M: c => { c.ControlMaster = 'yes'; },
     m: (c, a) => { c.MACs = a; },
-    N: null,
-    n: null,
     o: (c, a) => {
         const idx = a.indexOf('=');
         if (idx === -1) { throw new CommandParseError(`Argument missing for option ${a}`); }
         c[a.slice(0, idx)] = a.slice(idx + 1);
     },
     p: (c, a) => { c.Port = a; },
-    q: null,
     R: (c, a) => { c.RemoteForward = a; },
     S: (c, a) => { c.ControlPath = a; },
-    s: null,
-    T: null,
-    t: null,
-    V: null,
     v: c => { c.LogLevel = 'verbose'; },
     W: (c, a) => { c.RemoteForward = a; },
     w: (c, a) => { c.TunnelDevice = a; },
     X: c => { c.ForwardX11 = 'yes'; },
     x: c => { c.ForwardX11 = 'no'; },
     Y: c => { c.ForwardX11Trusted = 'yes'; },
-    y: null,
 };
 
 function consumeFlags(tokens: string[], config: Record<string, string>): number {
