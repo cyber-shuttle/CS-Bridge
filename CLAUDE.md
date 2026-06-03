@@ -101,3 +101,7 @@ The following are referenced in older docs but **do not exist in code** (see REA
 - `sessions.json` is shared across VS Code windows; the cross-window file watcher in `extensionStore.ts` is load-bearing.
 - The Restart button in the webview re-invokes `launchSession` against the existing stored session, which is how "restart with same config" is achieved — there is no separate restart command.
 - CyberShuttle prepends an `Include ~/.cybershuttle/ssh_config` line to the user's `~/.ssh/config`. Removing it without also removing CS-Bridge will leave broken `cshost-*` references.
+
+## Code Discipline
+
+Every line must earn its place. Reject scaffolding: helpers called once (inline them), abstractions with no second caller, defensive checks for impossible states, comments that restate well-named code. Default to the smallest correct implementation; when a diff grows, scan for lines that can merge or disappear before declaring done.
