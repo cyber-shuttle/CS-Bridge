@@ -5,7 +5,7 @@ import { parse, LineType } from 'ssh-config';
 import { SshHost } from '../models';
 import { SshConfigEntry } from './sshCommandParser';
 
-// User-managed login hosts. Distinct from the session-managed ~/.cybershuttle/ssh_config (cshost-* aliases).
+// User login hosts, separate from the session aliases (cshost-*) in ~/.cybershuttle/ssh_config.
 export const MANAGED_HOSTS_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_hosts');
 export const USER_SSH_CONFIG_PATH = path.join(os.homedir(), '.ssh', 'config');
 export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
@@ -17,7 +17,7 @@ export function parseHostsFromConfigText(text: string): SshHost[] {
     const hosts: SshHost[] = [];
     for (const line of config) {
         if (line.type !== LineType.DIRECTIVE) { continue; }
-        // Sections carry a `config` child array; Match sections also carry `criteria`. Keep Host sections only.
+        // Keep Host sections only: they carry a `config` array, Match sections also carry `criteria`.
         if (!('config' in line) || 'criteria' in line) { continue; }
         const section = line as any;
         if (section.param !== 'Host') { continue; }
@@ -48,7 +48,7 @@ export function removeHostFromConfigText(text: string, name: string): string {
     return config.toString();
 }
 
-// Concatenate host lists in priority order (highest priority first); the first occurrence of each name wins.
+// Merge host lists in priority order; the first occurrence of each name wins.
 export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
     const seen = new Set<string>();
     const result: SshHost[] = [];

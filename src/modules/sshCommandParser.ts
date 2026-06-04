@@ -12,8 +12,7 @@ export interface SshConfigEntry {
 // Verbatim getopt option string from Remote-SSH 0.123.0.
 const OPTSTRING = ':1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:PQ:R:S:TVw:W:XYy';
 
-// Flag -> ssh_config directive (Remote-SSH 0.123.0). Flags in OPTSTRING but absent here are still
-// recognized and consumed by getopt; they just produce no directive.
+// Flag -> ssh_config directive (Remote-SSH 0.123.0). Flags in OPTSTRING but absent here are consumed by getopt without producing a directive.
 const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => void> = {
     '1': c => { c.Protocol = '1'; },
     '2': c => { c.Protocol = '2'; },

@@ -32,10 +32,8 @@ export class SshManager {
             SshManager._instance = new SshManager(extensionUri);
         }
 
-        // Both files are Include'd ABOVE the user's existing global entries, so managed (and
-        // session) aliases override same-named global ones via SSH first-match-wins. The two
-        // includes' relative order does not matter — their namespaces are disjoint
-        // (cshost-* session aliases vs. user host aliases), and both land above global content.
+        // Both files are Include'd above the user's global entries, so their aliases win via SSH
+        // first-match. Include order is irrelevant: the two namespaces (cshost-* vs. user) are disjoint.
         for (const file of [CS_SSH_CONFIG_PATH, MANAGED_HOSTS_PATH]) {
             if (!fs.existsSync(file)) {
                 fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -53,8 +51,7 @@ export class SshManager {
         return SshManager._instance;
     }
 
-    // Top-level Host entries of a config file, tagged with their source; [] if missing/unreadable.
-    // Read literally (no Include follow-through), so managed/session aliases aren't double-counted.
+    // Top-level Host entries tagged with their source; [] if missing/unreadable. No Include follow-through.
     private _readHostsFile(filePath: string, source: 'managed' | 'user' | 'system'): SshHost[] {
         try {
             if (!fs.existsSync(filePath)) { return []; }
@@ -215,7 +212,7 @@ export class SshManager {
             }
             const content = fs.readFileSync(sshConfigPath, 'utf-8');
             if (!content.includes(includeLine)) {
-                // Include must appear before any Host/Match blocks to take effect.
+                // Include must appear before any Host/Match blocks to take effect
                 fs.writeFileSync(sshConfigPath, `${includeLine}\n${content}`);
             }
         } catch (err: any) {

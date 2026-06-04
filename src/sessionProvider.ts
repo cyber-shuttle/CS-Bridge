@@ -12,6 +12,12 @@ import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHo
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
 
+// Writable host-config files, highest priority first; system config is read-only and excluded.
+const HOST_CONFIGS = {
+    managed: { path: MANAGED_HOSTS_PATH, label: 'CS Bridge (managed)', display: '~/.cybershuttle/ssh_hosts' },
+    user: { path: USER_SSH_CONFIG_PATH, label: 'User SSH config', display: '~/.ssh/config' },
+} as const;
+
 function openSessionWindow(sessionId: string): void {
     const path = findSession(sessionId)?.workingDirectory ?? '';
     const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
@@ -263,7 +269,7 @@ export class SessionProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    // Remote-SSH-parity add-host flow: input box -> parse -> validate -> pick file -> write -> notify.
+    // Remote-SSH-parity add-host flow: prompt -> parse/validate -> pick file -> write -> notify.
     private async _addSshHost(webView: vscode.Webview): Promise<void> {
         const command = (await vscode.window.showInputBox({
             title: 'Enter SSH Connection Command',
@@ -281,64 +287,46 @@ export class SessionProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const target = await this._pickConfigFile();
-        if (!target) { return; }
+        const pick = await vscode.window.showQuickPick(
+            Object.values(HOST_CONFIGS).map(c => ({ label: c.label, description: c.display, path: c.path })),
+            { title: 'Select SSH configuration file to update', placeHolder: 'Where should this host be saved?' },
+        );
+        if (!pick) { return; }
 
         try {
-            addHostToConfigFile(target, entry);
+            addHostToConfigFile(pick.path, entry);
         } catch (err) {
-            this._logger.error(`Failed to write SSH host to ${target}:`, err);
+            this._logger.error(`Failed to write SSH host to ${pick.path}:`, err);
             vscode.window.showErrorMessage(`Failed to save SSH host: ${err instanceof Error ? err.message : String(err)}`);
             return;
         }
-
         this._refereshSessions(webView);
 
         const choice = await vscode.window.showInformationMessage('Host added!', 'Open Config', 'Connect');
         if (choice === 'Open Config') {
-            const doc = await vscode.workspace.openTextDocument(target);
-            await vscode.window.showTextDocument(doc);
+            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(pick.path));
         } else if (choice === 'Connect') {
-            this._openHostForm(webView, entry.Host);
+            // Land on the host's launch form — CS-Bridge launches sessions, it doesn't open a window directly.
+            this._uiState.pickerOpen = true;
+            if (!this._uiState.openHosts.includes(entry.Host)) { this._uiState.openHosts.push(entry.Host); }
+            this._refereshSessions(webView);
+            this._fetchClusterInfo(webView, entry.Host);
         }
     }
 
-    // Parity "Select SSH configuration file to update" step; managed file is the default top choice.
-    // System config is read-only, so only the two writable targets are offered.
-    private async _pickConfigFile(): Promise<string | undefined> {
-        const items: (vscode.QuickPickItem & { path: string })[] = [
-            { label: 'CS Bridge (managed)', description: '~/.cybershuttle/ssh_hosts — overrides global', path: MANAGED_HOSTS_PATH },
-            { label: '~/.ssh/config', description: 'User SSH config', path: USER_SSH_CONFIG_PATH },
-        ];
-        const pick = await vscode.window.showQuickPick(items, {
-            title: 'Select SSH configuration file to update',
-            placeHolder: 'Where should this host be saved?',
-        });
-        return pick?.path;
-    }
-
-    // "Connect" lands the user on the host's launch form (CS-Bridge launches sessions; it doesn't open a window directly).
-    private _openHostForm(webView: vscode.Webview, host: string): void {
-        this._uiState.pickerOpen = true;
-        if (!this._uiState.openHosts.includes(host)) { this._uiState.openHosts.push(host); }
-        this._refereshSessions(webView);
-        this._fetchClusterInfo(webView, host);
-    }
-
     private async _removeSshHost(webView: vscode.Webview, name: string, source: string): Promise<void> {
-        // Only managed/user rows render a delete control, so source is never 'system' here.
-        const filePath = source === 'managed' ? MANAGED_HOSTS_PATH : USER_SSH_CONFIG_PATH;
-        const where = source === 'managed' ? '~/.cybershuttle/ssh_hosts' : '~/.ssh/config';
+        // Delete controls render only on managed/user rows, so source is always one of these.
+        const cfg = HOST_CONFIGS[source as keyof typeof HOST_CONFIGS] ?? HOST_CONFIGS.user;
         const choice = await vscode.window.showWarningMessage(
             `Remove SSH host '${name}'?`,
-            { modal: true, detail: `This removes the Host entry from ${where}.` },
+            { modal: true, detail: `This removes the Host entry from ${cfg.display}.` },
             'Remove'
         );
         if (choice !== 'Remove') { return; }
         try {
-            removeHostFromConfigFile(filePath, name);
+            removeHostFromConfigFile(cfg.path, name);
         } catch (err) {
-            this._logger.error(`Failed to remove SSH host ${name} from ${filePath}:`, err);
+            this._logger.error(`Failed to remove SSH host ${name} from ${cfg.path}:`, err);
             vscode.window.showErrorMessage(`Failed to remove SSH host: ${err instanceof Error ? err.message : String(err)}`);
         }
         this._refereshSessions(webView);

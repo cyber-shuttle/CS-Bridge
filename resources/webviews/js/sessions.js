@@ -102,14 +102,14 @@
         });
     });
 
-    // "Add SSH Host" row -> open the native input-box flow on the extension host.
+    // "Add SSH Host" row -> open the native input-box flow.
     document.querySelectorAll('.add-ssh-host-row').forEach(row => {
         row.addEventListener('click', () => {
             vscode.postMessage({ command: 'addSshHost' });
         });
     });
 
-    // Per-row delete (managed hosts only). stopPropagation so it doesn't toggle the form.
+    // Per-row delete (managed/user rows). stopPropagation so it doesn't toggle the form.
     document.querySelectorAll('.host-delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
