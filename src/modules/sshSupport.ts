@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
+import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -31,13 +32,15 @@ export class SshManager {
             SshManager._instance = new SshManager(extensionUri);
         }
 
-        // Create CS SSH config path if not exists
-        if (!fs.existsSync(CS_SSH_CONFIG_PATH)) {
-            fs.mkdirSync(path.dirname(CS_SSH_CONFIG_PATH), { recursive: true, mode: 0o700 });
-            fs.writeFileSync(CS_SSH_CONFIG_PATH, '', { mode: 0o600 });
+        // Both files are Include'd above the user's global entries, so their aliases win via SSH
+        // first-match. Include order is irrelevant: the two namespaces (cshost-* vs. user) are disjoint.
+        for (const file of [CS_SSH_CONFIG_PATH, MANAGED_HOSTS_PATH]) {
+            if (!fs.existsSync(file)) {
+                fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+                fs.writeFileSync(file, '', { mode: 0o600 });
+            }
+            SshManager._instance._ensureSshInclude(file);
         }
-
-        SshManager._instance._ensureSshInclude();
         return SshManager._instance;
     }
 
@@ -48,70 +51,25 @@ export class SshManager {
         return SshManager._instance;
     }
 
-    /**
-    * Parse SSH config file and extract host entries
-    */
-    public getSshHostsFromConfig(): SshHost[] {
-        const hosts: SshHost[] = [];
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
-
+    // Top-level Host entries tagged with their source; [] if missing/unreadable. No Include follow-through.
+    private _readHostsFile(filePath: string, source: 'managed' | 'user' | 'system'): SshHost[] {
         try {
-            if (!fs.existsSync(sshConfigPath)) {
-                return hosts;
-            }
-
-            const configContent = fs.readFileSync(sshConfigPath, 'utf-8');
-            const lines = configContent.split('\n');
-
-            let currentHost: SshHost | null = null;
-
-            for (const line of lines) {
-                const trimmed = line.trim();
-
-                // Skip comments and empty lines
-                if (trimmed.startsWith('#') || trimmed === '') {
-                    continue;
-                }
-
-                const hostMatch = trimmed.match(/^Host\s+(.+)$/i);
-                if (hostMatch) {
-                    // Save previous host if exists
-                    if (currentHost) {
-                        hosts.push(currentHost);
-                    }
-                    // Start new host (skip wildcards)
-                    const hostName = hostMatch[1].trim();
-                    if (!hostName.includes('*') && !hostName.includes('?')
-                        && !hostName.startsWith('cs-session-') && !hostName.startsWith('cs-tunnel-')) {
-                        currentHost = { name: hostName };
-                    } else {
-                        currentHost = null;
-                    }
-                    continue;
-                }
-
-                if (currentHost) {
-                    const hostnameMatch = trimmed.match(/^HostName\s+(.+)$/i);
-                    if (hostnameMatch) {
-                        currentHost.hostname = hostnameMatch[1].trim();
-                    }
-
-                    const userMatch = trimmed.match(/^User\s+(.+)$/i);
-                    if (userMatch) {
-                        currentHost.user = userMatch[1].trim();
-                    }
-                }
-            }
-
-            // Don't forget the last host
-            if (currentHost) {
-                hosts.push(currentHost);
-            }
+            if (!fs.existsSync(filePath)) { return []; }
+            const text = fs.readFileSync(filePath, 'utf-8');
+            return parseHostsFromConfigText(text).map(h => ({ ...h, source }));
         } catch (err) {
-            console.error('Error reading SSH config:', err);
+            logger.error(`Error reading SSH config ${filePath}:`, err);
+            return [];
         }
+    }
 
-        return hosts;
+    // Managed + user + system, deduped first-wins so managed overrides user overrides system.
+    public getMergedHosts(): SshHost[] {
+        return mergeHostsByPriority(
+            this._readHostsFile(MANAGED_HOSTS_PATH, 'managed'),
+            this._readHostsFile(USER_SSH_CONFIG_PATH, 'user'),
+            this._readHostsFile(SYSTEM_SSH_CONFIG_PATH, 'system'),
+        );
     }
 
     /**
@@ -239,10 +197,10 @@ export class SshManager {
         });
     }
 
-    private _ensureSshInclude(): void {
+    private _ensureSshInclude(targetPath: string): void {
         const sshDir = path.join(os.homedir(), '.ssh');
         const sshConfigPath = path.join(sshDir, 'config');
-        const includeLine = `Include ${CS_SSH_CONFIG_PATH}`;
+        const includeLine = `Include ${targetPath}`;
 
         try {
             if (!fs.existsSync(sshDir)) {

@@ -236,6 +236,7 @@
 }
 
 .host-picker-row {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -478,4 +479,49 @@
 
 .cancel-preview-btn:hover {
     background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.host-managed-badge {
+    font-size: 9px;
+    padding: 0 4px;
+    border-radius: 6px;
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    flex-shrink: 0;
+}
+
+.host-delete-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 2px 4px;
+    /* Opaque base + hover tint on top = exact hovered-row color with no see-through text. */
+    background-color: var(--vscode-editor-background);
+    background-image: linear-gradient(var(--vscode-list-hoverBackground), var(--vscode-list-hoverBackground));
+    border: none;
+    border-radius: 3px;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    opacity: 0;
+    display: inline-flex;
+    align-items: center;
+}
+
+.host-picker-row:hover .host-delete-btn {
+    opacity: 1;
+}
+
+.host-delete-btn:hover {
+    color: var(--vscode-errorForeground);
+}
+
+.host-delete-btn .codicon {
+    font-size: 13px;
+}
+
+.host-system-badge {
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    border: 1px solid var(--vscode-panel-border);
 }
