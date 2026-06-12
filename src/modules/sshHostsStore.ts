@@ -12,6 +12,39 @@ export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
     ? path.join(process.env.ALLUSERSPROFILE || process.env.PROGRAMDATA || 'C:\\ProgramData', 'ssh', 'ssh_config')
     : '/etc/ssh/ssh_config';
 
+// SSH client directives that let a session ride out last-mile/relay stalls instead of dropping.
+export const SSH_RESILIENCE_OPTIONS: ReadonlyArray<readonly [string, string]> = [
+    ['ServerAliveInterval', '15'],
+    ['ServerAliveCountMax', '20'],
+    ['TCPKeepAlive', 'yes'],
+    ['Compression', 'no'],
+    ['ConnectTimeout', '30'],
+    ['IPQoS', 'cs0'],
+];
+
+// Per-session cshost block appended to ~/.cybershuttle/ssh_config (4-space indent matches clearSSHConfigEntry).
+export function buildSessionSshConfigBlock(
+    sessionId: string,
+    hostAlias: string,
+    hostname: string,
+    port: number,
+    user: string,
+    identityFile: string,
+): string {
+    return [
+        ``,
+        `# CS-Bridge auto-generated for session ${sessionId}`,
+        `Host ${hostAlias}`,
+        `    HostName ${hostname}`,
+        `    Port ${port}`,
+        `    User ${user}`,
+        `    StrictHostKeyChecking no`,
+        `    UserKnownHostsFile /dev/null`,
+        `    IdentityFile ${identityFile}`,
+        ...SSH_RESILIENCE_OPTIONS.map(([key, value]) => `    ${key} ${value}`),
+    ].join('\n');
+}
+
 export function parseHostsFromConfigText(text: string): SshHost[] {
     const config = parse(text);
     const hosts: SshHost[] = [];

@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
-import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText } from './sshHostsStore';
+import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSessionSshConfigBlock } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -430,19 +430,7 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
 
     const hostname = '127.0.0.1';
     const user = 'cs-ssh-user'; // No need to have this as the actual username on the cluster, since we'll be using a custom SSH server that ignores it. But it needs to be set to something non-empty to avoid SSH client errors.
-    const lines = [
-        ``,
-        `# CS-Bridge auto-generated for session ${sessionId}`,
-        `Host ${hostAlias}`,
-        `    HostName ${hostname}`,
-        `    Port ${localPort}`,
-        `    User ${user}`,
-        `    StrictHostKeyChecking no`,
-        `    UserKnownHostsFile /dev/null`,
-        `    IdentityFile ${privateKeyPath}`,
-    ];
-
-    const configBlock = lines.join('\n');
+    const configBlock = buildSessionSshConfigBlock(sessionId, hostAlias, hostname, localPort, user, privateKeyPath);
 
     try {
         fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
