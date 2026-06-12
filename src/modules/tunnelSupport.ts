@@ -242,8 +242,8 @@ export async function getMicrosoftAccountInfo(): Promise<AccountInfo> {
             [DEV_TUNNELS_SCOPE],
             { silent: true },
         );
-        return { type: 'Microsoft', label: session?.account.label ?? null };
+        return { label: session?.account.label ?? null };
     } catch {
-        return { type: 'Microsoft', label: null };
+        return { label: null };
     }
 }

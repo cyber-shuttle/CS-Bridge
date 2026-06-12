@@ -223,10 +223,8 @@ export class SshManager {
 }
 
 /**
-* Query SLURM partition and account info for the current user on a remote host
-* using scripts/info.sh. Sends a partition→info mapping to the webview
-* to populate the Partition and Allocation dropdowns.
-* Serves cached data immediately if available, then refreshes in background.
+* Query SLURM partition and account info for the current user on a remote host.
+* Returns a SlurmClusterInfo with accounts, partitions, and homeDir fields.
 */
 export async function getSlurmClusterInfo(hostName: string): Promise<SlurmClusterInfo> {
     const sshManager = SshManager.getInstance();
@@ -252,7 +250,6 @@ export async function getSlurmClusterInfo(hostName: string): Promise<SlurmCluste
                     }
                 }
             }
-            // Send to webview
         } else {
             log.warn(`Command exited with code ${accountResult.code}`);
             if (accountResult.stderr) {

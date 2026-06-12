@@ -33,28 +33,47 @@ const problemMatcher = {
 async function main() {
 	copyCodicons();
 
-	const ctx = await esbuild.context({
-		entryPoints: ['src/extension.ts'],
+	// Options shared by both bundles; per-context keys override below.
+	const shared = {
 		bundle: true,
+		sourcemap: !production,
+		minify: production,
+		logLevel: 'silent',
+		alias: { '@': path.resolve(__dirname, 'src') },
+		plugins: [problemMatcher],
+	};
+
+	const extensionCtx = await esbuild.context({
+		...shared,
+		entryPoints: ['src/extension.ts'],
 		format: 'cjs',
 		platform: 'node',
 		target: 'node20',
 		outfile: 'out/extension.js',
-		// 'vscode' is provided by the extension host.
-		// 'node-rsa' is a fallback in @microsoft/dev-tunnels-ssh that only loads on old Node
-		// versions without built-in RSA key-gen; VS Code's Node is always modern.
 		external: ['vscode', 'node-rsa'],
-		sourcemap: !production,
-		minify: production,
-		logLevel: 'silent',
-		plugins: [problemMatcher],
+	});
+
+	// One bundle per sidebar view; each gets its own root and is loaded by data-view-less HTML keyed on the view name.
+	const webviewCtx = await esbuild.context({
+		...shared,
+		entryPoints: [
+			'src/ui/webviews/sessions.tsx',
+			'src/ui/webviews/hosts.tsx',
+			'src/ui/webviews/stats.tsx',
+		],
+		format: 'iife',
+		platform: 'browser',
+		target: 'es2022',
+		outdir: 'out',
+		jsx: 'automatic',
+		jsxImportSource: 'preact',
 	});
 
 	if (watch) {
-		await ctx.watch();
+		await Promise.all([extensionCtx.watch(), webviewCtx.watch()]);
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await Promise.all([extensionCtx.rebuild(), webviewCtx.rebuild()]);
+		await Promise.all([extensionCtx.dispose(), webviewCtx.dispose()]);
 	}
 }
 
