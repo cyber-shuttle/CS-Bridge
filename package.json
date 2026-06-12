@@ -16,7 +16,7 @@
 		"type": "git",
 		"url": "https://github.com/cyber-shuttle/CS-Bridge.git"
 	},
-	"version": "0.0.1",
+	"version": "0.0.2",
 	"engines": {
 		"vscode": "^1.98.0"
 	},
@@ -111,7 +111,7 @@
 		"lint": "eslint src",
 		"test": "node --import tsx --test src/modules/*.test.ts src/ui/logic/*.test.ts",
 		"package": "npx @vscode/vsce package",
-		"install-ext": "code --install-extension csbridge-0.0.1.vsix",
+		"install-ext": "code --install-extension csbridge-0.0.2.vsix",
 		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {

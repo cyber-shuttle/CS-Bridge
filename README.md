@@ -13,7 +13,7 @@
 
 <p>
   <br>
-  <img src="docs/media/demo-overview.webp" alt="CS Bridge demo" width="100%" border="1" />
+  <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/demo-overview.webp" alt="CS Bridge demo" width="100%" border="1" />
 </p>
 
 CS Bridge is a VS Code extension for researchers. Edit on your laptop, run on a remote SLURM cluster. Pick a host, choose resources, and a new VS Code window opens on the allocated compute node through a secure Microsoft Dev Tunnel — no job scripts to write, no `tmux` sessions to babysit, no manual port forwarding.
@@ -57,13 +57,13 @@ CS Bridge is a VS Code extension for researchers. Edit on your laptop, run on a 
 CS Bridge queries the cluster for available partitions, accounts, and limits, then shows a form:
 
 <p>
-  <img src="docs/media/02-resource-selection.png" alt="Resource configuration form" width="100%" border="1" />
+  <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/02-resource-selection.png" alt="Resource configuration form" width="100%" border="1" />
 </p>
 
 Every session appears in the sidebar with live status — switch, stop, or restart from there:
 
 <p>
-  <img src="docs/media/03-session-management.png" alt="Session management across multiple windows" width="100%" border="1" />
+  <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-session-management.png" alt="Session management across multiple windows" width="100%" border="1" />
 </p>
 
 When you click **Launch**:
