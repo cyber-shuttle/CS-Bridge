@@ -5,6 +5,8 @@ import {
     addHostToConfigText,
     removeHostFromConfigText,
     mergeHostsByPriority,
+    buildSessionSshConfigBlock,
+    SSH_RESILIENCE_OPTIONS,
 } from './sshHostsStore';
 
 test('parseHostsFromConfigText reads Host/HostName/User and skips wildcards', () => {
@@ -32,6 +34,27 @@ test('addHostToConfigText prepends newest above existing', () => {
 test('removeHostFromConfigText removes the named entry', () => {
     const text = addHostToConfigText('', { Host: 'h', HostName: 'h' });
     assert.deepEqual(parseHostsFromConfigText(removeHostFromConfigText(text, 'h')), []);
+});
+
+test('buildSessionSshConfigBlock emits the six SSH resilience options', () => {
+    const block = buildSessionSshConfigBlock('sess1', 'cshost-sess1', '127.0.0.1', 50122, 'cs-ssh-user', '/keys/id_cshost-sess1');
+    assert.equal(SSH_RESILIENCE_OPTIONS.length, 6);
+    for (const [key, value] of SSH_RESILIENCE_OPTIONS) {
+        assert.match(block, new RegExp(`^    ${key} ${value}$`, 'm'));
+    }
+    assert.match(block, /^# CS-Bridge auto-generated for session sess1$/m);
+    assert.match(block, /^Host cshost-sess1$/m);
+    assert.match(block, /^    Port 50122$/m);
+    assert.match(block, /^    IdentityFile \/keys\/id_cshost-sess1$/m);
+});
+
+// clearSSHConfigEntry's removal regex only matches 4-space-indented directive lines.
+test('buildSessionSshConfigBlock indents every directive so clearSSHConfigEntry can remove it', () => {
+    const block = buildSessionSshConfigBlock('s', 'cshost-s', '127.0.0.1', 22, 'u', '/k');
+    for (const line of block.split('\n')) {
+        if (line === '' || line.startsWith('#') || line.startsWith('Host ')) { continue; }
+        assert.match(line, /^ {4}\S/);
+    }
 });
 
 test('mergeHostsByPriority keeps the first occurrence of each name', () => {
