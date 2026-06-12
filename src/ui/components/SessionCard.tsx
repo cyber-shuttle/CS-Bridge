@@ -102,7 +102,8 @@ export function SessionCard({ session, readonly }: Props) {
                 <Row gap={8} justify="space-between">
                     <StatusText session={session} />
                     {!readonly && actions.length ? (
-                        <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                        // zoom shrinks the label and the vscode-button's fixed-size codicon together.
+                        <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0, zoom: 0.85 }}>
                             {actions.map(a => (
                                 <Button key={a.kind} icon={a.icon} disabled={a.kind === 'current' || undefined} onClick={() => act(a)}>{a.label}</Button>
                             ))}
