@@ -27,17 +27,26 @@ export async function activate(context: vscode.ExtensionContext) {
         });
     }
 
+    // The SSH Hosts pane is hidden in read-only remote (cshost) windows.
+    void vscode.commands.executeCommand('setContext', 'csbridge.remote', !!id);
+
     SshManager.initInstance(context.extensionUri);
     const sessionProvider = new SessionProvider(context.extensionUri, id);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(SessionProvider.viewType, sessionProvider));
+        sessionProvider,
+        vscode.window.registerWebviewViewProvider(SessionProvider.sessionsViewType, sessionProvider),
+        vscode.window.registerWebviewViewProvider(SessionProvider.hostsViewType, sessionProvider),
+        vscode.window.registerWebviewViewProvider(SessionProvider.statsViewType, sessionProvider),
+        vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
+        vscode.commands.registerCommand('csbridge.addHost', () => sessionProvider.addSshHost()),
+    );
 
     // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.
     const marker = vscode.Uri.joinPath(context.globalStorageUri, 'opened.marker');
     if (!(await vscode.workspace.fs.stat(marker).then(() => true, () => false))) {
         await vscode.workspace.fs.writeFile(marker, new Uint8Array());
         void vscode.window.showInformationMessage('Completed installing CS Bridge.', 'Open')
-            .then(c => c === 'Open' && vscode.commands.executeCommand(`${SessionProvider.viewType}.focus`));
+            .then(c => c === 'Open' && vscode.commands.executeCommand('csbridge.sessionsView.focus'));
     }
 
     logger.info('CS Bridge extension activated');

@@ -92,7 +92,6 @@ export interface TunnelCredential {
 }
 
 export interface AccountInfo {
-    type: string;
     label: string | null;
 }
 
@@ -105,4 +104,22 @@ export enum SlurmJobStatus {
     TIMEOUT = 'timeout',
     OUT_OF_MEMORY = 'out_of_memory',
     UNKNOWN = 'unknown'
+}
+
+export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean };
+
+/** State pushed to the Sessions view. */
+export interface SessionsState {
+    isRemote: boolean; // true in a cshost remote window (read-only, session-scoped view); false in the sidebar.
+    account: AccountInfo;
+    sessions: ViewSession[];
+    draftHost: string | null; // host chosen for a new session whose config card is showing; null when none in progress.
+    clusterInfo: Record<string, SlurmClusterInfo>;
+    clusterErrors: Record<string, string>;
+    previewSession: SlurmSession | null;
+}
+
+/** State pushed to the SSH Hosts view. */
+export interface HostsState {
+    sshHosts: SshHost[];
 }

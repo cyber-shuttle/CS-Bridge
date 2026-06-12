@@ -40,13 +40,13 @@ export class JobStatusMonitor {
     private sessionPollingInterval = 5000; // 5 seconds
 
 
-    private constructor(webView: vscode.Webview) {
-        this.monitorSessions(webView);
+    private constructor() {
+        this.monitorSessions();
     }
 
-    public static init(webView: vscode.Webview): void {
+    public static init(): void {
         if (!JobStatusMonitor.instance) {
-            JobStatusMonitor.instance = new JobStatusMonitor(webView);
+            JobStatusMonitor.instance = new JobStatusMonitor();
         }
     }
 
@@ -79,7 +79,7 @@ export class JobStatusMonitor {
     }
 
     // Run a while loop to periodically check the status of all sessions being monitored in background
-    private async monitorSessions(webView: vscode.Webview) {
+    private async monitorSessions() {
         while (true) {
             await this._lock.acquire();
             // Snapshot the current sessions so we can release the lock before async polling
@@ -110,7 +110,6 @@ export class JobStatusMonitor {
                                     session.errorMessage = `Health check failed: ${err.message}`;
                                     session.status = 'connection_broken';
                                     updateSession(session);
-                                    webView.postMessage({ command: 'sessionUpdate', session: session });
                                     this.stopMonitoringInternal(session.id);
                                     // We can probably check for job exipiry by looking at the walltime of the job
                                 }
@@ -139,7 +138,6 @@ export class JobStatusMonitor {
                                         session.connectionInfo.apiPort = parseInt(line.split('listening on')[1].trim().split(':')[1]);
                                         logger.info(`Session ${session.name} is listening on: ${line}`);
                                         updateSession(session);
-                                        webView.postMessage({ command: 'sessionUpdate', session: session });
                                     }
                                     if (line.includes('DevTunnel ID:')) { // 2026/03/28 01:56:56 DevTunnel ID: linkspan-tunnel-1774663013499377392
                                         logger.info(`Extracted DevTunnel ID for session ${session.name}: ${line}`);
@@ -148,7 +146,6 @@ export class JobStatusMonitor {
                                         }
                                         session.connectionInfo.apiTunnelId = line.split('DevTunnel ID:')[1].trim();
                                         updateSession(session);
-                                        webView.postMessage({ command: 'sessionUpdate', session: session });
                                     }
                                     if (line.includes('DevTunnel Token:')) { // 2026/03/28 01:56:56 DevTunnel Token: eyJhbG
                                         logger.info(`Extracted DevTunnel Token for session ${session.name}: ${line}`);
@@ -157,7 +154,6 @@ export class JobStatusMonitor {
                                         }
                                         session.connectionInfo.apiTunnelAccessToken = line.split('DevTunnel Token:')[1].trim();
                                         updateSession(session);
-                                        webView.postMessage({ command: 'sessionUpdate', session: session });
                                     }
                                     if (line.includes('Devtunnel cluster id:')) { // 2026/03/28 10:59:44 Devtunnel cluster id: asse
                                         logger.info(`Extracted DevTunnel Cluster ID for session ${session.name}: ${line}`);
@@ -166,7 +162,6 @@ export class JobStatusMonitor {
                                         }
                                         session.connectionInfo.region = line.split('Devtunnel cluster id:')[1].trim();
                                         updateSession(session);
-                                        webView.postMessage({ command: 'sessionUpdate', session: session });
                                     }
                                 });
                             }).catch(err => {
@@ -179,7 +174,6 @@ export class JobStatusMonitor {
                                 session.status = 'failed';
                                 updateSession(session);
                                 this.stopMonitoringInternal(sessionId);
-                                webView.postMessage({ command: 'sessionUpdate', session: session });
                             });
 
                             if (session.status === 'running' && session.connectionInfo &&
@@ -189,39 +183,32 @@ export class JobStatusMonitor {
                                 session.status = 'ready_to_connect';
                                 logger.info(`Session ${session.name} is ready to connect. API Tunnel ID: ${session.connectionInfo.apiTunnelId}, SSH Port: ${session.connectionInfo.sshPort}`);
                                 updateSession(session);
-                                webView.postMessage({ command: 'sessionUpdate', session: session });
                             }
                         } else if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'running') {
                             session.status = 'running';
                             updateSession(session);
-                            webView.postMessage({ command: 'sessionUpdate', session: session });
                             // Todo: Remove from monitoring pool when the Linkspan connection is established
                         } else if (slurmStatus === SlurmJobStatus.COMPLETED) {
                             session.status = 'completed';
                             updateSession(session);
-                            webView.postMessage({ command: 'sessionUpdate', session: session });
                             this.stopMonitoringInternal(sessionId);
                         } else if ([SlurmJobStatus.FAILED, SlurmJobStatus.TIMEOUT, SlurmJobStatus.OUT_OF_MEMORY].includes(slurmStatus)) {
                             session.status = 'failed';
                             session.errorMessage = `Job ended with status: ${slurmStatus}`;
                             updateSession(session);
-                            webView.postMessage({ command: 'sessionUpdate', session: session });
                             this.stopMonitoringInternal(sessionId);
                         } else if (slurmStatus === SlurmJobStatus.PENDING) {
                             session.status = 'pending';
                             updateSession(session);
-                            webView.postMessage({ command: 'sessionUpdate', session: session });
                         } else if (slurmStatus === SlurmJobStatus.CANCELLED) {
                             session.status = 'cancelled';
                             updateSession(session);
-                            webView.postMessage({ command: 'sessionUpdate', session: session });
                             this.stopMonitoringInternal(sessionId);
                         } else if (slurmStatus === SlurmJobStatus.UNKNOWN) {
                             logger.warn(`Received unknown Slurm job status for session ${session.name}`);
                             session.status = 'failed';
                             session.errorMessage = `Job ended with unknown status: ${slurmStatus}`;
                             updateSession(session);
-                            webView.postMessage({ command: 'sessionUpdate', session: session });
                             this.stopMonitoringInternal(sessionId);
                         }
                     } catch (error: any) {
@@ -236,7 +223,6 @@ export class JobStatusMonitor {
                         session.status = 'failed'; // TODO: Probably unknown or retry
                         session.errorMessage = errorMessage;
                         updateSession(session);
-                        webView.postMessage({ command: 'sessionUpdate', session: session });
                         this.stopMonitoringInternal(sessionId);
                     }
 
@@ -428,7 +414,7 @@ async function submitJobToSlurm(session: SlurmSession, progress: vscode.Progress
     }
 }
 
-export async function launchSessionWithProgress(session: SlurmSession, webView: vscode.Webview) {
+export async function launchSessionWithProgress(session: SlurmSession) {
 
     logger.info(`Initiating launch for session: ${session.name}`);
     await vscode.window.withProgress({
@@ -440,7 +426,6 @@ export async function launchSessionWithProgress(session: SlurmSession, webView: 
             logger.info(`Session launch cancelled: ${session.name}`);
             session.status = 'cancelled';
             updateSession(session);
-            webView.postMessage({ command: 'sessionUpdate', session: session });
         });
 
         progress.report({ message: "Starting..." });
@@ -477,7 +462,7 @@ export async function launchSessionWithProgress(session: SlurmSession, webView: 
 
 }
 
-export async function cancelRunningSession(session: SlurmSession, webView: vscode.Webview) {
+export async function cancelRunningSession(session: SlurmSession) {
     // Implement logic to cancel a running session, e.g. by sending scancel command for Slurm jobs
     logger.info(`Cancelling session: ${session.name}`);
 
@@ -490,7 +475,6 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
             logger.info(`Session cancellation interrupted: ${session.name}`);
             session.status = 'cancelled';
             updateSession(session);
-            webView.postMessage({ command: 'sessionUpdate', session: session });
         });
         progress.report({ message: "Cancelling session..." });
 
@@ -504,7 +488,6 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
                     logger.info(`Cancellation command sent successfully for session ${session.name}`);
                     session.status = 'cancelled';
                     updateSession(session);
-                    webView.postMessage({ command: 'sessionUpdate', session: session });
                 } else {
                     const errorMessage = `Failed to send cancellation command for session ${session.name}. Error: ${cancelResult.stderr}`;
                     logger.error(errorMessage);
@@ -512,12 +495,10 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
                     session.status = 'failed';
                     session.errorMessage = errorMessage;
                     updateSession(session);
-                    webView.postMessage({ command: 'sessionUpdate', session: session });
                 }
             } else {
                 session.status = 'cancelled';
                 updateSession(session);
-                webView.postMessage({ command: 'sessionUpdate', session: session });
                 logger.warn(`Session ${session.name} does not have an associated job ID. Marking as cancelled without sending cancellation command.`);
             }
         } catch (error: any) {
@@ -527,7 +508,6 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
             session.status = 'failed';
             session.errorMessage = errorMessage;
             updateSession(session);
-            webView.postMessage({ command: 'sessionUpdate', session: session });
         }
 
         if (session.connectionInfo && session.connectionInfo.sshTunnelId) {
@@ -544,7 +524,6 @@ export async function cancelRunningSession(session: SlurmSession, webView: vscod
                 session.status = 'failed';
                 session.errorMessage = errorMessage;
                 updateSession(session);
-                webView.postMessage({ command: 'sessionUpdate', session: session });
             }
         }
 
