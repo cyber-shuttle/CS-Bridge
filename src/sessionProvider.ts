@@ -501,7 +501,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
         let creds: TunnelCredential;
         try {
-            creds = await getDevTunnelCredentials(true);
+            creds = await getDevTunnelCredentials();
         } catch (err: any) {
             vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
             session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
