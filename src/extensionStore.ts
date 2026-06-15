@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { lock, release } from './modules/fsSupport';
-import { SlurmSession } from './models';
+import { SlurmSession, SessionConnectionInfo } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
@@ -12,13 +12,23 @@ const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
 
+// Persist only the non-secret refs needed to reattach after a reload; secrets + the ephemeral local port stay in memory.
+function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): SessionConnectionInfo | undefined {
+    if (!ci?.sshTunnelId) { return undefined; }
+    const { sshTunnelId, sshPort, region } = ci;
+    return { sshTunnelId, sshPort, region };
+}
+
 export function initSessionStore(storagePath: string = CS_HOME): string {
     fs.mkdirSync(storagePath, { recursive: true });
     sessionsFilePath = path.join(storagePath, 'sessions.json');
     lock(sessionsFilePath);
     try {
-        const loaded: SlurmSession[] = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
-        sessions = loaded.map(s => { s.connectionInfo = undefined; return s; });
+        sessions = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
+        // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
+        for (const s of sessions) {
+            if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
+        }
         logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -42,7 +52,7 @@ function saveToFile(): void {
     lock(sessionsFilePath);
     try {
         const onDisk = readSessionsFromDisk();
-        const sanitized = sessions.map(s => ({ ...s, connectionInfo: undefined, windowPids: onDisk.find(x => x.id === s.id)?.windowPids }));
+        const sanitized = sessions.map(s => ({ ...s, connectionInfo: persistableConnectionInfo(s.connectionInfo), windowPids: onDisk.find(x => x.id === s.id)?.windowPids }));
         fs.writeFileSync(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
     } catch (err) {
         logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
@@ -98,14 +108,14 @@ export function mutateWindowPids(sessionId: string, transform: (pids: number[]) 
     }
 }
 
-// Cross-window sync: sessions.json is shared across windows; reload in-mem state when another window writes (preserve connectionInfo since it's in-mem only).
+// Cross-window sync: reload in-mem state on another window's write; prefer this window's connectionInfo (secrets + live port) over disk refs.
 export function watchSessions(callback: () => void): fs.FSWatcher {
     return fs.watch(CS_HOME, (_, filename) => {
         if (filename !== 'sessions.json') { return; }
         lock(sessionsFilePath);
         try {
             const oldById = new Map(sessions.map(s => [s.id, s]));
-            sessions = readSessionsFromDisk().map(s => ({ ...s, connectionInfo: oldById.get(s.id)?.connectionInfo }));
+            sessions = readSessionsFromDisk().map(s => ({ ...s, connectionInfo: oldById.get(s.id)?.connectionInfo ?? s.connectionInfo }));
         } finally {
             release(sessionsFilePath);
         }

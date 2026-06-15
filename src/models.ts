@@ -46,17 +46,18 @@ export interface Session {
     windowPids?: number[];
 }
 
-interface SessionConnectionInfo {
+// Required fields are the refs persisted across reload (see persistableConnectionInfo); optional fields are volatile/secret, in-memory only.
+export interface SessionConnectionInfo {
     sshPort: number;
-    sshTunnelForwardPort: number;
     sshTunnelId: string;
-    sshPassword: string;
-    sshPrivateKey: string;
-    logPort: number;
-    apiTunnelId: string;
-    apiTunnelAccessToken: string;
-    apiPort: number;
     region: string;
+    sshTunnelForwardPort?: number;
+    sshPassword?: string;
+    sshPrivateKey?: string;
+    logPort?: number;
+    apiTunnelId?: string;
+    apiTunnelAccessToken?: string;
+    apiPort?: number;
 }
 
 export interface SshHost {

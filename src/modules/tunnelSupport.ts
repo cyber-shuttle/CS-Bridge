@@ -28,6 +28,10 @@ export async function createSSHServerForSession(session: SlurmSession): Promise<
         logger.error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
         throw new Error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
     }
+    // api* aren't persisted across reload; fail clearly instead of POSTing a malformed URL.
+    if (!session.connectionInfo.apiTunnelId || !session.connectionInfo.apiPort || !session.connectionInfo.apiTunnelAccessToken) {
+        throw new Error(`Session ${session.id} is missing live Dev Tunnel API info; cannot create the SSH server. Wait for status to refresh, then retry, or relaunch.`);
+    }
     // Placeholder for creating an SSH server and returning the local port it's listening on
     logger.info(`Creating SSH server for session ${session.id}...`);
     // Sample url https://linkspan-tunnel-1774674947651937316-39685.use2.devtunnels.ms/api/v1/vscode/sessions
@@ -102,6 +106,16 @@ export async function createTunnelForSSHServer(session: SlurmSession): Promise<v
     logger.info(`SSH server forward for session ${session.id} created successfully. Data: ${JSON.stringify(forwardRespData)}`);
 }
 
+// Step 1: ensure the remote sshd exists and its port is exposed on a Dev Tunnel. Idempotent.
+export async function ensureRemoteSession(session: SlurmSession): Promise<void> {
+    if (session.connectionInfo?.sshTunnelId) { return; }
+    // Reuse an sshd a prior attempt already created (linkspan's create isn't idempotent, so re-creating would leak one).
+    if (!session.connectionInfo?.sshPort) {
+        await createSSHServerForSession(session);
+    }
+    await createTunnelForSSHServer(session);
+}
+
 export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<number> {
     logger.info(`Connecting session ${session.id} to tunnel...`);
 
@@ -136,61 +150,64 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
 
     logger.info(`Fetched tunnel ${sshTunnelId}: ${tunnel.endpoints?.length ?? 0} endpoints, ${tunnel.ports?.length ?? 0} ports`);
 
-    // Create relay client and connect
+    // Register before connecting so a re-entrant connect can't orphan the prior client and a failed connect stays disposable.
+    await disposeSessionTunnelClient(session.id);
     const client = new TunnelRelayTunnelClient(mgmtClient);
     client.acceptLocalConnectionsForForwardedPorts = true;
-
-    await client.connect(tunnel, {
-        enableRetry: true,
-        enableReconnect: true,
-    });
-
-    // Wait for the SSH port to become available
-    logger.info(`Waiting for forwarded SSH port ${sshPort}...`);
-    await client.waitForForwardedPort(sshPort);
-
-    // Read the local port the SDK bound for the forwarded port
-    const localPort = client.forwardedPorts?.find((p) => p.remotePort === sshPort)?.localPort ?? sshPort;
-    session.connectionInfo!.sshTunnelForwardPort = localPort;
-    session.status = 'connected';
     activeTunnelClients.set(session.id, client);
-    updateSession(session);
 
+    let localPort: number;
+    try {
+        await client.connect(tunnel, {
+            enableRetry: true,
+            enableReconnect: true,
+        });
+        await client.waitForForwardedPort(sshPort);
+        localPort = client.forwardedPorts?.find((p) => p.remotePort === sshPort)?.localPort ?? sshPort;
+    } catch (err) {
+        await disposeSessionTunnelClient(session.id);
+        throw err;
+    }
+
+    // Record the (ephemeral) forward port; the caller owns the status transition.
+    session.connectionInfo!.sshTunnelForwardPort = localPort;
     logger.info(`Tunnel connected for session ${session.id}. SSH available at 127.0.0.1:${localPort}`);
     return localPort;
 }
 
+/**
+ * Dispose the in-process relay client (frees the local port). Never deletes the remote sshd/tunnel:
+ * those are job-scoped and reaped by linkspan, and deleting them would break reattach. No-op if absent.
+ */
+export async function disposeSessionTunnelClient(sessionId: string): Promise<void> {
+    const client = activeTunnelClients.get(sessionId);
+    if (!client) { return; }
+    try {
+        await client.dispose();
+        logger.info(`Tunnel relay client disposed for session ${sessionId}`);
+    } catch (err) {
+        logger.error(`Error disposing tunnel relay client for session ${sessionId}:`, err);
+    }
+    activeTunnelClients.delete(sessionId);
+}
+
+/** Dispose every relay client this window holds (e.g. on extension deactivate / window close). */
+export async function disposeAllTunnelClients(): Promise<void> {
+    await Promise.all([...activeTunnelClients.keys()].map(id => disposeSessionTunnelClient(id)));
+}
+
 export async function disconnectSessionFromTunnel(session: SlurmSession): Promise<void> {
-    logger.info(`Disconnecting session ${session.id} from tunnel...`);
-
-    // Dispose the tunnel relay client if one is active
-    const client = activeTunnelClients.get(session.id);
-    if (client) {
-        try {
-            await client.dispose();
-            logger.info(`Tunnel relay client disposed for session ${session.id}`);
-        } catch (err) {
-            logger.error(`Error disposing tunnel relay client for session ${session.id}:`, err);
-        }
-        activeTunnelClients.delete(session.id);
-    }
-
-    // Remove the SSH config entry
-    const hostAlias = `cshost-${session.id}`;
-    clearSSHConfigEntry(session.id, hostAlias);
-    logger.info(`SSH config entry removed for session ${session.id}`);
-
-    if (session.connectionInfo) {
-        session.connectionInfo = undefined;
-    }
-
+    await disposeSessionTunnelClient(session.id);
+    clearSSHConfigEntry(session.id, `cshost-${session.id}`);
+    session.connectionInfo = undefined;
+    updateSession(session); // persist the cleared refs
     logger.info(`Session ${session.id} disconnected from tunnel.`);
 }
 
 export async function getDevTunnelCredentials(): Promise<TunnelCredential> {
     // Placeholder for fetching credentials from local storage or configuration
     const token = await getDevTunnelAuthToken();
-    logger.info('Obtained Dev Tunnels auth token successfully. Token ' + token);
+    logger.info('Obtained Dev Tunnels auth token successfully.');
 
     return {
         provider: 'devtunnel',

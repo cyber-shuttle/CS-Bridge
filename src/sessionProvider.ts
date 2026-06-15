@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState, HostsState } from './models';
 import { getWebviewContent } from './webviewContent';
-import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
+import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSessionPrivateKey, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
-import { connectSessionToSSHTunnel, createSSHServerForSession, createTunnelForSSHServer, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToSSHTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
@@ -47,6 +47,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     // One provider instance feeds both views; each resolved webview is keyed by its viewType.
     private readonly _webviews = new Map<string, vscode.Webview>();
     private readonly _shared: vscode.Disposable[] = [];
+    private readonly _connecting = new Set<string>(); // session ids with an in-flight connect, to drop re-entrant requests
     private _sharedReady = false;
 
     // _myId: undefined in sidebar/non-remote windows (sees all sessions, drives monitoring); set to sessionId in cshost remote windows (scoped to that session, observes only).
@@ -104,6 +105,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
     dispose(): void {
         this._shared.forEach(d => d.dispose());
+        void disposeAllTunnelClients(); // window close: free local ports (remote stays, reaped by linkspan)
     }
 
     // Handle messages from the webview here (e.g., refresh sessions, open terminal, etc.)
@@ -226,6 +228,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             return;
         }
 
+        await disposeSessionTunnelClient(sessionId);
         try {
             clearSSHConfigEntry(sessionId, `cshost-${sessionId}`);
         } catch (err) {
@@ -375,65 +378,54 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         }
     }
 
-    // THIS FUNCTION CONTAINS THE CORE LOGIC FOR CONNECTING A SESSION TO AN SSH TUNNEL:
-    // This creates the SSH server on Linkspan, sets up the tunnel, and opens a new VS Code window connected to the tunnel.
-    // It also updates the session status and handles errors at each step.
+    // Step 2: (re)establish the in-process relay and open a window. Step 1 (remote sshd + tunnel) is the monitor's job.
     private async _connectSessionToTunnel(sessionId: string) {
         const session = this._requireSession(sessionId, 'connect tunnel', true);
         if (!session) { return; }
-        this._logger.info(`Connecting tunnel for session with ID: ${sessionId}`);
+        if (this._connecting.has(sessionId)) {
+            this._logger.info(`Connect already in progress for session ${sessionId}; ignoring re-entrant request`);
+            return;
+        }
+        this._connecting.add(sessionId);
+        this._logger.info(`Opening window for session with ID: ${sessionId}`);
         try {
-            // Tunnel already up - just open another window against the existing SSH config entry.
+            // Already attached in this window with a live local forward - just open another window.
             if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
-                this._logger.info(`Reusing existing tunnel for session ${session.id}; opening new window`);
                 openSessionWindow(session.id);
                 // windowAlive turns true once the new window registers its pid (fs.watch -> _pushState).
                 void this._pushState();
-                this._logger.info(`Tunnel connection process completed for session ID: ${sessionId}`);
                 return;
             }
 
             session.status = 'connecting';
             updateSession(session);
 
-            try {
-                await createSSHServerForSession(session);
-            } catch (error) {
-                this._logger.error(`Error creating SSH server for session ID ${session.id}:`, error);
-                throw new Error(`Failed to create SSH server for session: ${errMsg(error)}`);
-            }
+            await ensureRemoteSession(session); // Step 1 safety net (idempotent; usually already done by the monitor)
 
-            try {
-                await createTunnelForSSHServer(session);
-            } catch (error) {
-                this._logger.error(`Error creating tunnel for SSH server for session ID ${session.id}:`, error);
-                throw new Error(`Failed to create tunnel for SSH server: ${errMsg(error)}`);
-            }
+            // Open the local relay (reattaches from the persisted refs after a reload).
+            const localPort = await connectSessionToSSHTunnel(session);
 
-            let localPort: number;
-            try {
-                localPort = await connectSessionToSSHTunnel(session);
-            } catch (error) {
-                this._logger.error(`Error connecting session ID ${session.id} to SSH tunnel:`, error);
-                throw new Error(`Failed to connect session to SSH tunnel: ${errMsg(error)}`);
-            }
-
-            const hostAlias = createSSHConfigEntry(session.id, localPort, session.connectionInfo!.sshPrivateKey!);
-            this._logger.info(`SSH config entry created for session ${session.id} with host alias ${hostAlias}. You can connect using 'ssh ${hostAlias}'`);
+            // Key is in memory on first connect, read back from disk on reattach.
+            const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
+            if (!privateKey) { throw new Error('SSH private key not found for session'); }
+            const hostAlias = createSSHConfigEntry(session.id, localPort, privateKey);
+            this._logger.info(`SSH config entry ready for session ${session.id} (alias ${hostAlias}); ssh ${hostAlias}`);
 
             openSessionWindow(session.id);
-
             session.status = 'connected';
             updateSession(session);
             // windowAlive turns true once the new window registers its pid (fs.watch -> _pushState).
             void this._pushState();
-            this._logger.info(`Tunnel connection process completed for session ID: ${sessionId}`);
+            this._logger.info(`Window opened for session ID: ${sessionId}`);
         } catch (error) {
             this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
+            await disposeSessionTunnelClient(sessionId); // free any partially-established relay client
             session.status = 'connection_broken';
             session.errorMessage = `Failed to connect tunnel: ${errMsg(error)}`;
             updateSession(session);
             void this._pushState();
+        } finally {
+            this._connecting.delete(sessionId);
         }
     }
 

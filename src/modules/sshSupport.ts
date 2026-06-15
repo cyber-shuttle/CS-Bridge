@@ -440,6 +440,12 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
     return hostAlias;
 }
 
+// Read the per-session key from disk (used on reattach, where it's no longer in memory).
+export function getSessionPrivateKey(sessionId: string): string | undefined {
+    const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_cshost-${sessionId}`);
+    try { return fs.readFileSync(privateKeyPath, 'utf-8'); } catch { return undefined; }
+}
+
 export function removeSSHprivateKeyForSession(sessionId: string): void {
     const hostAlias = `cshost-${sessionId}`;
     const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
