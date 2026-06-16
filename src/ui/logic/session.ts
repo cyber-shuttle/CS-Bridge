@@ -1,4 +1,5 @@
 import type { SlurmSession, ViewSession } from '@/models';
+import { isTerminal, isCloseable, isStoppable } from '@/modules/sessionMachine';
 
 type ActionKind = 'start' | 'restart' | 'stop' | 'switch' | 'connect' | 'current';
 
@@ -34,12 +35,9 @@ export function remainingMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt'
     return session.startedAt ? session.startedAt + total - now : total;
 }
 
-const FAILED: SlurmSession['status'][] = ['failed', 'cancelled'];
-const ACTIVATING: SlurmSession['status'][] = ['queued', 'cancelling', 'submitting'];
+const FAILED: SlurmSession['status'][] = ['failed', 'stopped'];
+const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting'];
 const LIVE: SlurmSession['status'][] = ['preparing', 'connected'];
-const CLOSEABLE: SlurmSession['status'][] = ['failed', 'completed', 'cancelled', 'not_started'];
-const RESTARTABLE: SlurmSession['status'][] = ['failed', 'cancelled', 'completed'];
-const STOPPABLE: SlurmSession['status'][] = ['queued', 'cancelling', 'submitting', 'preparing', 'connecting'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
 
@@ -52,23 +50,25 @@ export function dotColor(status: SlurmSession['status']): string {
 
 export function sessionActions(session: ViewSession): SessionAction[] {
     const s = session.status;
-    if (RESTARTABLE.includes(s)) { return [{ kind: 'restart', label: 'Restart', icon: 'debug-restart' }]; }
-    if (s === 'connected') {
-        const second: SessionAction = session.isCurrent
-            ? { kind: 'current', label: 'Current', icon: 'check' }
-            : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' };
-        return [STOP, second];
-    }
-    if (s === 'ready_to_connect' || s === 'disconnected') { return [STOP, { kind: 'connect', label: s === 'disconnected' ? 'Reconnect' : 'Connect', icon: 'arrow-swap' }]; }
-    if (STOPPABLE.includes(s)) { return [STOP]; }
+    if (isTerminal(s)) { return [{ kind: 'restart', label: 'Restart', icon: 'debug-restart' }]; }
     if (s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
-    return [];
+
+    const actions: SessionAction[] = [];
+    if (isStoppable(s)) { actions.push(STOP); }
+    if (s === 'connected') {
+        actions.push(session.isCurrent
+            ? { kind: 'current', label: 'Current', icon: 'check' }
+            : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' });
+    } else if (s === 'ready_to_connect' || s === 'disconnected') {
+        actions.push({ kind: 'connect', label: s === 'disconnected' ? 'Reconnect' : 'Connect', icon: 'arrow-swap' });
+    }
+    return actions;
 }
 
 export function statusDescriptor(session: ViewSession): SessionDescriptor {
     return {
         dot: dotColor(session.status),
-        canClose: CLOSEABLE.includes(session.status),
+        canClose: isCloseable(session.status),
         actions: sessionActions(session),
     };
 }

@@ -32,15 +32,14 @@ Connect:
   still be alive - retry (Connect) or Stop. Stays monitored: goes terminal on job death.
 
 Teardown / terminal:
-- cancelling: Stop requested; scancel in flight.
-- cancelled / failed / completed: terminal (user-stopped / errored / job finished cleanly).
+- stopping: Stop requested; scancel in flight.
+- stopped / failed / completed: terminal (user-stopped / errored / job finished cleanly); can be started again.
 */
 export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'cancelled' | 'not_started' | 'cancelling' | 'disconnected';
-    tunnelType: 'devtunnel' | 'cstunnel' | 'open';
+    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'stopped' | 'not_started' | 'stopping' | 'disconnected';
     submittedAt: number;
     startedAt?: number; // epoch ms when the job first started running; anchors the wall-time countdown
     errorMessage: string;

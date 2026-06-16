@@ -18,7 +18,7 @@ const useNow = () => useContext(NowContext);
 const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
     start: 'prepareLaunchSession',
     restart: 'prepareLaunchSession',
-    stop: 'cancelSessionExecution',
+    stop: 'stopSessionExecution',
     switch: 'connectTunnel',
     connect: 'connectTunnel',
     current: null,
@@ -35,8 +35,8 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     disconnected: { name: 'debug-disconnect' },
     completed: { name: 'pass' },
     failed: { name: 'error' },
-    cancelled: { name: 'circle-slash' },
-    cancelling: { name: 'loading', spin: true },
+    stopped: { name: 'debug-stop' },
+    stopping: { name: 'loading', spin: true },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -69,8 +69,8 @@ function StatusText({ session }: { session: ViewSession }) {
             const elapsed = secs >= 60 ? ` (${Math.floor(secs / 60)}m ${secs % 60}s)` : ` (${secs}s)`;
             return <Row style={statusStyle}>Queued{session.submittedAt ? elapsed : ''}</Row>;
         }
-        case 'cancelling': return <Row style={statusStyle}>Stopping…</Row>;
-        case 'cancelled': return <Row style={statusStyle}>{session.errorMessage ? `Cancel failed: ${session.errorMessage}` : 'Cancelled'}</Row>;
+        case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
+        case 'stopped': return <Row style={statusStyle}>{session.errorMessage ? `Stop failed: ${session.errorMessage}` : 'Stopped'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;
         case 'completed': return <Row style={statusStyle}>Completed</Row>;
         default: return null;

@@ -5,15 +5,12 @@ import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
 import { buildSlurmScript } from "./slurmParse";
-import { computeStatusTransition } from "./sessionMachine";
+import { computeStatusTransition, isRelayLive } from "./sessionMachine";
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm } from "./slurmLaunch";
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from "./tunnelSupport";
 import { checkLinkspanHealth } from "./linkspanSupport";
 
 const logger = Logger.getInstance();
-
-// Statuses where the relay is live (or being established), so the monitor pings the tunnel instead of polling SLURM.
-const LIVE_STATUSES: SlurmSession['status'][] = ['ready_to_connect', 'connecting', 'connected'];
 
 class AsyncLock {
     private _acquired = false;
@@ -116,7 +113,7 @@ export class JobStatusMonitor {
                             continue;
                         }
 
-                        if (session.connectionInfo?.apiTunnelId && LIVE_STATUSES.includes(session.status)) {
+                        if (session.connectionInfo?.apiTunnelId && isRelayLive(session.status)) {
                             // Skip when connectionInfo is missing (after a window reload) - the slurm branch re-derives tunnel info.
                             logger.info(`Session ${session.name} is in status ${session.status}, skipping Slurm status check and using tunnel ping instead.`);
 
@@ -124,7 +121,7 @@ export class JobStatusMonitor {
                                 this.monitoringFailedCounts.delete(session.id);
                             }).catch(err => {
                                 // The session may have left a live state (e.g. Stop) while this ping was in flight; don't clobber it.
-                                if (!LIVE_STATUSES.includes(session.status)) { return; }
+                                if (!isRelayLive(session.status)) { return; }
                                 logger.warn(`Health check failed for session ${session.name}:`, err);
                                 if (this.doesQualifyToFail(session.id)) {
                                     // Job externally killed, tunnel expired, or walltime exceeded.
@@ -276,38 +273,38 @@ export async function launchSession(session: SlurmSession, monitor: JobStatusMon
     monitor.startMonitoring(session);
 }
 
-// Cancel composition. Records (does not show) a cancel failure; teardown always runs, then it rethrows so the
-// caller (sessionProvider._cancelSessionExecution) owns the dialog and the false "completed" toast is skipped.
-export async function cancelSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
-    logger.info(`Cancelling session: ${session.name}`);
-    progress.report({ message: "Cancelling session..." });
+// Stop composition. Records (does not show) a stop failure; teardown always runs, then it rethrows so the
+// caller (sessionProvider._stopSessionExecution) owns the dialog and the false "completed" toast is skipped.
+export async function stopSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
+    logger.info(`Stopping session: ${session.name}`);
+    progress.report({ message: "Stopping session..." });
 
-    let cancelError: Error | undefined;
+    let stopError: Error | undefined;
     try {
         if (session.jobId) {
-            const cancelCommand = `scancel ${session.jobId}`;
-            logger.info(`Sending cancellation command for session ${session.name}: ${cancelCommand}`);
-            const cancelResult = await SshManager.getInstance().runRemoteCommand(session.cluster, cancelCommand);
-            if (cancelResult.code !== 0) {
-                throw new Error(`Failed to send cancellation command for session ${session.name}: ${cancelResult.stderr}`);
+            const stopCommand = `scancel ${session.jobId}`;
+            logger.info(`Sending stop command for session ${session.name}: ${stopCommand}`);
+            const stopResult = await SshManager.getInstance().runRemoteCommand(session.cluster, stopCommand);
+            if (stopResult.code !== 0) {
+                throw new Error(`Failed to send stop command for session ${session.name}: ${stopResult.stderr}`);
             }
-            logger.info(`Cancellation command sent successfully for session ${session.name}`);
+            logger.info(`Stop command sent successfully for session ${session.name}`);
         } else {
-            logger.warn(`Session ${session.name} has no job ID; marking cancelled without scancel.`);
+            logger.warn(`Session ${session.name} has no job ID; marking stopped without scancel.`);
         }
-        session.status = 'cancelled';
+        session.status = 'stopped';
         updateSession(session);
     } catch (error: any) {
-        cancelError = error instanceof Error ? error : new Error(String(error));
-        logger.error(`Error while cancelling session ${session.name}:`, error);
+        stopError = error instanceof Error ? error : new Error(String(error));
+        logger.error(`Error while stopping session ${session.name}:`, error);
         session.status = 'failed';
-        session.errorMessage = cancelError.message;
+        session.errorMessage = stopError.message;
         updateSession(session);
     }
 
     // Teardown always runs: full local teardown (config + key + refs) on success; on failure the job may
     // still be alive, so free only the port and keep key + refs so reattach still works.
-    if (session.status === 'cancelled') {
+    if (session.status === 'stopped') {
         try {
             await disconnectSessionFromTunnel(session);
         } catch (err) {
@@ -319,5 +316,5 @@ export async function cancelSession(session: SlurmSession, monitor: JobStatusMon
 
     monitor.stopMonitoring(session.id);
 
-    if (cancelError) { throw cancelError; }
+    if (stopError) { throw stopError; }
 }

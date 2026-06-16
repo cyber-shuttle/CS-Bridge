@@ -43,7 +43,7 @@ src/
     sessionWebview.ts                # HTML/CSP generation for the sidebar webview
   modules/
     sshSupport.ts                    # OS-ssh ControlMaster pool, askpass IPC, ~/.cybershuttle/ssh_config writer, ~/.ssh/config Include patcher
-    sessionSupport.ts                # Session lifecycle composition (prepareLaunch/launchSession/cancelSession; throw on failure) + JobStatusMonitor (provider-owned)
+    sessionSupport.ts                # Session lifecycle composition (prepareLaunch/launchSession/stopSession; throw on failure) + JobStatusMonitor (provider-owned)
     slurmSupport.ts                  # SLURM queries over SSH (job status/output via sacct, cluster info via sinfo/sacctmgr)
     slurmParse.ts                    # Pure SLURM text helpers (sinfo + sacct parsing, sbatch script generation); vscode-free, unit-tested
     slurmLaunch.ts                   # Pure-ish launch steps (slurm check / linkspan install / sbatch submit) over an injected RemoteRunner + LogSink; vscode-free, unit-tested

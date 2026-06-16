@@ -2,10 +2,13 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Logger } from './logger';
-import { lock, release } from './modules/fsSupport';
+import { lock, release, isPidAlive } from './modules/fsSupport';
 import { SlurmSession, persistableConnectionInfo } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
+
+// Map statuses persisted by older builds onto the current vocabulary.
+const LEGACY_STATUS: Record<string, SlurmSession['status']> = { cancelled: 'stopped', cancelling: 'stopping' };
 
 const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
@@ -17,8 +20,9 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
     lock(sessionsFilePath);
     try {
         sessions = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
-        // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
         for (const s of sessions) {
+            s.status = LEGACY_STATUS[s.status as string] ?? s.status;
+            // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
             if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
         }
         logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
@@ -99,6 +103,14 @@ export function mutateWindowPids(sessionId: string, transform: (pids: number[]) 
     } finally {
         release(sessionsFilePath);
     }
+}
+
+// Probe a session's windowPids; lazily evict dead ones. Drives the Current/Switch/Connect button.
+export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAlive: boolean } {
+    const pids = s.windowPids ?? [];
+    const live = pids.filter(isPidAlive);
+    if (live.length !== pids.length) { mutateWindowPids(s.id, () => live); }
+    return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
 }
 
 // Cross-window sync: reload in-mem state on another window's write; prefer this window's connectionInfo (secrets + live port) over disk refs.

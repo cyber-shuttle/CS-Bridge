@@ -7,16 +7,16 @@ import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
 // The config form card, used both to create a session (icon "add") and to edit one (icon "edit").
-function ConfigCard({ icon, host, info, error, onCancel, initial, saveId }: {
+function ConfigCard({ icon, host, info, error, onDismiss, initial, saveId }: {
     icon: string; host: string; info: SlurmClusterInfo | undefined; error: string | undefined;
-    onCancel: () => void; initial?: HostFormInitial; saveId?: string;
+    onDismiss: () => void; initial?: HostFormInitial; saveId?: string;
 }) {
     return (
         <Card>
             <Row gap={6}>
                 <Icon name={icon} />
                 <Text weight={600}>{host}</Text>
-                <ActionIcon name="close" ariaLabel="Cancel" onClick={onCancel} />
+                <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
             </Row>
             <HostForm host={host} info={info} error={error} initial={initial} saveId={saveId} />
         </Card>
@@ -51,7 +51,7 @@ function ScriptPreviewOverlay({ state }: { state: SessionsState }) {
             <Text muted>Host: {s.cluster}</Text>
             <Text block style={{ flex: 1, overflow: 'auto', whiteSpace: 'pre', fontFamily: 'var(--vscode-editor-font-family)', fontSize: '12px', background: 'var(--vscode-textCodeBlock-background)', padding: '8px', borderRadius: '4px' }}>{s.batchScript ?? ''}</Text>
             <Row gap={8} justify="flex-end">
-                <Button secondary onClick={() => post({ command: 'dismissPreview' })}>Cancel</Button>
+                <Button secondary onClick={() => post({ command: 'dismissPreview' })}>Close</Button>
                 <Button onClick={() => post({ command: 'launchSession', sessionId: s.id })}>Submit Job</Button>
             </Row>
         </Stack>
@@ -71,9 +71,9 @@ function SessionsView({ state }: { state: SessionsState }) {
     }
     return (
         <>
-            {state.draftHost ? <ConfigCard key={state.draftHost} icon="add" host={state.draftHost} info={state.clusterInfo[state.draftHost]} error={state.clusterErrors[state.draftHost]} onCancel={() => post({ command: 'cancelDraftSession' })} /> : null}
+            {state.draftHost ? <ConfigCard key={state.draftHost} icon="add" host={state.draftHost} info={state.clusterInfo[state.draftHost]} error={state.clusterErrors[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} /> : null}
             {state.sessions.map(s => s.id === state.editingId
-                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} info={state.clusterInfo[s.cluster]} error={state.clusterErrors[s.cluster]} onCancel={() => post({ command: 'cancelEditSession' })} initial={editInitial(s)} saveId={s.id} />
+                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} info={state.clusterInfo[s.cluster]} error={state.clusterErrors[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} />
                 : <SessionCard key={s.id} session={s} />)}
             {!state.sessions.length && !state.draftHost
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>

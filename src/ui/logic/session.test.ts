@@ -27,7 +27,7 @@ function sess(status: SlurmSession['status'], extra: Partial<SlurmSession & { is
 
 test('dotColor buckets statuses into idle/activating/live/failed colours', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-errorForeground)');
-    assert.equal(dotColor('cancelled'), 'var(--vscode-errorForeground)');
+    assert.equal(dotColor('stopped'), 'var(--vscode-errorForeground)');
     assert.equal(dotColor('queued'), 'var(--vscode-charts-yellow)');
     assert.equal(dotColor('submitting'), 'var(--vscode-charts-yellow)');
     assert.equal(dotColor('preparing'), 'var(--vscode-charts-green)');

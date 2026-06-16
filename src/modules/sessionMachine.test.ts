@@ -1,7 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeStatusTransition } from './sessionMachine';
-import { SlurmJobStatus } from '../models';
+import { computeStatusTransition, isTerminal, isCloseable, isStoppable, isRelayLive } from './sessionMachine';
+import { SlurmJobStatus, SlurmSession } from '../models';
+
+test('status-category predicates partition the status space as expected', () => {
+    const all: SlurmSession['status'][] = ['connecting', 'connected', 'ready_to_connect', 'preparing', 'failed', 'completed', 'queued', 'submitting', 'stopped', 'not_started', 'stopping', 'disconnected'];
+    // every status is exactly one of: terminal, not_started, or stoppable
+    for (const s of all) {
+        const buckets = [isTerminal(s), s === 'not_started', isStoppable(s)].filter(Boolean).length;
+        assert.equal(buckets, 1, `${s} should fall in exactly one of terminal/not_started/stoppable`);
+    }
+    assert.deepEqual(['stopped', 'failed', 'completed'].map(isTerminal as any), [true, true, true]);
+    assert.equal(isCloseable('not_started'), true);   // terminal + not_started
+    assert.equal(isCloseable('stopped'), true);
+    assert.equal(isCloseable('queued'), false);
+    assert.equal(isStoppable('connected'), true);     // can stop a live session
+    assert.equal(isStoppable('stopped'), false);
+    assert.deepEqual(['ready_to_connect', 'connecting', 'connected'].map(isRelayLive as any), [true, true, true]);
+    assert.equal(isRelayLive('preparing'), false);
+});
 
 test('RUNNING promotes a non-connect-phase session to preparing', () => {
     assert.deepEqual(computeStatusTransition('queued', SlurmJobStatus.RUNNING), { next: 'preparing' });
@@ -16,7 +33,7 @@ test('RUNNING does NOT pull a connect-phase / disconnected session back to prepa
 
 test('terminal SLURM states stop monitoring with the right status', () => {
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.COMPLETED), { next: 'completed', stopMonitoring: true });
-    assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.CANCELLED), { next: 'cancelled', stopMonitoring: true });
+    assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.CANCELLED), { next: 'stopped', stopMonitoring: true });
 });
 
 test('failure states stop monitoring and carry an error message', () => {
