@@ -67,7 +67,8 @@ export interface SshHost {
     name: string;
     hostname?: string;
     user?: string;
-    source?: 'managed' | 'user' | 'system'; // origin config; managed/user are editable, system is read-only.
+    args?: string[]; // extra ssh_config directives ("Key Value"), excluding HostName/User
+    source?: 'user' | 'system'; // origin config; user is editable, system is read-only.
 }
 
 export interface SlurmClusterInfo {

@@ -7,12 +7,13 @@ interface RowProps {
     wrap?: boolean;
     pad?: string;
     style?: CSSProperties;
+    onClick?: (e: Event) => void;
     children?: ComponentChildren;
 }
 
-export function Row({ gap, justify, wrap, pad, style, children }: RowProps) {
+export function Row({ gap, justify, wrap, pad, style, onClick, children }: RowProps) {
     return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: justify, gap: px(gap), flexWrap: wrap ? 'wrap' : undefined, padding: pad, ...style }}>
+        <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', justifyContent: justify, gap: px(gap), flexWrap: wrap ? 'wrap' : undefined, padding: pad, ...style }}>
             {children}
         </div>
     );

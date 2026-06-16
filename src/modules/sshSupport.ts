@@ -6,12 +6,14 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
-import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSessionSshConfigBlock } from './sshHostsStore';
+import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSessionSshConfigBlock } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
 const CS_SSH_KEYS_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_keys');
 const CS_SSH_CONTROL_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_control');
+// Deprecated managed-hosts level (SWP-49); only its stale Include is stripped from ~/.ssh/config on init.
+const LEGACY_MANAGED_HOSTS_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_hosts');
 
 export class SshManager {
 
@@ -32,15 +34,13 @@ export class SshManager {
             SshManager._instance = new SshManager(extensionUri);
         }
 
-        // Both files are Include'd above the user's global entries, so their aliases win via SSH
-        // first-match. Include order is irrelevant: the two namespaces (cshost-* vs. user) are disjoint.
-        for (const file of [CS_SSH_CONFIG_PATH, MANAGED_HOSTS_PATH]) {
-            if (!fs.existsSync(file)) {
-                fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-                fs.writeFileSync(file, '', { mode: 0o600 });
-            }
-            SshManager._instance._ensureSshInclude(file);
+        // cshost-* session aliases live here, Include'd above the user's global entries so they win via SSH first-match.
+        if (!fs.existsSync(CS_SSH_CONFIG_PATH)) {
+            fs.mkdirSync(path.dirname(CS_SSH_CONFIG_PATH), { recursive: true, mode: 0o700 });
+            fs.writeFileSync(CS_SSH_CONFIG_PATH, '', { mode: 0o600 });
         }
+        SshManager._instance._ensureSshInclude(CS_SSH_CONFIG_PATH);
+        SshManager._instance._removeSshInclude(LEGACY_MANAGED_HOSTS_PATH);
         return SshManager._instance;
     }
 
@@ -52,7 +52,7 @@ export class SshManager {
     }
 
     // Top-level Host entries tagged with their source; [] if missing/unreadable. No Include follow-through.
-    private _readHostsFile(filePath: string, source: 'managed' | 'user' | 'system'): SshHost[] {
+    private _readHostsFile(filePath: string, source: 'user' | 'system'): SshHost[] {
         try {
             if (!fs.existsSync(filePath)) { return []; }
             const text = fs.readFileSync(filePath, 'utf-8');
@@ -63,10 +63,9 @@ export class SshManager {
         }
     }
 
-    // Managed + user + system, deduped first-wins so managed overrides user overrides system.
+    // User then system, deduped first-wins so a user host overrides a same-named system host.
     public getMergedHosts(): SshHost[] {
         return mergeHostsByPriority(
-            this._readHostsFile(MANAGED_HOSTS_PATH, 'managed'),
             this._readHostsFile(USER_SSH_CONFIG_PATH, 'user'),
             this._readHostsFile(SYSTEM_SSH_CONFIG_PATH, 'system'),
         );
@@ -217,6 +216,20 @@ export class SshManager {
             }
         } catch (err: any) {
             logger.error(`[ssh] Failed to add Include to ~/.ssh/config: ${err.message}`);
+        }
+    }
+
+    // Strip a previously-added `Include <targetPath>` line from ~/.ssh/config (retires a deprecated include).
+    private _removeSshInclude(targetPath: string): void {
+        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
+        const includeLine = `Include ${targetPath}`;
+        try {
+            if (!fs.existsSync(sshConfigPath)) { return; }
+            const content = fs.readFileSync(sshConfigPath, 'utf-8');
+            if (!content.includes(includeLine)) { return; }
+            fs.writeFileSync(sshConfigPath, content.split('\n').filter(line => line.trim() !== includeLine).join('\n'));
+        } catch (err: any) {
+            logger.error(`[ssh] Failed to remove Include from ~/.ssh/config: ${err.message}`);
         }
     }
 

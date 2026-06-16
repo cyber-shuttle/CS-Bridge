@@ -1,32 +1,56 @@
 import { render } from 'preact';
-import type { HostsState } from '@/models';
+import { useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
+import type { HostsState, SshHost } from '@/models';
 import { post, useWebviewState } from '@/ui/platform/vscode';
-import { Row, Stack, Text, Icon, ActionIcon } from '@/ui/components/base';
+import { Row, Stack, Text, Icon, Button } from '@/ui/components/base';
 
-const SOURCE_ICON: Record<string, string> = { managed: 'cloud', user: 'account', system: 'settings-gear' };
-const SOURCE_TITLE: Record<string, string> = { managed: 'Managed by CS Bridge', user: 'User SSH config', system: 'System SSH config (read-only)' };
-const SOURCE_ORDER: Record<string, number> = { managed: 0, user: 1, system: 2 };
+const SOURCE_ICON: Record<string, string> = { user: 'account', system: 'settings-gear' };
+const SOURCE_TITLE: Record<string, string> = { user: 'User SSH config (~/.ssh/config)', system: 'System SSH config (read-only)' };
+const SOURCE_ORDER: Record<string, number> = { user: 0, system: 1 };
+
+function DetailRow({ label, children }: { label: string; children: ComponentChildren }) {
+    return (
+        <Row gap={6} style={{ alignItems: 'baseline' }}>
+            <Text muted size={11} style={{ width: 64, flexShrink: 0 }}>{label}</Text>
+            <div style={{ minWidth: 0, fontSize: '12px', wordBreak: 'break-all' }}>{children}</div>
+        </Row>
+    );
+}
+
+// One host: a click-to-expand header (chevron + source icon + alias) over a read-only detail panel.
+function HostItem({ host }: { host: SshHost }) {
+    const [open, setOpen] = useState(false);
+    const src = host.source ?? 'system';
+    return (
+        <Stack>
+            <Row gap={4} pad="3px 0" style={{ cursor: 'pointer' }} onClick={() => setOpen(!open)}>
+                <Icon name={open ? 'chevron-down' : 'chevron-right'} />
+                <Icon name={SOURCE_ICON[src] ?? 'remote'} title={SOURCE_TITLE[src]} />
+                <Text weight={600} ellipsis>{host.name}</Text>
+            </Row>
+            {open ? (
+                <Stack gap={4} pad="0 0 6px 22px">
+                    <DetailRow label="Username">{host.user ?? '—'}</DetailRow>
+                    <DetailRow label="Hostname">{host.hostname ?? '—'}</DetailRow>
+                    {host.args?.length ? (
+                        <DetailRow label="Args"><Stack gap={1}>{host.args.map(a => <div key={a}>{a}</div>)}</Stack></DetailRow>
+                    ) : null}
+                    {src === 'user' ? (
+                        <Row justify="flex-end" pad="2px 0 0">
+                            <Button icon="trash" onClick={() => post({ command: 'removeSshHost', name: host.name })}>Delete</Button>
+                        </Row>
+                    ) : null}
+                </Stack>
+            ) : null}
+        </Stack>
+    );
+}
 
 function HostList({ state }: { state: HostsState }) {
     const hosts = [...state.sshHosts].sort((a, b) => (SOURCE_ORDER[a.source ?? 'system'] ?? 9) - (SOURCE_ORDER[b.source ?? 'system'] ?? 9));
     if (hosts.length === 0) { return <Text muted style={{ margin: '4px 0' }}>No SSH hosts yet — use + above.</Text>; }
-    return (
-        <>
-            {hosts.map(host => {
-                const detail = host.hostname ? `${host.user ? host.user + '@' : ''}${host.hostname}` : undefined;
-                const canDelete = host.source === 'managed' || host.source === 'user';
-                const src = host.source ?? 'system';
-                return (
-                    <Row key={host.name} gap={6} pad="2px 0">
-                        <Icon name={SOURCE_ICON[src] ?? 'remote'} title={SOURCE_TITLE[src]} />
-                        <Text weight={600} style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{host.name}</Text>
-                        {detail ? <Text muted size={11} ellipsis style={{ minWidth: 0 }}>{detail}</Text> : null}
-                        {canDelete ? <ActionIcon name="trash" title="Remove SSH host" onClick={() => post({ command: 'removeSshHost', name: host.name, source: host.source })} /> : null}
-                    </Row>
-                );
-            })}
-        </>
-    );
+    return <>{hosts.map(host => <HostItem key={host.name} host={host} />)}</>;
 }
 
 function Root() {
