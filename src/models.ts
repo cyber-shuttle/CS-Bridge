@@ -63,6 +63,13 @@ export interface SessionConnectionInfo {
     apiPort?: number;
 }
 
+// Persist only the non-secret refs needed to reattach after a reload; secrets + the ephemeral local port stay in memory.
+export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): SessionConnectionInfo | undefined {
+    if (!ci?.sshTunnelId) { return undefined; }
+    const { sshTunnelId, sshPort, region } = ci;
+    return { sshTunnelId, sshPort, region };
+}
+
 export interface SshHost {
     name: string;
     hostname?: string;

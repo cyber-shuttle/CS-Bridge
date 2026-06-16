@@ -157,7 +157,6 @@ export class JobStatusMonitor {
                         }
 
                         if (slurmStatus === SlurmJobStatus.RUNNING && session.status === 'preparing') {
-                            //logger.info(`Session ${session.name} is now running. Fetching job output...`);
                             getSlurmJobOutput(session).then(output => {
                                 // id/region/token come from ensureDevTunnel; only scrape the server port.
                                 const ci = session.connectionInfo ?? (session.connectionInfo = this.initializeConnectionInfo());
@@ -223,7 +222,7 @@ export class JobStatusMonitor {
                             continue;
                         }
 
-                        vscode.window.showErrorMessage(errorMessage);
+                        // Background poll loop: no dialog. errorMessage is rendered on the session card.
                         session.status = 'failed'; // TODO: Probably unknown or retry
                         session.errorMessage = errorMessage;
                         updateSession(session);
@@ -299,9 +298,7 @@ async function checkLinkspanInstallation(session: SlurmSession, progress: vscode
 
     progress.report({ message: "Checking Linkspan installation on cluster" });
     const remoteVersionResult = await sshManager.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | grep -oP '[^/]+$'`);
-    //logger.info('Remote version check output:', remoteVersion.stdout);
     const localVersionResult = await sshManager.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
-    //logger.info('Local version check output:', localVersion.stdout);
 
     if (remoteVersionResult.code !== 0) {
         const errorMessage = `Failed to check Linkspan latest version. Error: ${remoteVersionResult.stderr}`;

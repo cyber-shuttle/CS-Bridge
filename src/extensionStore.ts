@@ -1,23 +1,15 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { lock, release } from './modules/fsSupport';
-import { SlurmSession, SessionConnectionInfo } from './models';
+import { SlurmSession, persistableConnectionInfo } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
 const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
-
-// Persist only the non-secret refs needed to reattach after a reload; secrets + the ephemeral local port stay in memory.
-function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): SessionConnectionInfo | undefined {
-    if (!ci?.sshTunnelId) { return undefined; }
-    const { sshTunnelId, sshPort, region } = ci;
-    return { sshTunnelId, sshPort, region };
-}
 
 export function initSessionStore(storagePath: string = CS_HOME): string {
     fs.mkdirSync(storagePath, { recursive: true });
@@ -55,8 +47,9 @@ function saveToFile(): void {
         const sanitized = sessions.map(s => ({ ...s, connectionInfo: persistableConnectionInfo(s.connectionInfo), windowPids: onDisk.find(x => x.id === s.id)?.windowPids }));
         fs.writeFileSync(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
     } catch (err) {
+        // Persistence layer: log only. In-memory state is still consistent, and saveToFile runs on every
+        // status transition — a dialog here would be both wrong (low-level) and spammy.
         logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
-        vscode.window.showErrorMessage(`Failed to save sessions: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
         release(sessionsFilePath);
     }

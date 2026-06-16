@@ -218,6 +218,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             await switchDevTunnelAccount();
         } catch (error) {
             this._logger.error('Error switching Dev Tunnels authentication account:', error);
+            vscode.window.showErrorMessage(`Dev Tunnels sign-in failed: ${errMsg(error)}`);
         }
         void this.pushState();
     }

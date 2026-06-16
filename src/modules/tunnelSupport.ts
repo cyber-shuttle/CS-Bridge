@@ -275,16 +275,12 @@ export async function getDevTunnelAuthToken(): Promise<string> {
 }
 
 export async function switchDevTunnelAccount(): Promise<void> {
-    try {
-        const session = await vscode.authentication.getSession(
-            'microsoft',
-            [DEV_TUNNELS_SCOPE],
-            { clearSessionPreference: true, createIfNone: true },
-        );
-        logger.info(`Dev Tunnels: switched to ${session.account.label}`);
-    } catch (err: any) {
-        vscode.window.showErrorMessage(`Dev Tunnels sign-in failed: ${err.message}`);
-    }
+    const session = await vscode.authentication.getSession(
+        'microsoft',
+        [DEV_TUNNELS_SCOPE],
+        { clearSessionPreference: true, createIfNone: true },
+    );
+    logger.info(`Dev Tunnels: switched to ${session.account.label}`);
 }
 
 export async function getMicrosoftAccountInfo(): Promise<AccountInfo> {
