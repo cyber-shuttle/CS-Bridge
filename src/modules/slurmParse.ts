@@ -1,4 +1,4 @@
-import { GresInfo, SlurmPartitionInfo, SlurmSession, TunnelCredential } from "../models";
+import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from "../models";
 
 // Pure SLURM text helpers: parse `sinfo`/`sacctmgr` output and build the sbatch script. No SSH/vscode
 // dependency, so these are unit-testable in isolation (see slurmParse.test.ts).
@@ -37,6 +37,37 @@ export function generateSlurmScript(session: SlurmSession, tunnelCred: TunnelCre
     ];
 
     return scriptLines.join('\n');
+}
+
+// Classify one `sacct ... --parsable2` row (State|ExitCode|Reason|ElapsedRaw) into a job status + elapsed seconds.
+export function parseSacctStatus(output: string): { status: SlurmJobStatus, elapsedSec: number } {
+    if (!output) {
+        throw new Error('Failed to get job status. No output from sacct command.');
+    }
+    const fields = output.split('|');
+    if (fields.length < 4) {
+        throw new Error('Failed to get job status. Unexpected output format from sacct command. Output: ' + output);
+    }
+    /*
+    FAILED|1:0|None|120
+    CANCELLED by 1001|0:0|None|0
+    RUNNING|0:0|None|345
+    TIMEOUT|0:0|None|3600
+    */
+    const [state, , , elapsedRaw] = fields;
+    // ElapsedRaw is SLURM's authoritative run-time in whole seconds (no timezone/clock guessing).
+    const elapsedSec = /^\d+$/.test(elapsedRaw.trim()) ? parseInt(elapsedRaw.trim(), 10) : 0;
+
+    let status = SlurmJobStatus.UNKNOWN;
+    if (state.includes('PENDING')) { status = SlurmJobStatus.PENDING; }
+    else if (state.includes('CANCELLED')) { status = SlurmJobStatus.CANCELLED; }
+    else if (state.includes('FAILED')) { status = SlurmJobStatus.FAILED; }
+    else if (state.includes('TIMEOUT')) { status = SlurmJobStatus.TIMEOUT; }
+    else if (state.includes('OUT_OF_MEMORY')) { status = SlurmJobStatus.OUT_OF_MEMORY; }
+    else if (state.includes('COMPLETED')) { status = SlurmJobStatus.COMPLETED; }
+    else if (state.includes('RUNNING')) { status = SlurmJobStatus.RUNNING; }
+
+    return { status, elapsedSec };
 }
 
 // Parse one `sinfo -h -o "%P|%c|%m|%G"` line into a partition descriptor.

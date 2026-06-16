@@ -1,7 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePartitionLine, generateSlurmScript } from './slurmParse';
-import { SlurmSession, TunnelCredential } from '../models';
+import { parsePartitionLine, generateSlurmScript, parseSacctStatus } from './slurmParse';
+import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
+
+test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
+    assert.deepEqual(parseSacctStatus('FAILED|1:0|None|120'), { status: SlurmJobStatus.FAILED, elapsedSec: 120 });
+    assert.deepEqual(parseSacctStatus('CANCELLED by 1001|0:0|None|0'), { status: SlurmJobStatus.CANCELLED, elapsedSec: 0 });
+    assert.deepEqual(parseSacctStatus('RUNNING|0:0|None|345'), { status: SlurmJobStatus.RUNNING, elapsedSec: 345 });
+    assert.deepEqual(parseSacctStatus('TIMEOUT|0:0|None|3600'), { status: SlurmJobStatus.TIMEOUT, elapsedSec: 3600 });
+    assert.equal(parseSacctStatus('OUT_OF_MEMORY|0:0|None|5').status, SlurmJobStatus.OUT_OF_MEMORY);
+    assert.equal(parseSacctStatus('COMPLETED|0:0|None|5').status, SlurmJobStatus.COMPLETED);
+    assert.equal(parseSacctStatus('PENDING|0:0|Priority|0').status, SlurmJobStatus.PENDING);
+});
+
+test('parseSacctStatus returns UNKNOWN for an unrecognized state and 0 elapsed for non-numeric', () => {
+    assert.deepEqual(parseSacctStatus('SOMETHING_ELSE|0:0|None|n/a'), { status: SlurmJobStatus.UNKNOWN, elapsedSec: 0 });
+});
+
+test('parseSacctStatus throws on empty or malformed output', () => {
+    assert.throws(() => parseSacctStatus(''), /No output from sacct/);
+    assert.throws(() => parseSacctStatus('FAILED|1:0'), /Unexpected output format/);
+});
 
 test('parsePartitionLine strips the default-partition marker and parses "24+" CPUs', () => {
     assert.deepEqual(parsePartitionLine('cpu-small*|24+|191000+|(null)'), {

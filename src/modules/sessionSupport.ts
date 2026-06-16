@@ -5,6 +5,7 @@ import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
 import { generateSlurmScript } from "./slurmParse";
+import { computeStatusTransition } from "./sessionMachine";
 import { disconnectSessionFromTunnel, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from "./tunnelSupport";
 import { checkLinkspanHealth } from "./linkspanSupport";
 
@@ -186,34 +187,16 @@ export class JobStatusMonitor {
                                 // Step 1 (auto): linkspan is up - ensure the remote sshd + tunnel are live, then mark ready_to_connect.
                                 void this.prepareRemote(session);
                             }
-                        } else if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'preparing'
-                            && session.status !== 'ready_to_connect' && session.status !== 'connected'
-                            && session.status !== 'connecting' && session.status !== 'disconnected') {
-                            // Don't pull a connect-phase / disconnected session back to 'preparing' (would clobber reattach / thrash).
-                            session.status = 'preparing';
-                            updateSession(session);
-                        } else if (slurmStatus === SlurmJobStatus.COMPLETED) {
-                            session.status = 'completed';
-                            updateSession(session);
-                            this.stopMonitoringInternal(sessionId);
-                        } else if ([SlurmJobStatus.FAILED, SlurmJobStatus.TIMEOUT, SlurmJobStatus.OUT_OF_MEMORY].includes(slurmStatus)) {
-                            session.status = 'failed';
-                            session.errorMessage = `Job ended with status: ${slurmStatus}`;
-                            updateSession(session);
-                            this.stopMonitoringInternal(sessionId);
-                        } else if (slurmStatus === SlurmJobStatus.PENDING) {
-                            session.status = 'queued';
-                            updateSession(session);
-                        } else if (slurmStatus === SlurmJobStatus.CANCELLED) {
-                            session.status = 'cancelled';
-                            updateSession(session);
-                            this.stopMonitoringInternal(sessionId);
-                        } else if (slurmStatus === SlurmJobStatus.UNKNOWN) {
-                            logger.warn(`Received unknown Slurm job status for session ${session.name}`);
-                            session.status = 'failed';
-                            session.errorMessage = `Job ended with unknown status: ${slurmStatus}`;
-                            updateSession(session);
-                            this.stopMonitoringInternal(sessionId);
+                        } else {
+                            // Apply the pure status-transition decision (see sessionMachine.computeStatusTransition).
+                            if (slurmStatus === SlurmJobStatus.UNKNOWN) { logger.warn(`Received unknown Slurm job status for session ${session.name}`); }
+                            const t = computeStatusTransition(session.status, slurmStatus);
+                            if (t.next) {
+                                session.status = t.next;
+                                if (t.error) { session.errorMessage = t.error; }
+                                updateSession(session);
+                            }
+                            if (t.stopMonitoring) { this.stopMonitoringInternal(sessionId); }
                         }
                     } catch (error: any) {
                         const errorMessage = `Error while monitoring Slurm job status for session ${session.name}: ${error.message || error}`;
