@@ -115,7 +115,6 @@ export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: bool
 /** State pushed to the Sessions view. */
 export interface SessionsState {
     isRemote: boolean; // true in a cshost remote window (read-only, session-scoped view); false in the sidebar.
-    account: AccountInfo;
     sessions: ViewSession[];
     draftHost: string | null; // host chosen for a new session whose config card is showing; null when none in progress.
     clusterInfo: Record<string, SlurmClusterInfo>;

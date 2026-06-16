@@ -46,6 +46,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     private _previewSession: SlurmSession | null = null;
     // One provider instance feeds both views; each resolved webview is keyed by its viewType.
     private readonly _webviews = new Map<string, vscode.Webview>();
+    private _sessionsView?: vscode.WebviewView; // kept to set the account on its title (description)
     private readonly _shared: vscode.Disposable[] = [];
     private readonly _connecting = new Set<string>(); // session ids with an in-flight connect, to drop re-entrant requests
     private _sharedReady = false;
@@ -64,12 +65,14 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 : 'sessions';
         webview.options = { enableScripts: true };
         this._webviews.set(viewType, webview);
+        if (viewType === SessionProvider.sessionsViewType) { this._sessionsView = webviewView; }
 
         const msgSub = webview.onDidReceiveMessage((data) => this._onMessageFromJs(data));
         const visSub = webviewView.onDidChangeVisibility(() => { if (webviewView.visible) { void this._pushState(); } });
         webviewView.onDidDispose(() => {
             // Only evict if still ours — a late dispose of an old webview must not remove a freshly re-resolved one.
             if (this._webviews.get(viewType) === webview) { this._webviews.delete(viewType); }
+            if (this._sessionsView === webviewView) { this._sessionsView = undefined; }
             msgSub.dispose();
             visSub.dispose();
         });
@@ -170,16 +173,6 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             case 'connectTunnel':
                 void this._connectSessionToTunnel(id);
                 break;
-            case 'switchAuth':
-                this._logger.info('Switching Dev Tunnels authentication account as requested by webview');
-                switchDevTunnelAccount().then(() => {
-                    this._logger.info('Dev Tunnels authentication account switched successfully');
-                    void this._pushState();
-                }).catch((error: Error) => {
-                    this._logger.error('Error switching Dev Tunnels authentication account:', error);
-                    void this._pushState();
-                });
-                break;
             case 'removeSession':
                 this._removeSession(id);
                 break;
@@ -236,6 +229,16 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             this._logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
         }
         deleteSession(sessionId);
+        void this._pushState();
+    }
+
+    // Native account title action: open the Microsoft account switcher (sign in if needed), then refresh.
+    public async switchAccount(): Promise<void> {
+        try {
+            await switchDevTunnelAccount();
+        } catch (error) {
+            this._logger.error('Error switching Dev Tunnels authentication account:', error);
+        }
         void this._pushState();
     }
 
@@ -356,9 +359,10 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             const sessionsView = this._webviews.get(SessionProvider.sessionsViewType);
             const hostsView = this._webviews.get(SessionProvider.hostsViewType);
             if (sessionsView) {
+                const account = await getMicrosoftAccountInfo();
+                if (this._sessionsView) { this._sessionsView.description = account.label ?? 'Not Signed In'; }
                 const state: SessionsState = {
                     isRemote: this._myId !== undefined,
-                    account: await getMicrosoftAccountInfo(),
                     sessions: this._scopedSessions()
                         .map(s => ({ ...s, ...liveAndCleanup(s) }))
                         .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first

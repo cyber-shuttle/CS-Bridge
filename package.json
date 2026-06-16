@@ -66,6 +66,12 @@
 		},
 		"commands": [
 			{
+				"command": "csbridge.switchAccount",
+				"title": "Switch Dev Tunnels Account",
+				"category": "CS Bridge",
+				"icon": "$(account)"
+			},
+			{
 				"command": "csbridge.newSession",
 				"title": "New Session",
 				"category": "CS Bridge",
@@ -81,6 +87,11 @@
 		"menus": {
 			"view/title": [
 				{
+					"command": "csbridge.switchAccount",
+					"group": "navigation@0",
+					"when": "view == csbridge.sessionsView && !csbridge.remote"
+				},
+				{
 					"command": "csbridge.newSession",
 					"group": "navigation@1",
 					"when": "view == csbridge.sessionsView && !csbridge.remote"
@@ -92,6 +103,10 @@
 				}
 			],
 			"commandPalette": [
+				{
+					"command": "csbridge.switchAccount",
+					"when": "false"
+				},
 				{
 					"command": "csbridge.newSession",
 					"when": "false"

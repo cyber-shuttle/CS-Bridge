@@ -6,21 +6,6 @@ import { SessionCard, NowContext } from '@/ui/components/SessionCard';
 import { HostForm } from '@/ui/components/HostForm';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
-function AccountLine({ state, readonly }: { state: SessionsState; readonly?: boolean }) {
-    const { account } = state;
-    return (
-        <Row gap={6} pad="6px 0">
-            <Icon name="account" />
-            <Text ellipsis color={account.label ? undefined : 'var(--vscode-errorForeground)'}>{account.label ?? 'Not signed in'}</Text>
-            {!readonly ? (
-                <Button style={{ marginLeft: 'auto' }} onClick={() => post({ command: 'switchAuth' })}>
-                    {account.label ? 'Switch' : 'Sign in'}
-                </Button>
-            ) : null}
-        </Row>
-    );
-}
-
 function DraftCard({ state }: { state: SessionsState }) {
     const host = state.draftHost!;
     return (
@@ -56,7 +41,6 @@ function SessionsView({ state }: { state: SessionsState }) {
         const session = state.sessions[0];
         return (
             <>
-                <AccountLine state={state} readonly />
                 {session
                     ? <SessionCard key={session.id} session={session} readonly />
                     : <Text muted style={{ margin: '2px 0' }}>No active session.</Text>}
@@ -65,11 +49,10 @@ function SessionsView({ state }: { state: SessionsState }) {
     }
     return (
         <>
-            <AccountLine state={state} />
             {state.draftHost ? <DraftCard key={state.draftHost} state={state} /> : null}
             {state.sessions.map(s => <SessionCard key={s.id} session={s} />)}
             {!state.sessions.length && !state.draftHost
-                ? <Text muted style={{ margin: '2px 0' }}>No sessions yet — use + above.</Text>
+                ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
                 : null}
             <ScriptPreviewOverlay state={state} />
         </>
@@ -84,7 +67,7 @@ function Root() {
         return () => clearInterval(id);
     }, []);
     return state
-        ? <NowContext.Provider value={now}><Stack pad="4px 8px"><SessionsView state={state} /></Stack></NowContext.Provider>
+        ? <NowContext.Provider value={now}><Stack pad="8px"><SessionsView state={state} /></Stack></NowContext.Provider>
         : null;
 }
 
