@@ -27,8 +27,7 @@ function liveAndCleanup(s: SlurmSession): { isCurrent: boolean, windowAlive: boo
 }
 
 export class SessionProvider implements vscode.WebviewViewProvider, vscode.Disposable {
-    public static readonly sessionsViewType = 'csbridge.sessionsView';
-    public static readonly statsViewType = 'csbridge.statsView';
+    public static readonly viewType = 'csbridge.sessionsView';
 
     private readonly _logger = Logger.getInstance();
     private readonly _clusterInfo = new Map<string, SlurmClusterInfo>();
@@ -36,9 +35,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     private _draftHost: string | null = null;
     private _editingId: string | null = null;
     private _previewSession: SlurmSession | null = null;
-    // One provider instance feeds the Sessions and Stats views; each resolved webview is keyed by its viewType.
-    private readonly _webviews = new Map<string, vscode.Webview>();
-    private _sessionsView?: vscode.WebviewView; // kept to set the account on its title (description)
+    private _view?: vscode.WebviewView; // the Sessions view (also carries the account label on its title/description)
     private readonly _shared: vscode.Disposable[] = [];
     private readonly _connecting = new Set<string>(); // session ids with an in-flight connect, to drop re-entrant requests
     private _sharedReady = false;
@@ -47,31 +44,25 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     constructor(private readonly _extensionUri: vscode.Uri, private readonly _myId?: string) {
     }
 
-    resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext,
-        token: vscode.CancellationToken): Thenable<void> | void {
-
+    resolveWebviewView(webviewView: vscode.WebviewView): void {
         const webview = webviewView.webview;
-        const viewType = webviewView.viewType;
-        const kind = viewType === SessionProvider.statsViewType ? 'stats' : 'sessions';
         webview.options = { enableScripts: true };
-        this._webviews.set(viewType, webview);
-        if (viewType === SessionProvider.sessionsViewType) { this._sessionsView = webviewView; }
+        this._view = webviewView;
 
         const msgSub = webview.onDidReceiveMessage((data) => this._onMessageFromJs(data));
         const visSub = webviewView.onDidChangeVisibility(() => { if (webviewView.visible) { void this._pushState(); } });
         webviewView.onDidDispose(() => {
-            // Only evict if still ours — a late dispose of an old webview must not remove a freshly re-resolved one.
-            if (this._webviews.get(viewType) === webview) { this._webviews.delete(viewType); }
-            if (this._sessionsView === webviewView) { this._sessionsView = undefined; }
+            // Only clear if still ours — a late dispose of an old webview must not drop a freshly re-resolved one.
+            if (this._view === webviewView) { this._view = undefined; }
             msgSub.dispose();
             visSub.dispose();
         });
 
         this._ensureShared();
-        webview.html = getWebviewContent(webview, this._extensionUri, kind);
+        webview.html = getWebviewContent(webview, this._extensionUri, 'sessions');
     }
 
-    // Window-scoped subscriptions shared by both views; set up once, disposed with the provider.
+    // Window-scoped subscriptions; set up once, disposed with the provider.
     private _ensureShared(): void {
         if (this._sharedReady) { return; }
         this._sharedReady = true;
@@ -313,27 +304,25 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         }
     }
 
-    // Build each resolved view's own state slice and send it; the Sessions account fetch is skipped unless that view is open.
+    // Build the Sessions view state slice and send it; no-op until the view is resolved.
     private async _pushState(): Promise<void> {
-        if (this._webviews.size === 0) { return; }
+        const view = this._view;
+        if (!view) { return; }
         try {
-            const sessionsView = this._webviews.get(SessionProvider.sessionsViewType);
-            if (sessionsView) {
-                const account = await getMicrosoftAccountInfo();
-                if (this._sessionsView) { this._sessionsView.description = account.label ?? 'Not Signed In'; }
-                const state: SessionsState = {
-                    isRemote: this._myId !== undefined,
-                    sessions: this._scopedSessions()
-                        .map(s => ({ ...s, ...liveAndCleanup(s) }))
-                        .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first
-                    draftHost: this._draftHost,
-                    editingId: this._editingId,
-                    clusterInfo: Object.fromEntries(this._clusterInfo),
-                    clusterErrors: this._clusterErrors,
-                    previewSession: this._previewSession,
-                };
-                sessionsView.postMessage({ command: 'state', state });
-            }
+            const account = await getMicrosoftAccountInfo();
+            view.description = account.label ?? 'Not Signed In';
+            const state: SessionsState = {
+                isRemote: this._myId !== undefined,
+                sessions: this._scopedSessions()
+                    .map(s => ({ ...s, ...liveAndCleanup(s) }))
+                    .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first
+                draftHost: this._draftHost,
+                editingId: this._editingId,
+                clusterInfo: Object.fromEntries(this._clusterInfo),
+                clusterErrors: this._clusterErrors,
+                previewSession: this._previewSession,
+            };
+            view.webview.postMessage({ command: 'state', state });
             this._autoCloseIfTerminal();
         } catch (error) {
             this._logger.error('Failed to push webview state:', error);

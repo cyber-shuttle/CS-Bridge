@@ -4,6 +4,7 @@ import { initSessionStore, mutateWindowPids } from './extensionStore';
 import { isPidAlive } from './modules/fsSupport';
 import { SessionProvider } from './sessionProvider';
 import { SshHostProvider } from './sshHostProvider';
+import { StatsProvider } from './statsProvider';
 import { SshManager } from './modules/sshSupport';
 
 
@@ -34,11 +35,12 @@ export async function activate(context: vscode.ExtensionContext) {
     SshManager.initInstance(context.extensionUri);
     const sessionProvider = new SessionProvider(context.extensionUri, id);
     const sshHostProvider = new SshHostProvider(context.extensionUri);
+    const statsProvider = new StatsProvider(context.extensionUri);
     context.subscriptions.push(
         sessionProvider,
-        vscode.window.registerWebviewViewProvider(SessionProvider.sessionsViewType, sessionProvider),
-        vscode.window.registerWebviewViewProvider(SessionProvider.statsViewType, sessionProvider),
+        vscode.window.registerWebviewViewProvider(SessionProvider.viewType, sessionProvider),
         vscode.window.registerWebviewViewProvider(SshHostProvider.viewType, sshHostProvider),
+        vscode.window.registerWebviewViewProvider(StatsProvider.viewType, statsProvider),
         vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sshHostProvider.addSshHost()),
