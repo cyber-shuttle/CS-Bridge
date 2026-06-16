@@ -5,8 +5,6 @@ import { parse, LineType } from 'ssh-config';
 import { SshHost } from '../models';
 import { SshConfigEntry } from './sshCommandParser';
 
-// User login hosts, separate from the session aliases (cshost-*) in ~/.cybershuttle/ssh_config.
-export const MANAGED_HOSTS_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_hosts');
 export const USER_SSH_CONFIG_PATH = path.join(os.homedir(), '.ssh', 'config');
 export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
     ? path.join(process.env.ALLUSERSPROFILE || process.env.PROGRAMDATA || 'C:\\ProgramData', 'ssh', 'ssh_config')
@@ -45,6 +43,10 @@ export function buildSessionSshConfigBlock(
     ].join('\n');
 }
 
+// ssh-config returns multi-token directives (ProxyCommand, SendEnv, …) as arrays of token objects; flatten to text.
+const directiveText = (value: any): string =>
+    Array.isArray(value) ? value.map((t: { val: string }) => t.val).join(' ') : value;
+
 export function parseHostsFromConfigText(text: string): SshHost[] {
     const config = parse(text);
     const hosts: SshHost[] = [];
@@ -58,11 +60,15 @@ export function parseHostsFromConfigText(text: string): SshHost[] {
         const alias = typeof raw === 'string' ? raw.trim().split(/\s+/)[0] : '';
         if (!alias || alias.includes('*') || alias.includes('?')) { continue; }
         const host: SshHost = { name: alias };
+        const args: string[] = [];
         for (const child of section.config) {
             if (child.type !== LineType.DIRECTIVE) { continue; }
-            if (child.param === 'HostName') { host.hostname = child.value; }
-            if (child.param === 'User') { host.user = child.value; }
+            const value = directiveText(child.value);
+            if (child.param === 'HostName') { host.hostname = value; }
+            else if (child.param === 'User') { host.user = value; }
+            else { args.push(`${child.param} ${value}`); }
         }
+        if (args.length) { host.args = args; }
         hosts.push(host);
     }
     return hosts;

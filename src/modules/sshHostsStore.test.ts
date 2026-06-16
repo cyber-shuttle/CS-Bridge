@@ -14,6 +14,20 @@ test('parseHostsFromConfigText reads Host/HostName/User and skips wildcards', ()
     assert.deepEqual(parseHostsFromConfigText(text), [{ name: 'work', hostname: 'work.example.com', user: 'alice' }]);
 });
 
+test('parseHostsFromConfigText captures extra directives as args', () => {
+    const text = 'Host gpu\n  HostName gpu.example.com\n  User bob\n  Port 2222\n  ForwardAgent yes\n';
+    assert.deepEqual(parseHostsFromConfigText(text), [
+        { name: 'gpu', hostname: 'gpu.example.com', user: 'bob', args: ['Port 2222', 'ForwardAgent yes'] },
+    ]);
+});
+
+test('parseHostsFromConfigText flattens multi-token directives instead of emitting [object Object]', () => {
+    const text = 'Host bastioned\n  HostName internal.example.com\n  User carol\n  ProxyCommand ssh -W %h:%p bastion\n  SendEnv LANG LC_*\n';
+    assert.deepEqual(parseHostsFromConfigText(text), [
+        { name: 'bastioned', hostname: 'internal.example.com', user: 'carol', args: ['ProxyCommand ssh -W %h:%p bastion', 'SendEnv LANG LC_*'] },
+    ]);
+});
+
 test('addHostToConfigText adds an entry that round-trips', () => {
     const text = addHostToConfigText('', { Host: 'h', HostName: 'h', User: 'a' });
     assert.deepEqual(parseHostsFromConfigText(text), [{ name: 'h', hostname: 'h', user: 'a' }]);
@@ -57,12 +71,11 @@ test('buildSessionSshConfigBlock indents every directive so clearSSHConfigEntry 
     }
 });
 
-test('mergeHostsByPriority keeps the first occurrence of each name', () => {
-    const managed = [{ name: 'b', hostname: 'managed-b', source: 'managed' as const }];
+test('mergeHostsByPriority keeps the first occurrence of each name (user wins over system)', () => {
     const user = [{ name: 'a', source: 'user' as const }, { name: 'b', hostname: 'user-b', source: 'user' as const }];
-    const system = [{ name: 'c', source: 'system' as const }];
-    const merged = mergeHostsByPriority(managed, user, system);
-    assert.deepEqual(merged.map(h => h.name), ['b', 'a', 'c']);
-    assert.equal(merged.find(h => h.name === 'b')?.hostname, 'managed-b');
-    assert.equal(merged.find(h => h.name === 'b')?.source, 'managed');
+    const system = [{ name: 'b', hostname: 'system-b', source: 'system' as const }, { name: 'c', source: 'system' as const }];
+    const merged = mergeHostsByPriority(user, system);
+    assert.deepEqual(merged.map(h => h.name), ['a', 'b', 'c']);
+    assert.equal(merged.find(h => h.name === 'b')?.hostname, 'user-b');
+    assert.equal(merged.find(h => h.name === 'b')?.source, 'user');
 });

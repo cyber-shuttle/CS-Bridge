@@ -8,17 +8,11 @@ import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClie
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
-import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } from './modules/sshHostsStore';
+import { USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } from './modules/sshHostsStore';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
 
 const errMsg = (e: unknown): string => e instanceof Error ? e.message : String(e);
-
-// Writable host-config files, highest priority first; system config is read-only and excluded.
-const HOST_CONFIGS = {
-    managed: { path: MANAGED_HOSTS_PATH, label: 'CS Bridge (managed)', display: '~/.cybershuttle/ssh_hosts' },
-    user: { path: USER_SSH_CONFIG_PATH, label: 'User SSH config', display: '~/.ssh/config' },
-} as const;
 
 function openSessionWindow(sessionId: string): void {
     const path = findSession(sessionId)?.workingDirectory ?? '';
@@ -195,7 +189,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 this._removeSession(id);
                 break;
             case 'removeSshHost':
-                this._removeSshHost(data.name, data.source);
+                this._removeSshHost(data.name);
                 break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
@@ -306,7 +300,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         });
     }
 
-    // Native "Add SSH Host" title action — Remote-SSH-parity flow: prompt -> parse/validate -> pick file -> write -> notify.
+    // Native "Add SSH Host" title action — Remote-SSH-parity flow: prompt -> parse/validate -> write to ~/.ssh/config -> notify.
     public async addSshHost(): Promise<void> {
         const command = (await vscode.window.showInputBox({
             title: 'Enter SSH Connection Command',
@@ -324,16 +318,10 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             return;
         }
 
-        const pick = await vscode.window.showQuickPick(
-            Object.values(HOST_CONFIGS).map(c => ({ label: c.label, description: c.display, path: c.path })),
-            { title: 'Select SSH configuration file to update', placeHolder: 'Where should this host be saved?' },
-        );
-        if (!pick) { return; }
-
         try {
-            addHostToConfigFile(pick.path, entry);
+            addHostToConfigFile(USER_SSH_CONFIG_PATH, entry);
         } catch (err) {
-            this._logger.error(`Failed to write SSH host to ${pick.path}:`, err);
+            this._logger.error(`Failed to write SSH host to ${USER_SSH_CONFIG_PATH}:`, err);
             vscode.window.showErrorMessage(`Failed to save SSH host: ${errMsg(err)}`);
             return;
         }
@@ -341,7 +329,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
         const choice = await vscode.window.showInformationMessage('Host added!', 'Open Config', 'Connect');
         if (choice === 'Open Config') {
-            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(pick.path));
+            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(USER_SSH_CONFIG_PATH));
         } else if (choice === 'Connect') {
             // Start a new-session draft on the freshly added host — reveal the Sessions pane so its config card is seen.
             this._draftHost = entry.Host;
@@ -351,19 +339,18 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         }
     }
 
-    private async _removeSshHost(name: string, source: string): Promise<void> {
-        // Delete controls render only on managed/user rows, so source is always one of these.
-        const cfg = HOST_CONFIGS[source as keyof typeof HOST_CONFIGS] ?? HOST_CONFIGS.user;
+    private async _removeSshHost(name: string): Promise<void> {
+        // Delete controls render only on user-config rows (system is read-only), so the target is always ~/.ssh/config.
         const choice = await vscode.window.showWarningMessage(
             `Remove SSH host '${name}'?`,
-            { modal: true, detail: `This removes the Host entry from ${cfg.display}.` },
+            { modal: true, detail: 'This removes the Host entry from ~/.ssh/config.' },
             'Remove'
         );
         if (choice !== 'Remove') { return; }
         try {
-            removeHostFromConfigFile(cfg.path, name);
+            removeHostFromConfigFile(USER_SSH_CONFIG_PATH, name);
         } catch (err) {
-            this._logger.error(`Failed to remove SSH host ${name} from ${cfg.path}:`, err);
+            this._logger.error(`Failed to remove SSH host ${name} from ~/.ssh/config:`, err);
             vscode.window.showErrorMessage(`Failed to remove SSH host: ${errMsg(err)}`);
         }
         void this._pushState();
