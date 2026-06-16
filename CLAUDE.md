@@ -43,9 +43,11 @@ src/
     sessionWebview.ts                # HTML/CSP generation for the sidebar webview
   modules/
     sshSupport.ts                    # OS-ssh ControlMaster pool, askpass IPC, ~/.cybershuttle/ssh_config writer, ~/.ssh/config Include patcher
-    sessionSupport.ts                # Session lifecycle orchestration (prepareLaunch/launch/cancel; throws on failure), linkspan deployment, JobStatusMonitor
+    sessionSupport.ts                # Session lifecycle composition (prepareLaunch/launchSession/cancelSession; throw on failure) + JobStatusMonitor (provider-owned)
     slurmSupport.ts                  # SLURM queries over SSH (job status/output via sacct, cluster info via sinfo/sacctmgr)
-    slurmParse.ts                    # Pure SLURM text helpers (sinfo parsing + sbatch script generation); vscode-free, unit-tested
+    slurmParse.ts                    # Pure SLURM text helpers (sinfo + sacct parsing, sbatch script generation); vscode-free, unit-tested
+    slurmLaunch.ts                   # Pure-ish launch steps (slurm check / linkspan install / sbatch submit) over an injected RemoteRunner + LogSink; vscode-free, unit-tested
+    sessionMachine.ts                # Pure SLURM-status -> session-status transition table for the poll loop; vscode-free, unit-tested
     tunnelSupport.ts                 # Dev Tunnels SDK integration (in-process); Microsoft auth via vscode.authentication('microsoft')
     linkspanSupport.ts               # linkspan tunnel health check
     fsSupport.ts                     # Filesystem helpers (PID liveness check)
@@ -72,6 +74,7 @@ scripts/
 - **Cross-window session sync** via `fs.watch` on `sessions.json` in `extensionStore.ts:101+` — multiple VS Code windows share session state. The `fsSupport` lock keeps concurrent writes safe; don't propose removing it.
 - **SLURM is required for launch** — `checkSlurmAvailability` (`modules/sessionSupport.ts`) runs `sinfo` and throws if it exits non-zero; the launch helpers all throw on failure and `sessionProvider._launchSession`'s catch owns the failed-status transition + the single error dialog. The `info.sh` script handles missing SLURM gracefully (exits 0 with no output) for the capabilities probe, but the launch path itself has no plain-SSH fallback yet. See README Roadmap.
 - **Job status polling** uses `sacct -j <jobid>` (not `squeue`).
+- **Testability seam = vscode-free extraction, not DI/hooks.** Tests run under `node --import tsx --test` with NO vscode shim, and most `modules/*` import `vscode` at load (directly or via `Logger.getInstance()`), so those files cannot be imported in a test — injecting fakes into them is inert. To make logic testable, extract the pure/effect-light part into a vscode-free module (`slurmParse`, `sessionMachine`, `slurmLaunch`, `ui/logic/*`) and test that. `slurmLaunch` is the pattern for I/O-bearing logic: take an injected `RemoteRunner`/`LogSink`, mutate only the in-memory session, and let the caller (`sessionSupport`) persist + report progress. Do NOT add optional/pluggable hooks or deps-objects to the vscode-importing modules — they add scaffolding without unblocking tests.
 
 ## External Processes / Binaries
 
