@@ -28,9 +28,9 @@ function sess(status: SlurmSession['status'], extra: Partial<SlurmSession & { is
 test('dotColor buckets statuses into idle/activating/live/failed colours', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-errorForeground)');
     assert.equal(dotColor('cancelled'), 'var(--vscode-errorForeground)');
-    assert.equal(dotColor('pending'), 'var(--vscode-charts-yellow)');
-    assert.equal(dotColor('deploying_agent'), 'var(--vscode-charts-yellow)');
-    assert.equal(dotColor('running'), 'var(--vscode-charts-green)');
+    assert.equal(dotColor('queued'), 'var(--vscode-charts-yellow)');
+    assert.equal(dotColor('submitting'), 'var(--vscode-charts-yellow)');
+    assert.equal(dotColor('preparing'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('completed'), 'var(--vscode-descriptionForeground)');
     assert.equal(dotColor('not_started'), 'var(--vscode-descriptionForeground)');
@@ -39,8 +39,9 @@ test('dotColor buckets statuses into idle/activating/live/failed colours', () =>
 test('sessionActions returns the right buttons per status', () => {
     assert.deepEqual(sessionActions(sess('not_started')).map(a => a.kind), ['start']);
     assert.deepEqual(sessionActions(sess('failed')).map(a => a.kind), ['restart']);
-    assert.deepEqual(sessionActions(sess('running')).map(a => a.kind), ['stop']);
+    assert.deepEqual(sessionActions(sess('preparing')).map(a => a.kind), ['stop']);
     assert.deepEqual(sessionActions(sess('ready_to_connect')).map(a => a.kind), ['stop', 'connect']);
+    assert.deepEqual(sessionActions(sess('disconnected')).map(a => a.kind), ['stop', 'connect']);
 });
 
 test('connected session: Current when this window, else Switch/Connect by window liveness', () => {
@@ -53,5 +54,5 @@ test('connected session: Current when this window, else Switch/Connect by window
 
 test('statusDescriptor reports closeability', () => {
     assert.equal(statusDescriptor(sess('completed')).canClose, true);
-    assert.equal(statusDescriptor(sess('running')).canClose, false);
+    assert.equal(statusDescriptor(sess('preparing')).canClose, false);
 });

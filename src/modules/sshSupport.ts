@@ -332,7 +332,7 @@ export function generateSlurmScript(session: SlurmSession, tunnelCred: TunnelCre
     scriptLines.push(
         `# --- Run linkspan (pre-deployed via scp) ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
-        `"$LINKSPAN_BIN" --port 0 --tunnel-auth-token '${tunnelCred.authToken}' -tunnel-enable`,
+        `"$LINKSPAN_BIN" --port 0 --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
     );
 
     const script = scriptLines.join('\n');
@@ -422,10 +422,8 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
     const hostAlias = `cshost-${sessionId}`;
 
     clearSSHConfigEntry(sessionId, hostAlias);
-    // Save private key to file with 600 permissions in SSH keys dir
+    writeSessionPrivateKey(sessionId, privateKey);
     const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
-    fs.writeFileSync(privateKeyPath, privateKey, { mode: 0o600 });
-    console.log(`Saved SSH private key for session ${sessionId} to ${privateKeyPath}`);
 
 
     const hostname = '127.0.0.1';
@@ -438,6 +436,19 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
         logger.error(`Failed to write SSH config for session ${sessionId}:`, err);
     }
     return hostAlias;
+}
+
+// Persist the per-session SSH key (0600). Written at Step 1 so a reload at ready_to_connect can
+// reconnect with no login-node call; read back via getSessionPrivateKey.
+export function writeSessionPrivateKey(sessionId: string, privateKey: string): void {
+    fs.mkdirSync(CS_SSH_KEYS_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(CS_SSH_KEYS_DIR, `id_cshost-${sessionId}`), privateKey, { mode: 0o600 });
+}
+
+// Read the per-session key from disk (used on reattach, where it's no longer in memory).
+export function getSessionPrivateKey(sessionId: string): string | undefined {
+    const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_cshost-${sessionId}`);
+    try { return fs.readFileSync(privateKeyPath, 'utf-8'); } catch { return undefined; }
 }
 
 export function removeSSHprivateKeyForSession(sessionId: string): void {

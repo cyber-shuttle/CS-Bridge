@@ -34,12 +34,12 @@ export function remainingMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt'
     return session.startedAt ? session.startedAt + total - now : total;
 }
 
-const FAILED: SlurmSession['status'][] = ['failed', 'cancelled', 'expired'];
-const ACTIVATING: SlurmSession['status'][] = ['pending', 'cancelling', 'submitting', 'deploying_agent', 'configuring'];
-const LIVE: SlurmSession['status'][] = ['running', 'connected'];
-const CLOSEABLE: SlurmSession['status'][] = ['failed', 'completed', 'cancelled', 'not_started', 'expired'];
-const RESTARTABLE: SlurmSession['status'][] = ['failed', 'cancelled', 'expired', 'completed'];
-const STOPPABLE: SlurmSession['status'][] = ['pending', 'cancelling', 'submitting', 'deploying_agent', 'running', 'connection_broken', 'connecting', 'configuring'];
+const FAILED: SlurmSession['status'][] = ['failed', 'cancelled'];
+const ACTIVATING: SlurmSession['status'][] = ['queued', 'cancelling', 'submitting'];
+const LIVE: SlurmSession['status'][] = ['preparing', 'connected'];
+const CLOSEABLE: SlurmSession['status'][] = ['failed', 'completed', 'cancelled', 'not_started'];
+const RESTARTABLE: SlurmSession['status'][] = ['failed', 'cancelled', 'completed'];
+const STOPPABLE: SlurmSession['status'][] = ['queued', 'cancelling', 'submitting', 'preparing', 'connecting'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
 
@@ -59,7 +59,7 @@ export function sessionActions(session: ViewSession): SessionAction[] {
             : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' };
         return [STOP, second];
     }
-    if (s === 'ready_to_connect') { return [STOP, { kind: 'connect', label: 'Connect', icon: 'arrow-swap' }]; }
+    if (s === 'ready_to_connect' || s === 'disconnected') { return [STOP, { kind: 'connect', label: s === 'disconnected' ? 'Reconnect' : 'Connect', icon: 'arrow-swap' }]; }
     if (STOPPABLE.includes(s)) { return [STOP]; }
     if (s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
     return [];

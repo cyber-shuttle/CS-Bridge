@@ -9,34 +9,37 @@ export interface SlurmSession extends Session {
     jobDirectory: string;
     allocation: string;
     batchScript?: string; // Optional field to store the generated batch script content
+    tunnelId?: string; // cs-bridge-owned Dev Tunnel id (hosted by linkspan, deleted on remove)
+    tunnelCluster?: string; // its cluster id; linkspan needs it to resolve the tunnel
 }
 
 /*
-Job status lifecycle:
+Session status lifecycle (UI grouping in ui/logic/session.ts).
 
-- not_started: Session is created but not yet launched.
-- configuring: Session is being configured (e.g., fetching credentials, generating scripts).
-- deploying_agent: Tunnel agent is being deployed to the cluster node.
-- submitting: Job is being submitted to the cluster.
-- pending: Job has been submitted to the cluster and is waiting in the queue.
-- running: Job is currently running on the cluster.
-- ready_to_connect: Job is running and tunnel is set up, waiting for user to connect.
-- connecting: User has initiated connection, attempting to connect tunnel.
-- connected: Job is running and tunnel is connected, ready for user interaction.
-- completed: Job has completed successfully.
+Launch (job lifecycle):
+- not_started: created, never launched.
+- submitting: submitting the batch job to SLURM (sbatch in flight).
+- queued: accepted, waiting in the SLURM queue.
+- preparing: running on the compute node; bringing up the remote sshd + tunnel (Step 1).
 
-Error states (Need proper handling and messaging for these):
-- failed: Job has completed with a failure status.
-- cancelling: Cancellation has been requested and is in progress.
-- cancelled: Job has been cancelled.
-- expired: Session has expired (e.g., tunnel expired, job ran out of time, etc.).
-- connection_broken: Tunnel connection failed after job started.
+Connect:
+- ready_to_connect: remote sshd + tunnel are live AND all connection-enabling info is persisted
+  (sshTunnelId/sshPort/region in sessions.json + the SSH key on disk) - so the extension can
+  initiate the connection with no login-node SSH calls, even after a reload.
+- connecting: opening the local relay + a window (Step 2).
+- connected: a VS Code window is attached over the tunnel.
+- disconnected: not connected (failed to connect, or the live connection dropped); the job may
+  still be alive - retry (Connect) or Stop. Stays monitored: goes terminal on job death.
+
+Teardown / terminal:
+- cancelling: Stop requested; scancel in flight.
+- cancelled / failed / completed: terminal (user-stopped / errored / job finished cleanly).
 */
 export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'configuring' | 'connecting' | 'connected' | 'ready_to_connect' | 'running' | 'failed' | 'completed' | 'pending' | 'submitting' | 'deploying_agent' | 'cancelled' | 'not_started' | 'cancelling' | 'expired' | 'connection_broken';
+    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'cancelled' | 'not_started' | 'cancelling' | 'disconnected';
     tunnelType: 'devtunnel' | 'cstunnel' | 'open';
     submittedAt: number;
     startedAt?: number; // epoch ms when the job first started running; anchors the wall-time countdown
@@ -46,17 +49,18 @@ export interface Session {
     windowPids?: number[];
 }
 
-interface SessionConnectionInfo {
+// Required fields are the refs persisted across reload (see persistableConnectionInfo); optional fields are volatile/secret, in-memory only.
+export interface SessionConnectionInfo {
     sshPort: number;
-    sshTunnelForwardPort: number;
     sshTunnelId: string;
-    sshPassword: string;
-    sshPrivateKey: string;
-    logPort: number;
-    apiTunnelId: string;
-    apiTunnelAccessToken: string;
-    apiPort: number;
     region: string;
+    sshTunnelForwardPort?: number;
+    sshPassword?: string;
+    sshPrivateKey?: string;
+    logPort?: number;
+    apiTunnelId?: string;
+    apiTunnelAccessToken?: string;
+    apiPort?: number;
 }
 
 export interface SshHost {

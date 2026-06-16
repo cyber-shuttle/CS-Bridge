@@ -26,20 +26,17 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
     not_started: { name: 'circle-slash' },
-    configuring: { name: 'loading', spin: true },
-    deploying_agent: { name: 'loading', spin: true },
     submitting: { name: 'loading', spin: true },
-    pending: { name: 'loading', spin: true },
-    running: { name: 'loading', spin: true },
+    queued: { name: 'loading', spin: true },
+    preparing: { name: 'loading', spin: true },
     ready_to_connect: { name: 'plug' },
     connecting: { name: 'loading', spin: true },
     connected: { name: 'vm-active' },
-    connection_broken: { name: 'loading', spin: true },
+    disconnected: { name: 'debug-disconnect' },
     completed: { name: 'pass' },
     failed: { name: 'error' },
     cancelled: { name: 'circle-slash' },
     cancelling: { name: 'loading', spin: true },
-    expired: { name: 'history' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -51,13 +48,11 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'not_started': return <Row style={statusStyle}>Not started</Row>;
         case 'ready_to_connect':
         case 'connected': return <Row style={statusStyle}>{fmtTime(remainingMs(session, now))} left</Row>;
-        case 'running': return <Row style={statusStyle}>Setting up connection…</Row>;
-        case 'connection_broken': return <Row style={statusStyle}>Reconnecting…</Row>;
+        case 'preparing': return <Row style={statusStyle}>Establishing secure tunnel…</Row>;
+        case 'disconnected': return <Row style={statusStyle}>{session.errorMessage ? `Disconnected: ${session.errorMessage}` : 'Disconnected'}</Row>;
         case 'connecting': return <Row style={statusStyle}>Connecting…</Row>;
-        case 'deploying_agent': return <Row style={statusStyle}>Deploying agent…</Row>;
         case 'submitting': return <Row style={statusStyle}>Submitting…</Row>;
-        case 'configuring': return <Row style={statusStyle}>Configuring…</Row>;
-        case 'pending': {
+        case 'queued': {
             const secs = session.submittedAt ? Math.floor((now - session.submittedAt) / 1000) : 0;
             const elapsed = secs >= 60 ? ` (${Math.floor(secs / 60)}m ${secs % 60}s)` : ` (${secs}s)`;
             return <Row style={statusStyle}>Queued{session.submittedAt ? elapsed : ''}</Row>;
@@ -66,7 +61,6 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'cancelled': return <Row style={statusStyle}>{session.errorMessage ? `Cancel failed: ${session.errorMessage}` : 'Cancelled'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;
         case 'completed': return <Row style={statusStyle}>Completed</Row>;
-        case 'expired': return <Row style={statusStyle}>Expired</Row>;
         default: return null;
     }
 }
