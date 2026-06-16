@@ -1,23 +1,45 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { SessionsState } from '@/models';
+import type { SessionsState, ViewSession, SlurmClusterInfo } from '@/models';
 import { post, useWebviewState } from '@/ui/platform/vscode';
 import { SessionCard, NowContext } from '@/ui/components/SessionCard';
-import { HostForm } from '@/ui/components/HostForm';
+import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
-function DraftCard({ state }: { state: SessionsState }) {
-    const host = state.draftHost!;
+// The config form card, used both to create a session (icon "add") and to edit one (icon "edit").
+function ConfigCard({ icon, host, info, error, onCancel, initial, saveId }: {
+    icon: string; host: string; info: SlurmClusterInfo | undefined; error: string | undefined;
+    onCancel: () => void; initial?: HostFormInitial; saveId?: string;
+}) {
     return (
         <Card>
             <Row gap={6}>
-                <Icon name="add" />
+                <Icon name={icon} />
                 <Text weight={600}>{host}</Text>
-                <ActionIcon name="close" ariaLabel="Cancel new session" onClick={() => post({ command: 'cancelDraftSession' })} />
+                <ActionIcon name="close" ariaLabel="Cancel" onClick={onCancel} />
             </Row>
-            <HostForm host={host} info={state.clusterInfo[host]} error={state.clusterErrors[host]} />
+            <HostForm host={host} info={info} error={error} initial={initial} saveId={saveId} />
         </Card>
     );
+}
+
+// gpuClass is gpuString output ("type:count" | "count" | "None"); split it back into form fields.
+function gpuInitial(gpuClass: string): Partial<HostFormInitial> {
+    if (!gpuClass || gpuClass === 'None') { return { tab: 'cpu' }; }
+    const [type, count] = gpuClass.split(':');
+    return count ? { tab: 'gpu', gpuType: type, gpuCount: count } : { tab: 'gpu', gpuCount: type };
+}
+
+// Pre-fill the edit form from an existing session.
+function editInitial(session: ViewSession): HostFormInitial {
+    return {
+        ...gpuInitial(session.gpuClass),
+        partName: session.queue,
+        allocation: session.allocation,
+        cpu: String(session.cpus),
+        memory: session.memory,
+        wall: session.wallTime,
+    };
 }
 
 function ScriptPreviewOverlay({ state }: { state: SessionsState }) {
@@ -49,8 +71,10 @@ function SessionsView({ state }: { state: SessionsState }) {
     }
     return (
         <>
-            {state.draftHost ? <DraftCard key={state.draftHost} state={state} /> : null}
-            {state.sessions.map(s => <SessionCard key={s.id} session={s} />)}
+            {state.draftHost ? <ConfigCard key={state.draftHost} icon="add" host={state.draftHost} info={state.clusterInfo[state.draftHost]} error={state.clusterErrors[state.draftHost]} onCancel={() => post({ command: 'cancelDraftSession' })} /> : null}
+            {state.sessions.map(s => s.id === state.editingId
+                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} info={state.clusterInfo[s.cluster]} error={state.clusterErrors[s.cluster]} onCancel={() => post({ command: 'cancelEditSession' })} initial={editInitial(s)} saveId={s.id} />
+                : <SessionCard key={s.id} session={s} />)}
             {!state.sessions.length && !state.draftHost
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
                 : null}

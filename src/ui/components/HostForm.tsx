@@ -5,10 +5,23 @@ import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuStr
 import { Row, Stack, Text, Spinner, Button, SingleSelect, Option } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 
+export type HostFormInitial = {
+    tab?: ResourceTab;
+    partName?: string;
+    allocation?: string;
+    cpu?: string;
+    memory?: string;
+    gpuCount?: string;
+    gpuType?: string;
+    wall?: string;
+};
+
 interface Props {
     host: string;
     info: SlurmClusterInfo | undefined;
     error: string | undefined;
+    initial?: HostFormInitial; // pre-fill values when editing an existing session
+    saveId?: string; // when set, the form edits this session ("Save") instead of creating one ("Add")
 }
 
 const WALL_OPTIONS: [string, string][] = [
@@ -28,19 +41,20 @@ function Select({ label, value, onChange, options, children }: { label: string; 
     );
 }
 
-function HostFormFields({ host, info }: { host: string; info: SlurmClusterInfo }) {
+function HostFormFields({ host, info, initial, saveId }: { host: string; info: SlurmClusterInfo; initial?: HostFormInitial; saveId?: string }) {
     const tabs: ResourceTab[] = (['cpu', 'gpu'] as ResourceTab[]).filter(t => hasTab(info, t));
-    const initialTab = tabs[0] ?? 'cpu';
-    const initialPart = partitionsForTab(info, initialTab)[0];
+    const initialTab = initial?.tab ?? tabs[0] ?? 'cpu';
+    const initialParts = partitionsForTab(info, initialTab);
+    const initialPart = initialParts.find(p => p.name === initial?.partName) ?? initialParts[0];
 
     const [tab, setTab] = useState<ResourceTab>(initialTab);
-    const [partName, setPartName] = useState(initialPart?.name ?? '');
-    const [allocation, setAllocation] = useState(info.accounts[0] ?? '');
-    const [cpu, setCpu] = useState(String(cpuOptions(initialPart)[0] ?? 1));
-    const [memory, setMemory] = useState(memoryOptions(initialPart)[0] ?? '8 GB');
-    const [gpuCount, setGpuCount] = useState(String(gpuOptions(initialPart, initialTab).counts[0] ?? 0));
-    const [gpuType, setGpuType] = useState(gpuOptions(initialPart, initialTab).types[0] ?? '');
-    const [wall, setWall] = useState(WALL_OPTIONS[0][0]);
+    const [partName, setPartName] = useState(initial?.partName ?? initialPart?.name ?? '');
+    const [allocation, setAllocation] = useState(initial?.allocation ?? info.accounts[0] ?? '');
+    const [cpu, setCpu] = useState(initial?.cpu ?? String(cpuOptions(initialPart)[0] ?? 1));
+    const [memory, setMemory] = useState(initial?.memory ?? memoryOptions(initialPart)[0] ?? '8 GB');
+    const [gpuCount, setGpuCount] = useState(initial?.gpuCount ?? String(gpuOptions(initialPart, initialTab).counts[0] ?? 0));
+    const [gpuType, setGpuType] = useState(initial?.gpuType ?? gpuOptions(initialPart, initialTab).types[0] ?? '');
+    const [wall, setWall] = useState(initial?.wall ?? WALL_OPTIONS[0][0]);
 
     const parts = partitionsForTab(info, tab);
     const partition = parts.find(p => p.name === partName) ?? parts[0];
@@ -71,7 +85,8 @@ function HostFormFields({ host, info }: { host: string; info: SlurmClusterInfo }
 
     const submit = () => {
         post({
-            command: 'addSession',
+            command: saveId ? 'saveSession' : 'addSession',
+            sessionId: saveId,
             host,
             cpus: cpu,
             memory,
@@ -109,17 +124,17 @@ function HostFormFields({ host, info }: { host: string; info: SlurmClusterInfo }
                 </>
             ) : null}
             <Select label="Wall Time" value={wall} onChange={setWall} options={WALL_OPTIONS} />
-            <Button onClick={submit}>Add</Button>
+            <Button onClick={submit}>{saveId ? 'Save' : 'Add'}</Button>
         </Stack>
     );
 }
 
-export function HostForm({ host, info, error }: Props) {
+export function HostForm({ host, info, error, initial, saveId }: Props) {
     if (error) {
         return <Text color="var(--vscode-errorForeground)" style={{ padding: '8px' }}>{error}</Text>;
     }
     if (!info) {
         return <Row gap={6} pad="8px"><Spinner size={16} /> Fetching runtime details…</Row>;
     }
-    return <HostFormFields host={host} info={info} />;
+    return <HostFormFields host={host} info={info} initial={initial} saveId={saveId} />;
 }

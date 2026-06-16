@@ -43,6 +43,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     private readonly _clusterInfo = new Map<string, SlurmClusterInfo>();
     private readonly _clusterErrors: Record<string, string> = {};
     private _draftHost: string | null = null;
+    private _editingId: string | null = null;
     private _previewSession: SlurmSession | null = null;
     // One provider instance feeds both views; each resolved webview is keyed by its viewType.
     private readonly _webviews = new Map<string, vscode.Webview>();
@@ -129,7 +130,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 this._previewSession = null;
                 void this._pushState();
                 break;
-            case 'addSession':
+            case 'addSession': {
                 const newSession: SlurmSession = {
                     id: `session-${Date.now()}`,
                     name: `Session ${Date.now()}`,
@@ -137,22 +138,39 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                     status: 'not_started',
                     tunnelType: 'devtunnel',
                     jobId: '',
-                    queue: data.queue || '',
-                    wallTime: data.wallTime || '',
-                    gpuCount: data.gpu === 'None' ? 0 : 1,
-                    gpuClass: data.gpu, // Could be determined based on gpuCount or additional data
-                    cpus: parseInt(data.cpus) || 0,
-                    memory: data.memory || '',
                     jobDirectory: '',
-                    allocation: data.allocation || '',
                     submittedAt: Date.now(),
                     errorMessage: '',
                     workingDirectory: this._clusterInfo.get(data.host)?.homeDir,
+                    ...this._paramsFromData(data),
                 };
                 addSession(newSession);
                 this._draftHost = null;
                 void this._pushState();
                 break;
+            }
+            case 'editSession': {
+                const s = this._requireSession(id, 'edit', true);
+                if (!s) { break; }
+                this._editingId = id;
+                void this._pushState();
+                this._fetchClusterInfo(s.cluster);
+                break;
+            }
+            case 'cancelEditSession':
+                this._editingId = null;
+                void this._pushState();
+                break;
+            case 'saveSession': {
+                const s = this._requireSession(id, 'save', true);
+                if (!s) { break; }
+                Object.assign(s, this._paramsFromData(data));
+                s.batchScript = undefined; // params changed; the script is regenerated at launch
+                updateSession(s);
+                this._editingId = null;
+                void this._pushState();
+                break;
+            }
             case 'prepareLaunchSession':
                 this._logger.info(`Preparing to launch session with ID: ${id}`);
                 this._prepareLaunchSession(id).then(() => {
@@ -257,6 +275,19 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         this._draftHost = pick.label;
         void this._pushState();
         this._fetchClusterInfo(pick.label);
+    }
+
+    // Map the config-form message onto a session's resource params (shared by add + save).
+    private _paramsFromData(data: any): Pick<SlurmSession, 'queue' | 'wallTime' | 'gpuCount' | 'gpuClass' | 'cpus' | 'memory' | 'allocation'> {
+        return {
+            queue: data.queue || '',
+            wallTime: data.wallTime || '',
+            gpuCount: data.gpu === 'None' ? 0 : 1,
+            gpuClass: data.gpu,
+            cpus: parseInt(data.cpus) || 0,
+            memory: data.memory || '',
+            allocation: data.allocation || '',
+        };
     }
 
     // Shared by the host picker and the post-add "Connect" action.
@@ -367,6 +398,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                         .map(s => ({ ...s, ...liveAndCleanup(s) }))
                         .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first
                     draftHost: this._draftHost,
+                    editingId: this._editingId,
                     clusterInfo: Object.fromEntries(this._clusterInfo),
                     clusterErrors: this._clusterErrors,
                     previewSession: this._previewSession,
