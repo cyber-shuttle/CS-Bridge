@@ -6,7 +6,7 @@ import { clearSSHConfigEntry, createSSHConfigEntry, getSessionPrivateKey, SshMan
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
-import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress, prepareLaunch } from './modules/sessionSupport';
+import { cancelSession, JobStatusMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
@@ -36,6 +36,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
     private _previewSession: SlurmSession | null = null;
     private readonly _shared: vscode.Disposable[] = [];
     private readonly _connecting = new Set<string>(); // session ids with an in-flight connect, to drop re-entrant requests
+    private readonly _monitor = new JobStatusMonitor(); // provider-owned background SLURM poller
     private _sharedReady = false;
 
     // _myId: undefined in sidebar/non-remote windows (sees all sessions, drives monitoring); set to sessionId in cshost remote windows (scoped to that session, observes only).
@@ -64,11 +65,10 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             void this.pushState();
         });
         this._shared.push({ dispose: () => sessionsWatcher.close() });
-        JobStatusMonitor.init();
         // Sidebar only - cshost windows observe one session and don't drive monitoring.
         if (!this._myId) {
             for (const s of getAllSessions()) {
-                if (s.jobId && !TERMINAL_STATUSES.has(s.status)) { JobStatusMonitor.getInstance().startMonitoring(s); }
+                if (s.jobId && !TERMINAL_STATUSES.has(s.status)) { this._monitor.startMonitoring(s); }
             }
         }
     }
@@ -382,7 +382,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             if (choice !== 'Stop') { void this.pushState(); return; }
             session.status = 'cancelling';
             session.errorMessage = '';
-            cancelRunningSession(session).then(() => {
+            this._runWithProgress(session, `Cancelling session ${session.name}...`, p => cancelSession(session, this._monitor, p)).then(() => {
                 void this.pushState();
                 vscode.window.showInformationMessage('Session cancellation completed. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.');
             }).catch(error => {
@@ -406,7 +406,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
     private _launchSession(sessionId: string) {
         const session = this._requireSession(sessionId, 'launch', false);
         if (!session) { return; }
-        this._logger.info(`Launching session with IDs: ${sessionId}`);
+        this._logger.info(`Launching session with ID: ${sessionId}`);
         this._previewSession = null;
         session.connectionInfo = undefined;
         session.startedAt = undefined; // fresh launch: re-anchor the wall-time countdown when the new job starts running
@@ -414,7 +414,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
         session.status = 'submitting';
         updateSession(session);
         void this.pushState();
-        launchSessionWithProgress(session).then(() => {
+        this._runWithProgress(session, `Launching session ${session.name}...`, p => launchSession(session, this._monitor, p)).then(() => {
             this._logger.info(`Session launch completed for session ID: ${sessionId}`);
             void this.pushState();
         }).catch(error => {
@@ -425,6 +425,14 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             updateSession(session);
             void this.pushState();
         });
+    }
+
+    // Run a session operation inside a cancellable progress notification; cancelling the notification marks the session cancelled.
+    private _runWithProgress(session: SlurmSession, title: string, fn: (progress: vscode.Progress<{ message?: string }>) => Promise<void>): Promise<void> {
+        return Promise.resolve(vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
+            token.onCancellationRequested(() => { session.status = 'cancelled'; updateSession(session); });
+            await fn(progress);
+        }));
     }
 
     private async _prepareLaunchSession(sessionId: string) {

@@ -6,6 +6,7 @@ import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
 import { generateSlurmScript } from "./slurmParse";
 import { computeStatusTransition } from "./sessionMachine";
+import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm } from "./slurmLaunch";
 import { disconnectSessionFromTunnel, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from "./tunnelSupport";
 import { checkLinkspanHealth } from "./linkspanSupport";
 
@@ -33,31 +34,17 @@ class AsyncLock {
     }
 }
 
+// Owned by sessionProvider (one per window); polls SLURM job status in the background and drives session
+// status transitions. Instance-based (no global singleton) so its lifecycle is explicit and it is mockable.
 export class JobStatusMonitor {
-    private static instance: JobStatusMonitor;
-
     private monitoringSessions: Map<string, SlurmSession> = new Map();
     private monitoringFailedCounts: Map<string, number> = new Map();
     private _lock = new AsyncLock();
     private sessionPollingInterval = 5000; // 5 seconds
     private preparing = new Set<string>(); // sessions whose Step-1 (sshd + tunnel) prepare is in flight, to keep it run-once
 
-
-    private constructor() {
+    constructor() {
         this.monitorSessions();
-    }
-
-    public static init(): void {
-        if (!JobStatusMonitor.instance) {
-            JobStatusMonitor.instance = new JobStatusMonitor();
-        }
-    }
-
-    public static getInstance(): JobStatusMonitor {
-        if (!JobStatusMonitor.instance) {
-            throw new Error("JobStatusMonitor not initialized. Call init() first.");
-        }
-        return JobStatusMonitor.instance;
     }
 
     // Step 1: drive a running session to ready_to_connect. Guarded to run the networked create once despite the 5s poll.
@@ -247,93 +234,6 @@ export class JobStatusMonitor {
     }
 }
 
-// Launch-step helpers throw on failure; launchSessionWithProgress lets it propagate to the caller
-// (sessionProvider._launchSession), which owns the failed-status transition and the error dialog.
-async function checkSlurmAvailability(session: SlurmSession, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
-    progress.report({ message: "Checking Slurm availability on cluster" });
-    const slurmResponse = await SshManager.getInstance().runRemoteCommand(session.cluster, 'sinfo');
-    if (slurmResponse.code !== 0) {
-        throw new Error(`Slurm is not available on cluster ${session.cluster}: ${slurmResponse.stderr}`);
-    }
-    logger.info(`Slurm is available on cluster ${session.cluster}`);
-}
-
-async function checkLinkspanInstallation(session: SlurmSession, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<boolean> {
-    const sshManager = SshManager.getInstance();
-
-    progress.report({ message: "Checking Linkspan installation on cluster" });
-    const remoteVersionResult = await sshManager.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | grep -oP '[^/]+$'`);
-    const localVersionResult = await sshManager.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
-
-    if (remoteVersionResult.code !== 0) {
-        const errorMessage = `Failed to check Linkspan latest version. Error: ${remoteVersionResult.stderr}`;
-        logger.error(errorMessage);
-        return false;
-    }
-    if (localVersionResult.code !== 0) {
-        const errorMessage = `Failed to check Linkspan version on cluster ${session.cluster}. Error ${localVersionResult.stderr}`;
-        logger.error(errorMessage);
-        return false;
-    }
-
-    const localVersion = localVersionResult.stdout.trim();
-    // Remove leading 'v' if present in remote version tag
-    const remoteVersion = remoteVersionResult.stdout.trim().startsWith('v') ? remoteVersionResult.stdout.trim().substring(1) : remoteVersionResult.stdout.trim();
-
-
-    if (localVersion !== '' && remoteVersion !== '' && localVersion === remoteVersion) {
-        logger.info(`Linkspan is already installed and up to date on cluster ${session.cluster}`);
-        return true;
-    } else {
-        logger.info(`Linkspan is not installed or outdated on cluster ${session.cluster}. Local version: ${localVersion}, Latest version: ${remoteVersion}`);
-        return false;
-    }
-}
-
-async function installLinkspan(session: SlurmSession, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
-    progress.report({ message: "Installing Linkspan on cluster" });
-    const sshManager = SshManager.getInstance();
-    const archResult = await sshManager.runRemoteCommand(session.cluster, 'uname -m');
-    if (archResult.code !== 0) { throw new Error('Failed to detect remote architecture'); }
-    let arch = archResult.stdout.trim();
-    if (arch === 'aarch64') { arch = 'arm64'; }
-    logger.info(`Detected architecture on cluster ${session.cluster}: ${arch}`);
-
-    const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/linkspan_Linux_${arch}.tar.gz`;
-    logger.info(`Downloading Linkspan from ${downloadUrl} for architecture ${arch}`);
-    const installResult = await sshManager.runRemoteCommand(session.cluster,
-        `mkdir -p ~/.cybershuttle/bin && curl -fsSL "${downloadUrl}" | tar -xz -C ~/.cybershuttle/bin linkspan && chmod +x ~/.cybershuttle/bin/linkspan`);
-    if (installResult.code !== 0) {
-        throw new Error(`Failed to install Linkspan on cluster ${session.cluster}: ${installResult.stderr}`);
-    }
-    logger.info(`Linkspan installed successfully on cluster ${session.cluster}`);
-    logger.info('Installation output:', installResult.stdout);
-}
-
-async function submitJobToSlurm(session: SlurmSession, progress: vscode.Progress<{ message?: string; increment?: number }>): Promise<void> {
-    progress.report({ message: "Submitting job to Slurm..." });
-    if (!session.batchScript) { throw new Error(`Batch script is missing for session ${session.name}`); }
-
-    const scriptB64 = Buffer.from(session.batchScript).toString('base64');
-    const submitCommand = `mkdir -p ~/.cybershuttle/logs && echo '${scriptB64}' | base64 -d | sbatch`;
-    logger.info(`Submitting job to Slurm with command: ${submitCommand}`);
-
-    const submitResult = await SshManager.getInstance().runRemoteCommand(session.cluster, submitCommand);
-    if (submitResult.code !== 0) { throw new Error(`Job submission failed: ${submitResult.stderr}`); }
-
-    const output = submitResult.stdout.trim();
-    logger.info(`Job submission output: ${output}`);
-    const jobIdMatch = output.match(/Submitted batch job (\d+)/);
-    if (!jobIdMatch) { throw new Error(`Failed to parse job ID from sbatch output: ${output}`); }
-
-    const jobId = jobIdMatch[1];
-    logger.info(`Job submitted successfully with Job ID: ${jobId}`);
-    session.jobId = jobId;
-    session.status = 'queued'; // Job is submitted and waiting in queue
-    session.submittedAt = new Date().getTime();
-    updateSession(session);
-}
-
 // Pre-launch orchestration: fetch tunnel credentials, ensure the dev tunnel exists (persisting its id before it
 // goes into the script), and generate the SLURM batch script. Throws a contextual error on a step's failure;
 // sessionProvider._prepareLaunchSession owns the dialog + errorMessage.
@@ -352,92 +252,70 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function launchSessionWithProgress(session: SlurmSession) {
-
+// Launch composition. Each step (in slurmLaunch) throws on failure; the rejection propagates to the caller
+// (sessionProvider._launchSession) which owns the failed-status transition and the error dialog. The caller
+// wraps this in vscode.window.withProgress and passes the progress reporter + the monitor it owns.
+export async function launchSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
     logger.info(`Initiating launch for session: ${session.name}`);
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Launching session ${session.name}...`,
-        cancellable: true
-    }, async (progress, token) => {
-        token.onCancellationRequested(() => {
-            logger.info(`Session launch cancelled: ${session.name}`);
-            session.status = 'cancelled';
-            updateSession(session);
-        });
+    const run = SshManager.getInstance();
 
-        progress.report({ message: "Starting..." });
+    progress.report({ message: "Checking Slurm availability on cluster" });
+    await checkSlurmAvailability(session, run, logger);
 
-        // Each step throws on failure; the rejection propagates to sessionProvider._launchSession's catch,
-        // which sets status='failed' + errorMessage and shows the one dialog.
-        await checkSlurmAvailability(session, progress);
+    progress.report({ message: "Checking Linkspan installation on cluster" });
+    if (!await checkLinkspanInstallation(session, run, logger)) {
+        progress.report({ message: "Installing Linkspan on cluster" });
+        await installLinkspan(session, run, logger);
+    }
 
-        if (!await checkLinkspanInstallation(session, progress)) {
-            logger.info(`Linkspan not installed/up-to-date on cluster ${session.cluster}. Installing...`);
-            await installLinkspan(session, progress);
-        }
-
-        await submitJobToSlurm(session, progress);
-        JobStatusMonitor.getInstance().startMonitoring(session);
-    });
-
+    progress.report({ message: "Submitting job to Slurm..." });
+    await submitJobToSlurm(session, run, logger);
+    updateSession(session); // persist jobId + queued status set in-memory by submitJobToSlurm
+    monitor.startMonitoring(session);
 }
 
-export async function cancelRunningSession(session: SlurmSession) {
-    // Implement logic to cancel a running session, e.g. by sending scancel command for Slurm jobs
+// Cancel composition. Records (does not show) a cancel failure; teardown always runs, then it rethrows so the
+// caller (sessionProvider._cancelSessionExecution) owns the dialog and the false "completed" toast is skipped.
+export async function cancelSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
     logger.info(`Cancelling session: ${session.name}`);
+    progress.report({ message: "Cancelling session..." });
 
-    await vscode.window.withProgress({
-        location: vscode.ProgressLocation.Notification,
-        title: `Cancelling session ${session.name}...`,
-        cancellable: true
-    }, async (progress, token) => {
-        token.onCancellationRequested(() => {
-            logger.info(`Session cancellation interrupted: ${session.name}`);
-            session.status = 'cancelled';
-            updateSession(session);
-        });
-        progress.report({ message: "Cancelling session..." });
-
-        // Record (don't show) a cancel failure: the teardown below must still run, then we rethrow so the
-        // caller (sessionProvider._cancelSessionExecution) owns the dialog and the false "completed" toast is skipped.
-        let cancelError: Error | undefined;
-        try {
-            if (session.jobId) {
-                const cancelCommand = `scancel ${session.jobId}`;
-                logger.info(`Sending cancellation command for session ${session.name}: ${cancelCommand}`);
-                const cancelResult = await SshManager.getInstance().runRemoteCommand(session.cluster, cancelCommand);
-                if (cancelResult.code !== 0) {
-                    throw new Error(`Failed to send cancellation command for session ${session.name}: ${cancelResult.stderr}`);
-                }
-                logger.info(`Cancellation command sent successfully for session ${session.name}`);
-            } else {
-                logger.warn(`Session ${session.name} has no job ID; marking cancelled without scancel.`);
+    let cancelError: Error | undefined;
+    try {
+        if (session.jobId) {
+            const cancelCommand = `scancel ${session.jobId}`;
+            logger.info(`Sending cancellation command for session ${session.name}: ${cancelCommand}`);
+            const cancelResult = await SshManager.getInstance().runRemoteCommand(session.cluster, cancelCommand);
+            if (cancelResult.code !== 0) {
+                throw new Error(`Failed to send cancellation command for session ${session.name}: ${cancelResult.stderr}`);
             }
-            session.status = 'cancelled';
-            updateSession(session);
-        } catch (error: any) {
-            cancelError = error instanceof Error ? error : new Error(String(error));
-            logger.error(`Error while cancelling session ${session.name}:`, error);
-            session.status = 'failed';
-            session.errorMessage = cancelError.message;
-            updateSession(session);
-        }
-
-        // Teardown always runs: full local teardown (config + key + refs) on success; on failure the job may
-        // still be alive, so free only the port and keep key + refs so reattach still works.
-        if (session.status === 'cancelled') {
-            try {
-                await disconnectSessionFromTunnel(session);
-            } catch (err) {
-                logger.error(`Failed to disconnect session ${session.name} from tunnel: ${err}`);
-            }
+            logger.info(`Cancellation command sent successfully for session ${session.name}`);
         } else {
-            await disposeSessionTunnelClient(session.id);
+            logger.warn(`Session ${session.name} has no job ID; marking cancelled without scancel.`);
         }
+        session.status = 'cancelled';
+        updateSession(session);
+    } catch (error: any) {
+        cancelError = error instanceof Error ? error : new Error(String(error));
+        logger.error(`Error while cancelling session ${session.name}:`, error);
+        session.status = 'failed';
+        session.errorMessage = cancelError.message;
+        updateSession(session);
+    }
 
-        JobStatusMonitor.getInstance().stopMonitoring(session.id);
+    // Teardown always runs: full local teardown (config + key + refs) on success; on failure the job may
+    // still be alive, so free only the port and keep key + refs so reattach still works.
+    if (session.status === 'cancelled') {
+        try {
+            await disconnectSessionFromTunnel(session);
+        } catch (err) {
+            logger.error(`Failed to disconnect session ${session.name} from tunnel: ${err}`);
+        }
+    } else {
+        await disposeSessionTunnelClient(session.id);
+    }
 
-        if (cancelError) { throw cancelError; }
-    });
+    monitor.stopMonitoring(session.id);
+
+    if (cancelError) { throw cancelError; }
 }
