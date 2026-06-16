@@ -5,7 +5,7 @@ import {
     addHostToConfigText,
     removeHostFromConfigText,
     mergeHostsByPriority,
-    buildSessionSshConfigBlock,
+    buildSshConfigBlock,
     SSH_RESILIENCE_OPTIONS,
 } from './sshHostsStore';
 
@@ -50,8 +50,8 @@ test('removeHostFromConfigText removes the named entry', () => {
     assert.deepEqual(parseHostsFromConfigText(removeHostFromConfigText(text, 'h')), []);
 });
 
-test('buildSessionSshConfigBlock emits the six SSH resilience options', () => {
-    const block = buildSessionSshConfigBlock('sess1', 'cshost-sess1', '127.0.0.1', 50122, 'cs-ssh-user', '/keys/id_cshost-sess1');
+test('buildSshConfigBlock emits the six SSH resilience options', () => {
+    const block = buildSshConfigBlock('sess1', 'cshost-sess1', '127.0.0.1', 50122, 'cs-ssh-user', '/keys/id_cshost-sess1');
     assert.equal(SSH_RESILIENCE_OPTIONS.length, 6);
     for (const [key, value] of SSH_RESILIENCE_OPTIONS) {
         assert.match(block, new RegExp(`^    ${key} ${value}$`, 'm'));
@@ -62,9 +62,9 @@ test('buildSessionSshConfigBlock emits the six SSH resilience options', () => {
     assert.match(block, /^    IdentityFile \/keys\/id_cshost-sess1$/m);
 });
 
-// removeSSHConfigEntry's removal regex only matches 4-space-indented directive lines.
-test('buildSessionSshConfigBlock indents every directive so removeSSHConfigEntry can remove it', () => {
-    const block = buildSessionSshConfigBlock('s', 'cshost-s', '127.0.0.1', 22, 'u', '/k');
+// removeSshConfigEntry's removal regex only matches 4-space-indented directive lines.
+test('buildSshConfigBlock indents every directive so removeSshConfigEntry can remove it', () => {
+    const block = buildSshConfigBlock('s', 'cshost-s', '127.0.0.1', 22, 'u', '/k');
     for (const line of block.split('\n')) {
         if (line === '' || line.startsWith('#') || line.startsWith('Host ')) { continue; }
         assert.match(line, /^ {4}\S/);

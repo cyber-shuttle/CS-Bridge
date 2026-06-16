@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePartitionLine, generateSlurmScript, parseSacctStatus } from './slurmParse';
+import { parsePartitionLine, buildSlurmScript, parseSacctStatus } from './slurmParse';
 import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
 
 test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
@@ -43,13 +43,13 @@ test('parsePartitionLine throws on a malformed line', () => {
     assert.throws(() => parsePartitionLine('only|three|fields'), /Invalid sinfo line/);
 });
 
-test('generateSlurmScript emits the resource #SBATCH directives and the linkspan invocation', () => {
+test('buildSlurmScript emits the resource #SBATCH directives and the linkspan invocation', () => {
     const session = {
         cpus: 4, memory: '8 GB', wallTime: '02:00:00', queue: 'gpu', allocation: 'acct1',
         gpuClass: 'a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
     } as SlurmSession;
     const cred = { provider: 'devtunnel', authToken: 'tok' } as TunnelCredential;
-    const script = generateSlurmScript(session, cred);
+    const script = buildSlurmScript(session, cred);
     assert.match(script, /^#SBATCH --cpus-per-task=4$/m);
     assert.match(script, /^#SBATCH --mem=8GB$/m);
     assert.match(script, /^#SBATCH --partition=gpu$/m);
@@ -57,11 +57,11 @@ test('generateSlurmScript emits the resource #SBATCH directives and the linkspan
     assert.match(script, /--tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
 });
 
-test('generateSlurmScript omits the GPU directive when no GPU is selected', () => {
+test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
     const session = {
         cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
         gpuClass: '', gpuCount: 0,
     } as SlurmSession;
-    const script = generateSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
+    const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
     assert.doesNotMatch(script, /--gres=/);
 });

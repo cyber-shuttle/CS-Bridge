@@ -2,17 +2,17 @@ import * as vscode from 'vscode';
 import { errMsg } from './logger';
 import { SlurmClusterInfo, SlurmSession, SessionsState } from './models';
 import { BaseWebviewProvider } from './baseWebviewProvider';
-import { removeSSHConfigEntry, createSSHConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
+import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
-import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
-import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { addSession, removeSession, getSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
+import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelSession, JobStatusMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
 
 function openSessionWindow(sessionId: string): void {
-    const path = findSession(sessionId)?.workingDirectory ?? '';
+    const path = getSession(sessionId)?.workingDirectory ?? '';
     const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
 }
@@ -59,7 +59,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
         // cshost windows only react to changes in their own session.
         let lastMine: string | undefined;
         const sessionsWatcher = watchSessions(() => {
-            const mine = this._myId ? JSON.stringify(findSession(this._myId)) : undefined;
+            const mine = this._myId ? JSON.stringify(getSession(this._myId)) : undefined;
             if (mine !== undefined && mine === lastMine) { return; }
             lastMine = mine;
             void this.pushState();
@@ -166,7 +166,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
     }
 
     private _requireSession(id: string, action: string, push: boolean): SlurmSession | undefined {
-        const s = findSession(id);
+        const s = getSession(id);
         if (!s) {
             this._logger.error(`Session with ID ${id} not found to ${action}.`);
             vscode.window.showErrorMessage('Session not found.');
@@ -202,14 +202,14 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             return;
         }
 
-        await disposeSessionTunnelClient(sessionId);
-        await deleteSessionDevTunnel(session);
+        await disposeTunnelClient(sessionId);
+        await removeDevTunnel(session);
         try {
-            removeSSHConfigEntry(sessionId, `cshost-${sessionId}`);
+            removeSshConfigEntry(sessionId, `cshost-${sessionId}`);
         } catch (err) {
             this._logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
         }
-        deleteSession(sessionId);
+        removeSession(sessionId);
         void this.pushState();
     }
 
@@ -285,7 +285,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
     // closeWindow (not process.kill) so we don't tear down the SSH extension host mid-cancel.
     private _autoCloseIfTerminal(): void {
         if (!this._myId) { return; }
-        const s = findSession(this._myId);
+        const s = getSession(this._myId);
         if (s && TERMINAL_STATUSES.has(s.status)) {
             vscode.commands.executeCommand('workbench.action.closeWindow');
         }
@@ -341,12 +341,12 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             await ensureRemoteSession(session); // Step 1 safety net (idempotent; usually already done by the monitor)
 
             // Open the local relay (reattaches from the persisted refs after a reload).
-            const localPort = await connectSessionToSSHTunnel(session);
+            const localPort = await connectSessionToTunnel(session);
 
             // Key is in memory on first connect, read back from disk on reattach.
             const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
             if (!privateKey) { throw new Error('SSH private key not found for session'); }
-            const hostAlias = createSSHConfigEntry(session.id, localPort, privateKey);
+            const hostAlias = addSshConfigEntry(session.id, localPort, privateKey);
             this._logger.info(`SSH config entry ready for session ${session.id} (alias ${hostAlias}); ssh ${hostAlias}`);
 
             openSessionWindow(session.id);
@@ -357,7 +357,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             this._logger.info(`Window opened for session ID: ${sessionId}`);
         } catch (error) {
             this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
-            await disposeSessionTunnelClient(sessionId); // free any partially-established relay client
+            await disposeTunnelClient(sessionId); // free any partially-established relay client
             // Remote (Step 1) is still up if sshTunnelId exists - only the relay attempt failed, so
             // fall back to ready_to_connect for an easy retry; otherwise the remote is gone -> disconnected.
             session.status = session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected';

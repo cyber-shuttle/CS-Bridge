@@ -11,7 +11,7 @@ import {
     TunnelRelayTunnelClient,
 } from "@microsoft/dev-tunnels-connections";
 import { TunnelAccessScopes, Tunnel } from "@microsoft/dev-tunnels-contracts";
-import { removeSSHConfigEntry, writeSessionPrivateKey } from "./sshSupport";
+import { removeSshConfigEntry, writeSessionPrivateKey } from "./sshSupport";
 
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
@@ -50,7 +50,7 @@ export async function ensureDevTunnel(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function deleteSessionDevTunnel(session: SlurmSession): Promise<void> {
+export async function removeDevTunnel(session: SlurmSession): Promise<void> {
     if (!session.tunnelId) { return; }
     try {
         await buildTunnelManagementClient().deleteTunnel({ tunnelId: session.tunnelId, clusterId: session.tunnelCluster });
@@ -62,7 +62,7 @@ export async function deleteSessionDevTunnel(session: SlurmSession): Promise<voi
     updateSession(session);
 }
 
-export async function createSSHServer(session: SlurmSession): Promise<void> {
+export async function createSshServer(session: SlurmSession): Promise<void> {
 
     if (!session.connectionInfo) {
         logger.error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
@@ -107,7 +107,7 @@ export async function createSSHServer(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function forwardSSHPortOnTunnel(session: SlurmSession): Promise<void> {
+export async function forwardSshPortOnTunnel(session: SlurmSession): Promise<void> {
     logger.info('Forwarding SSH port on the existing API tunnel...');
 
     const ci = session.connectionInfo;
@@ -151,12 +151,12 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
     await ensureDevTunnel(session);
     // Reuse an sshd a prior attempt already created (linkspan's create isn't idempotent, so re-creating would leak one).
     if (!session.connectionInfo?.sshPort) {
-        await createSSHServer(session);
+        await createSshServer(session);
     }
-    await forwardSSHPortOnTunnel(session);
+    await forwardSshPortOnTunnel(session);
 }
 
-export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<number> {
+export async function connectSessionToTunnel(session: SlurmSession): Promise<number> {
     logger.info(`Connecting session ${session.id} to tunnel...`);
 
     if (!session.connectionInfo) {
@@ -184,7 +184,7 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
     logger.info(`Fetched tunnel ${sshTunnelId}: ${tunnel.endpoints?.length ?? 0} endpoints, ${tunnel.ports?.length ?? 0} ports`);
 
     // Register before connecting so a re-entrant connect can't orphan the prior client and a failed connect stays disposable.
-    await disposeSessionTunnelClient(session.id);
+    await disposeTunnelClient(session.id);
     const client = new TunnelRelayTunnelClient(mgmtClient);
     client.acceptLocalConnectionsForForwardedPorts = true;
     activeTunnelClients.set(session.id, client);
@@ -200,7 +200,7 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
         await client.waitForForwardedPort(sshPort);
         localPort = client.forwardedPorts?.find((p) => p.remotePort === sshPort)?.localPort ?? sshPort;
     } catch (err) {
-        await disposeSessionTunnelClient(session.id);
+        await disposeTunnelClient(session.id);
         throw err;
     }
 
@@ -214,7 +214,7 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
  * Dispose the in-process relay client (frees the local port). Never deletes the remote sshd/tunnel:
  * those are job-scoped and reaped by linkspan, and deleting them would break reattach. No-op if absent.
  */
-export async function disposeSessionTunnelClient(sessionId: string): Promise<void> {
+export async function disposeTunnelClient(sessionId: string): Promise<void> {
     const client = activeTunnelClients.get(sessionId);
     if (!client) { return; }
     try {
@@ -228,12 +228,12 @@ export async function disposeSessionTunnelClient(sessionId: string): Promise<voi
 
 /** Dispose every relay client this window holds (e.g. on extension deactivate / window close). */
 export async function disposeAllTunnelClients(): Promise<void> {
-    await Promise.all([...activeTunnelClients.keys()].map(id => disposeSessionTunnelClient(id)));
+    await Promise.all([...activeTunnelClients.keys()].map(id => disposeTunnelClient(id)));
 }
 
 export async function disconnectSessionFromTunnel(session: SlurmSession): Promise<void> {
-    await disposeSessionTunnelClient(session.id);
-    removeSSHConfigEntry(session.id, `cshost-${session.id}`);
+    await disposeTunnelClient(session.id);
+    removeSshConfigEntry(session.id, `cshost-${session.id}`);
     session.connectionInfo = undefined;
     updateSession(session); // persist the cleared refs
     logger.info(`Session ${session.id} disconnected from tunnel.`);

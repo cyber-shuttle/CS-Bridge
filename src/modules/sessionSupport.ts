@@ -4,10 +4,10 @@ import { Logger, errMsg } from './../logger';
 import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
-import { generateSlurmScript } from "./slurmParse";
+import { buildSlurmScript } from "./slurmParse";
 import { computeStatusTransition } from "./sessionMachine";
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm } from "./slurmLaunch";
-import { disconnectSessionFromTunnel, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from "./tunnelSupport";
+import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from "./tunnelSupport";
 import { checkLinkspanHealth } from "./linkspanSupport";
 
 const logger = Logger.getInstance();
@@ -129,7 +129,7 @@ export class JobStatusMonitor {
                                     session.errorMessage = `Health check failed: ${err.message}`;
                                     session.status = 'disconnected';
                                     updateSession(session);
-                                    void disposeSessionTunnelClient(session.id); // free the port; keep refs for a later reattach
+                                    void disposeTunnelClient(session.id); // free the port; keep refs for a later reattach
                                     // Stays monitored: the slurm branch takes it terminal if the job is actually gone.
                                 }
                             });
@@ -245,7 +245,7 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     try { await ensureDevTunnel(session); }
     catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
 
-    try { session.batchScript = generateSlurmScript(session, creds); }
+    try { session.batchScript = buildSlurmScript(session, creds); }
     catch (err) { throw new Error(`Failed to generate Slurm script: ${errMsg(err)}`); }
 
     session.errorMessage = '';
@@ -312,7 +312,7 @@ export async function cancelSession(session: SlurmSession, monitor: JobStatusMon
             logger.error(`Failed to disconnect session ${session.name} from tunnel: ${err}`);
         }
     } else {
-        await disposeSessionTunnelClient(session.id);
+        await disposeTunnelClient(session.id);
     }
 
     monitor.stopMonitoring(session.id);

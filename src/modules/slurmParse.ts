@@ -3,7 +3,7 @@ import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCrede
 // Pure SLURM text helpers: parse `sinfo`/`sacctmgr` output and build the sbatch script. No SSH/vscode
 // dependency, so these are unit-testable in isolation (see slurmParse.test.ts).
 
-export function generateSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
+export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
     // Parse memory value (e.g. "8 GB" → "8G")
     const memSlurm = session.memory.replace(/\s+/g, '');
 

@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from "child_process";
 import * as crypto from 'crypto';
 import { Logger } from "../logger";
-import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSessionSshConfigBlock } from './sshHostsStore';
+import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -236,18 +236,18 @@ export class SshManager {
 }
 
 // Returns the host alias to use for SSH connections (e.g. "cshost-SESSIONID")
-export function createSSHConfigEntry(sessionId: string, localPort: number, privateKey: string): string {
+export function addSshConfigEntry(sessionId: string, localPort: number, privateKey: string): string {
 
     const hostAlias = `cshost-${sessionId}`;
 
-    removeSSHConfigEntry(sessionId, hostAlias);
+    removeSshConfigEntry(sessionId, hostAlias);
     writeSessionPrivateKey(sessionId, privateKey);
     const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
 
 
     const hostname = '127.0.0.1';
     const user = 'cs-ssh-user'; // No need to have this as the actual username on the cluster, since we'll be using a custom SSH server that ignores it. But it needs to be set to something non-empty to avoid SSH client errors.
-    const configBlock = buildSessionSshConfigBlock(sessionId, hostAlias, hostname, localPort, user, privateKeyPath);
+    const configBlock = buildSshConfigBlock(sessionId, hostAlias, hostname, localPort, user, privateKeyPath);
 
     try {
         fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
@@ -282,7 +282,7 @@ export function removeSessionPrivateKey(sessionId: string): void {
     }
 }
 
-export function removeSSHConfigEntry(sessionId: string, hostAlias: string): void {
+export function removeSshConfigEntry(sessionId: string, hostAlias: string): void {
 
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');

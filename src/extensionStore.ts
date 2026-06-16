@@ -72,7 +72,7 @@ export function updateSession(updatedSession: SlurmSession) {
     }
 }
 
-export function deleteSession(sessionId: string) {
+export function removeSession(sessionId: string) {
     const index = sessions.findIndex(s => s.id === sessionId);
     if (index !== -1) {
         sessions.splice(index, 1);
@@ -80,7 +80,7 @@ export function deleteSession(sessionId: string) {
     }
 }
 
-export function findSession(sessionId: string): SlurmSession | undefined {
+export function getSession(sessionId: string): SlurmSession | undefined {
     return sessions.find(s => s.id === sessionId);
 }
 
