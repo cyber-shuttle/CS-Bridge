@@ -1,16 +1,8 @@
-import * as vscode from 'vscode';
-import { getWebviewContent } from './webviewContent';
+import { BaseWebviewProvider } from './baseWebviewProvider';
 
-// Webview provider for the Stats view. Skeleton for now — the view renders a "Coming Soon" placeholder;
-// session-statistics logic will live here.
-export class StatsProvider implements vscode.WebviewViewProvider {
+// Webview provider for the Stats view. Skeleton — the view renders a "Coming Soon" placeholder and has no
+// messages or pushed state yet; session-statistics logic will live here.
+export class StatsProvider extends BaseWebviewProvider {
     public static readonly viewType = 'csbridge.statsView';
-
-    constructor(private readonly _extensionUri: vscode.Uri) { }
-
-    resolveWebviewView(webviewView: vscode.WebviewView): void {
-        const webview = webviewView.webview;
-        webview.options = { enableScripts: true };
-        webview.html = getWebviewContent(webview, this._extensionUri, 'stats');
-    }
+    protected readonly viewKind = 'stats' as const;
 }
