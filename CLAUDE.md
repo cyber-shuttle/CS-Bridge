@@ -42,11 +42,12 @@ src/
   webviews/
     sessionWebview.ts                # HTML/CSP generation for the sidebar webview
   modules/
-    sshSupport.ts                    # OS-ssh ControlMaster pool, askpass IPC, SLURM script construction, ~/.cybershuttle/ssh_config writer, ~/.ssh/config Include patcher
-    sessionSupport.ts                # Launch flow, linkspan deployment (curl|tar from GitHub releases), JobStatusMonitor
-    slurmSupport.ts                  # sacct-based job status polling
+    sshSupport.ts                    # OS-ssh ControlMaster pool, askpass IPC, ~/.cybershuttle/ssh_config writer, ~/.ssh/config Include patcher
+    sessionSupport.ts                # Session lifecycle orchestration (prepareLaunch/launch/cancel; throws on failure), linkspan deployment, JobStatusMonitor
+    slurmSupport.ts                  # SLURM queries over SSH (job status/output via sacct, cluster info via sinfo/sacctmgr)
+    slurmParse.ts                    # Pure SLURM text helpers (sinfo parsing + sbatch script generation); vscode-free, unit-tested
     tunnelSupport.ts                 # Dev Tunnels SDK integration (in-process); Microsoft auth via vscode.authentication('microsoft')
-    linkspanSupport.ts               # linkspan YAML config generation
+    linkspanSupport.ts               # linkspan tunnel health check
     fsSupport.ts                     # Filesystem helpers (PID liveness check)
 
 resources/
@@ -69,7 +70,7 @@ scripts/
 - **Tunnel forwarding is in-process** — `@microsoft/dev-tunnels-management` opens a `TunnelRelayTunnelClient` that forwards the remote SSH port to `127.0.0.1:<localPort>`. No separate `devtunnel` CLI binary is downloaded or invoked.
 - **Final attach** — `vscode.commands.executeCommand('vscode.openFolder', vscode-remote://ssh-remote+cshost-<sessionId>/..., { forceNewWindow: true })`. CyberShuttle does not call Remote-SSH APIs or commands; it relies on whichever extension registers the `ssh-remote+` authority resolver.
 - **Cross-window session sync** via `fs.watch` on `sessions.json` in `extensionStore.ts:101+` — multiple VS Code windows share session state. The `fsSupport` lock keeps concurrent writes safe; don't propose removing it.
-- **SLURM is required for launch** — `checkSlurmAvailability` (`modules/sessionSupport.ts:271`) runs `sinfo` and fails the session if it exits non-zero. The `info.sh` script handles missing SLURM gracefully (exits 0 with no output) for the capabilities probe, but the launch path itself has no plain-SSH fallback yet. See README Roadmap.
+- **SLURM is required for launch** — `checkSlurmAvailability` (`modules/sessionSupport.ts`) runs `sinfo` and throws if it exits non-zero; the launch helpers all throw on failure and `sessionProvider._launchSession`'s catch owns the failed-status transition + the single error dialog. The `info.sh` script handles missing SLURM gracefully (exits 0 with no output) for the capabilities probe, but the launch path itself has no plain-SSH fallback yet. See README Roadmap.
 - **Job status polling** uses `sacct -j <jobid>` (not `squeue`).
 
 ## External Processes / Binaries
