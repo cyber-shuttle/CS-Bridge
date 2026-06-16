@@ -300,6 +300,12 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         });
     }
 
+    // "Refresh SSH Hosts" title action — re-reads ~/.ssh/config + system config so hosts added externally
+    // (e.g. via the Remote-SSH "Add New SSH Host" flow) show up without reloading the window. Hosts only.
+    public refreshSshHosts(): void {
+        this._pushHostsState();
+    }
+
     // Native "Add SSH Host" title action — Remote-SSH-parity flow: prompt -> parse/validate -> write to ~/.ssh/config -> notify.
     public async addSshHost(): Promise<void> {
         const command = (await vscode.window.showInputBox({
@@ -375,7 +381,6 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         if (this._webviews.size === 0) { return; }
         try {
             const sessionsView = this._webviews.get(SessionProvider.sessionsViewType);
-            const hostsView = this._webviews.get(SessionProvider.hostsViewType);
             if (sessionsView) {
                 const account = await getMicrosoftAccountInfo();
                 if (this._sessionsView) { this._sessionsView.description = account.label ?? 'Not Signed In'; }
@@ -392,14 +397,19 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 };
                 sessionsView.postMessage({ command: 'state', state });
             }
-            if (hostsView) {
-                const state: HostsState = { sshHosts: SshManager.getInstance().getMergedHosts() };
-                hostsView.postMessage({ command: 'state', state });
-            }
+            this._pushHostsState();
             this._autoCloseIfTerminal();
         } catch (error) {
             this._logger.error('Failed to push webview state:', error);
         }
+    }
+
+    // Re-read the SSH host configs and push only the SSH Hosts view's state — nothing session/account-related.
+    private _pushHostsState(): void {
+        const hostsView = this._webviews.get(SessionProvider.hostsViewType);
+        if (!hostsView) { return; }
+        const state: HostsState = { sshHosts: SshManager.getInstance().getMergedHosts() };
+        hostsView.postMessage({ command: 'state', state });
     }
 
     // Step 2: (re)establish the in-process relay and open a window. Step 1 (remote sshd + tunnel) is the monitor's job.

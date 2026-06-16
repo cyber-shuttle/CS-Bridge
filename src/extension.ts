@@ -40,6 +40,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sessionProvider.addSshHost()),
+        vscode.commands.registerCommand('csbridge.refreshHosts', () => sessionProvider.refreshSshHosts()),
     );
 
     // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.
