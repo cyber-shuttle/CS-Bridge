@@ -37,7 +37,8 @@ function HostItem({ host }: { host: SshHost }) {
                         <DetailRow label="Args"><Stack gap={1}>{host.args.map(a => <div key={a}>{a}</div>)}</Stack></DetailRow>
                     ) : null}
                     {src === 'user' ? (
-                        <Row justify="flex-end" pad="2px 0 0">
+                        // zoom 0.85 matches the Sessions-view action buttons (e.g. Restart).
+                        <Row justify="flex-end" pad="2px 0 0" style={{ zoom: 0.85 }}>
                             <Button icon="trash" onClick={() => post({ command: 'removeSshHost', name: host.name })}>Delete</Button>
                         </Row>
                     ) : null}
