@@ -20,7 +20,7 @@ export const SSH_RESILIENCE_OPTIONS: ReadonlyArray<readonly [string, string]> = 
     ['IPQoS', 'cs0'],
 ];
 
-// Per-session cshost block appended to ~/.cybershuttle/ssh_config (4-space indent matches clearSSHConfigEntry).
+// Per-session cshost block appended to ~/.cybershuttle/ssh_config (4-space indent matches removeSSHConfigEntry).
 export function buildSessionSshConfigBlock(
     sessionId: string,
     hostAlias: string,

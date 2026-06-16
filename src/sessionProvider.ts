@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { errMsg } from './logger';
 import { SlurmClusterInfo, SlurmSession, SessionsState } from './models';
 import { BaseWebviewProvider } from './baseWebviewProvider';
-import { clearSSHConfigEntry, createSSHConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
+import { removeSSHConfigEntry, createSSHConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
@@ -205,7 +205,7 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
         await disposeSessionTunnelClient(sessionId);
         await deleteSessionDevTunnel(session);
         try {
-            clearSSHConfigEntry(sessionId, `cshost-${sessionId}`);
+            removeSSHConfigEntry(sessionId, `cshost-${sessionId}`);
         } catch (err) {
             this._logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
         }

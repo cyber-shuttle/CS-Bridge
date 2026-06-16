@@ -11,7 +11,7 @@ import {
     TunnelRelayTunnelClient,
 } from "@microsoft/dev-tunnels-connections";
 import { TunnelAccessScopes, Tunnel } from "@microsoft/dev-tunnels-contracts";
-import { clearSSHConfigEntry, writeSessionPrivateKey } from "./sshSupport";
+import { removeSSHConfigEntry, writeSessionPrivateKey } from "./sshSupport";
 
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
@@ -62,7 +62,7 @@ export async function deleteSessionDevTunnel(session: SlurmSession): Promise<voi
     updateSession(session);
 }
 
-export async function createSSHServerForSession(session: SlurmSession): Promise<void> {
+export async function createSSHServer(session: SlurmSession): Promise<void> {
 
     if (!session.connectionInfo) {
         logger.error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
@@ -151,7 +151,7 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
     await ensureDevTunnel(session);
     // Reuse an sshd a prior attempt already created (linkspan's create isn't idempotent, so re-creating would leak one).
     if (!session.connectionInfo?.sshPort) {
-        await createSSHServerForSession(session);
+        await createSSHServer(session);
     }
     await forwardSSHPortOnTunnel(session);
 }
@@ -233,7 +233,7 @@ export async function disposeAllTunnelClients(): Promise<void> {
 
 export async function disconnectSessionFromTunnel(session: SlurmSession): Promise<void> {
     await disposeSessionTunnelClient(session.id);
-    clearSSHConfigEntry(session.id, `cshost-${session.id}`);
+    removeSSHConfigEntry(session.id, `cshost-${session.id}`);
     session.connectionInfo = undefined;
     updateSession(session); // persist the cleared refs
     logger.info(`Session ${session.id} disconnected from tunnel.`);

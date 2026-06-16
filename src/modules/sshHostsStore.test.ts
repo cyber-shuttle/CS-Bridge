@@ -62,8 +62,8 @@ test('buildSessionSshConfigBlock emits the six SSH resilience options', () => {
     assert.match(block, /^    IdentityFile \/keys\/id_cshost-sess1$/m);
 });
 
-// clearSSHConfigEntry's removal regex only matches 4-space-indented directive lines.
-test('buildSessionSshConfigBlock indents every directive so clearSSHConfigEntry can remove it', () => {
+// removeSSHConfigEntry's removal regex only matches 4-space-indented directive lines.
+test('buildSessionSshConfigBlock indents every directive so removeSSHConfigEntry can remove it', () => {
     const block = buildSessionSshConfigBlock('s', 'cshost-s', '127.0.0.1', 22, 'u', '/k');
     for (const line of block.split('\n')) {
         if (line === '' || line.startsWith('#') || line.startsWith('Host ')) { continue; }

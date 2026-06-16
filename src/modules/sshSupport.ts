@@ -240,7 +240,7 @@ export function createSSHConfigEntry(sessionId: string, localPort: number, priva
 
     const hostAlias = `cshost-${sessionId}`;
 
-    clearSSHConfigEntry(sessionId, hostAlias);
+    removeSSHConfigEntry(sessionId, hostAlias);
     writeSessionPrivateKey(sessionId, privateKey);
     const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
 
@@ -270,7 +270,7 @@ export function getSessionPrivateKey(sessionId: string): string | undefined {
     try { return fs.readFileSync(privateKeyPath, 'utf-8'); } catch { return undefined; }
 }
 
-export function removeSSHprivateKeyForSession(sessionId: string): void {
+export function removeSessionPrivateKey(sessionId: string): void {
     const hostAlias = `cshost-${sessionId}`;
     const privateKeyPath = path.join(CS_SSH_KEYS_DIR, `id_${hostAlias}`);
     try {
@@ -282,7 +282,7 @@ export function removeSSHprivateKeyForSession(sessionId: string): void {
     }
 }
 
-export function clearSSHConfigEntry(sessionId: string, hostAlias: string): void {
+export function removeSSHConfigEntry(sessionId: string, hostAlias: string): void {
 
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
@@ -295,7 +295,7 @@ export function clearSSHConfigEntry(sessionId: string, hostAlias: string): void 
             fs.writeFileSync(CS_SSH_CONFIG_PATH, cleaned);
         }
 
-        removeSSHprivateKeyForSession(sessionId);
+        removeSessionPrivateKey(sessionId);
     } catch (err) {
         logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
     }
