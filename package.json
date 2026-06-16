@@ -82,6 +82,12 @@
 				"title": "Add SSH Host",
 				"category": "CS Bridge",
 				"icon": "$(add)"
+			},
+			{
+				"command": "csbridge.refreshHosts",
+				"title": "Refresh SSH Hosts",
+				"category": "CS Bridge",
+				"icon": "$(refresh)"
 			}
 		],
 		"menus": {
@@ -95,6 +101,11 @@
 					"command": "csbridge.newSession",
 					"group": "navigation@1",
 					"when": "view == csbridge.sessionsView && !csbridge.remote"
+				},
+				{
+					"command": "csbridge.refreshHosts",
+					"group": "navigation@0",
+					"when": "view == csbridge.hostsView"
 				},
 				{
 					"command": "csbridge.addHost",
@@ -113,6 +124,10 @@
 				},
 				{
 					"command": "csbridge.addHost",
+					"when": "false"
+				},
+				{
+					"command": "csbridge.refreshHosts",
 					"when": "false"
 				}
 			]

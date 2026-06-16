@@ -300,6 +300,12 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         });
     }
 
+    // "Refresh SSH Hosts" title action — re-reads ~/.ssh/config + system config so hosts added externally
+    // (e.g. via the Remote-SSH "Add New SSH Host" flow) show up without reloading the window.
+    public refreshSshHosts(): void {
+        void this._pushState();
+    }
+
     // Native "Add SSH Host" title action — Remote-SSH-parity flow: prompt -> parse/validate -> write to ~/.ssh/config -> notify.
     public async addSshHost(): Promise<void> {
         const command = (await vscode.window.showInputBox({
