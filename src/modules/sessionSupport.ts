@@ -1,10 +1,11 @@
-import { SlurmJobStatus, SlurmSession } from "../models";
+import { SlurmJobStatus, SlurmSession, TunnelCredential } from "../models";
 import * as vscode from 'vscode';
-import { Logger } from './../logger';
+import { Logger, errMsg } from './../logger';
 import { updateSession } from "../extensionStore";
 import { SshManager } from "./sshSupport";
 import { getSlurmJobOutput, getSlurmJobStatus } from "./slurmSupport";
-import { disconnectSessionFromTunnel, disposeSessionTunnelClient, ensureRemoteSession } from "./tunnelSupport";
+import { generateSlurmScript } from "./slurmParse";
+import { disconnectSessionFromTunnel, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from "./tunnelSupport";
 import { checkLinkspanHealth } from "./linkspanSupport";
 
 const logger = Logger.getInstance();
@@ -347,6 +348,24 @@ async function submitJobToSlurm(session: SlurmSession, progress: vscode.Progress
     session.jobId = jobId;
     session.status = 'queued'; // Job is submitted and waiting in queue
     session.submittedAt = new Date().getTime();
+    updateSession(session);
+}
+
+// Pre-launch orchestration: fetch tunnel credentials, ensure the dev tunnel exists (persisting its id before it
+// goes into the script), and generate the SLURM batch script. Throws a contextual error on a step's failure;
+// sessionProvider._prepareLaunchSession owns the dialog + errorMessage.
+export async function prepareLaunch(session: SlurmSession): Promise<void> {
+    let creds: TunnelCredential;
+    try { creds = await getDevTunnelCredentials(); }
+    catch (err) { throw new Error(`Failed to get tunnel credentials: ${errMsg(err)}`); }
+
+    try { await ensureDevTunnel(session); }
+    catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
+
+    try { session.batchScript = generateSlurmScript(session, creds); }
+    catch (err) { throw new Error(`Failed to generate Slurm script: ${errMsg(err)}`); }
+
+    session.errorMessage = '';
     updateSession(session);
 }
 

@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
 import { errMsg } from './logger';
-import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState } from './models';
+import { SlurmClusterInfo, SlurmSession, SessionsState } from './models';
 import { BaseWebviewProvider } from './baseWebviewProvider';
 import { clearSSHConfigEntry, createSSHConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
-import { generateSlurmScript } from './modules/slurmParse';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
-import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
-import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
+import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress, prepareLaunch } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
@@ -431,40 +430,15 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
     private async _prepareLaunchSession(sessionId: string) {
         const session = this._requireSession(sessionId, 'prepare launch', false);
         if (!session) { return; }
-
-        let creds: TunnelCredential;
         try {
-            creds = await getDevTunnelCredentials();
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
-            session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
+            await prepareLaunch(session);
+        } catch (err) {
+            vscode.window.showErrorMessage(errMsg(err));
+            session.errorMessage = errMsg(err);
             updateSession(session);
-            this._logger.error('Failed to get tunnel credentials:', err);
-            throw err;
+            this._logger.error('Failed to prepare session launch:', err);
+            throw err; // the dispatch's .catch re-pushes state so the card shows the error
         }
-        try {
-            await ensureDevTunnel(session); // persist the tunnel id before it goes into the launch script
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to create dev tunnel: ${err.message}`);
-            session.errorMessage = `Failed to create dev tunnel: ${err.message}`;
-            updateSession(session);
-            this._logger.error('Failed to create dev tunnel:', err);
-            throw err;
-        }
-        this._logger.info('Generating Slurm script for session:', session);
-        try {
-            session.batchScript = generateSlurmScript(session, creds);
-            this._logger.info('Generated Slurm script:', session.batchScript);
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
-            session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
-            updateSession(session);
-            this._logger.error('Failed to generate Slurm script:', err);
-            throw err;
-        }
-
-        session.errorMessage = '';
-        updateSession(session);
         this._previewSession = session;
         void this.pushState();
     }
