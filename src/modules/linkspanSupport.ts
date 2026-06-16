@@ -7,8 +7,7 @@ export async function checkLinkspanHealth(session: SlurmSession) {
     const healthCheckUrl = `https://${session.connectionInfo?.apiTunnelId}-${session.connectionInfo?.apiPort}.${session.connectionInfo?.region}.devtunnels.ms/api/v1/health`;
     const apiToken = `tunnel ${session.connectionInfo?.apiTunnelAccessToken}`;
 
-    // send a get request to the API server to check the health
-    const resp = await fetch(`${healthCheckUrl}`, {
+    const resp = await fetch(healthCheckUrl, {
         method: 'GET',
         headers: {
             'X-Tunnel-Authorization': apiToken,

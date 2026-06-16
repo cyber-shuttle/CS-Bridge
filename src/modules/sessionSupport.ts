@@ -12,6 +12,9 @@ import { checkLinkspanHealth } from "./linkspanSupport";
 
 const logger = Logger.getInstance();
 
+// Statuses where the relay is live (or being established), so the monitor pings the tunnel instead of polling SLURM.
+const LIVE_STATUSES: SlurmSession['status'][] = ['ready_to_connect', 'connecting', 'connected'];
+
 class AsyncLock {
     private _acquired = false;
     private _waitQueue: (() => void)[] = [];
@@ -76,7 +79,6 @@ export class JobStatusMonitor {
     private initializeConnectionInfo() {
         return {
             sshPort: 0,
-            logPort: 0,
             apiTunnelId: '',
             apiTunnelAccessToken: '',
             apiPort: 0,
@@ -114,7 +116,7 @@ export class JobStatusMonitor {
                             continue;
                         }
 
-                        if (session.connectionInfo?.apiTunnelId && (session.status === 'ready_to_connect' || session.status === 'connecting' || session.status === 'connected')) {
+                        if (session.connectionInfo?.apiTunnelId && LIVE_STATUSES.includes(session.status)) {
                             // Skip when connectionInfo is missing (after a window reload) - the slurm branch re-derives tunnel info.
                             logger.info(`Session ${session.name} is in status ${session.status}, skipping Slurm status check and using tunnel ping instead.`);
 
@@ -122,7 +124,7 @@ export class JobStatusMonitor {
                                 this.monitoringFailedCounts.delete(session.id);
                             }).catch(err => {
                                 // The session may have left a live state (e.g. Stop) while this ping was in flight; don't clobber it.
-                                if (session.status !== 'ready_to_connect' && session.status !== 'connecting' && session.status !== 'connected') { return; }
+                                if (!LIVE_STATUSES.includes(session.status)) { return; }
                                 logger.warn(`Health check failed for session ${session.name}:`, err);
                                 if (this.doesQualifyToFail(session.id)) {
                                     // Job externally killed, tunnel expired, or walltime exceeded.
@@ -202,7 +204,7 @@ export class JobStatusMonitor {
 
                 }
             }
-            await new Promise(resolve => setTimeout(resolve, this.sessionPollingInterval)); // Check every 5 seconds
+            await new Promise(resolve => setTimeout(resolve, this.sessionPollingInterval));
         }
     }
 

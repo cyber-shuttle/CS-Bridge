@@ -38,27 +38,13 @@ export async function getSlurmClusterInfo(hostName: string): Promise<SlurmCluste
             'sacctmgr show associations where user=$USER format=Account -p');
 
         if (accountResult.code === 0) {
-            log.info(accountResult.stdout);
-
-            // Parse pipe-delimited output into account → QOS mapping
             const lines = accountResult.stdout.trim().split('\n');
-
-            for (let i = 1; i < lines.length; i++) { // skip header
-                const parts = lines[i].trim().split('|');
-                log.info(`Parsed account line: ${lines[i]} → ${parts} {length: ${parts.length}}`);
-                if (parts.length >= 1) {
-                    const account = parts[0].trim();
-                    if (account) {
-                        clusterInfo.accounts.push(account);
-                    }
-                }
+            for (let i = 1; i < lines.length; i++) { // skip the Account header row
+                const account = lines[i].trim().split('|')[0].trim();
+                if (account) { clusterInfo.accounts.push(account); }
             }
         } else {
-            log.warn(`Command exited with code ${accountResult.code}`);
-            if (accountResult.stderr) {
-                log.error(accountResult.stderr);
-            }
-            throw new Error(`Failed to query associations: ${accountResult.stderr || 'Unknown error'}`);
+            throw new Error(`Failed to query associations (exit ${accountResult.code}): ${accountResult.stderr || 'Unknown error'}`);
         }
 
     } catch (err) {

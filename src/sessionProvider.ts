@@ -10,6 +10,7 @@ import { cancelSession, JobStatusMonitor, launchSession, prepareLaunch } from '.
 import { isPidAlive } from './modules/fsSupport';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
+const CANCELLABLE_STATUSES = new Set<SlurmSession['status']>(['preparing', 'queued', 'submitting', 'connected', 'disconnected', 'ready_to_connect', 'connecting']);
 
 function openSessionWindow(sessionId: string): void {
     const path = getSession(sessionId)?.workingDirectory ?? '';
@@ -97,15 +98,16 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
                 void this.pushState();
                 break;
             case 'addSession': {
+                const now = Date.now();
                 const newSession: SlurmSession = {
-                    id: `session-${Date.now()}`,
-                    name: `Session ${Date.now()}`,
+                    id: `session-${now}`,
+                    name: `Session ${now}`,
                     cluster: data.host,
                     status: 'not_started',
                     tunnelType: 'devtunnel',
                     jobId: '',
                     jobDirectory: '',
-                    submittedAt: Date.now(),
+                    submittedAt: now,
                     errorMessage: '',
                     workingDirectory: this._clusterInfo.get(data.host)?.homeDir,
                     ...this._paramsFromData(data),
@@ -373,34 +375,35 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
         const session = this._requireSession(sessionId, 'cancel', false);
         if (!session) { return; }
 
-        if (session.status === 'preparing' || session.status === 'queued' || session.status === 'submitting' || session.status === 'connected' || session.status === 'disconnected' || session.status === 'ready_to_connect' || session.status === 'connecting') {
-            const choice = await vscode.window.showWarningMessage(
-                'Stop session?',
-                { modal: true, detail: 'This cancels the running job.' },
-                'Stop'
-            );
-            if (choice !== 'Stop') { void this.pushState(); return; }
-            session.status = 'cancelling';
-            session.errorMessage = '';
-            this._runWithProgress(session, `Cancelling session ${session.name}...`, p => cancelSession(session, this._monitor, p)).then(() => {
-                void this.pushState();
-                vscode.window.showInformationMessage('Session cancellation completed. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.');
-            }).catch(error => {
-                this._logger.error(`Error cancelling session with ID ${sessionId}:`, error);
-                vscode.window.showErrorMessage(`Failed to cancel session: ${errMsg(error)}. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.`);
-                session.status = 'failed';
-                session.errorMessage = `Failed to cancel session: ${errMsg(error)}`;
-                updateSession(session);
-                void this.pushState();
-            });
-        } else {
+        if (!CANCELLABLE_STATUSES.has(session.status)) {
             this._logger.warn(`Session with ID ${sessionId} is in status ${session.status} and cannot be cancelled.`);
             vscode.window.showWarningMessage(`Session cannot be cancelled from status: ${session.status}`);
             void this.pushState();
             return;
         }
+
+        const choice = await vscode.window.showWarningMessage(
+            'Stop session?',
+            { modal: true, detail: 'This cancels the running job.' },
+            'Stop'
+        );
+        if (choice !== 'Stop') { void this.pushState(); return; }
+
+        session.status = 'cancelling';
+        session.errorMessage = '';
         updateSession(session);
         void this.pushState();
+        this._runWithProgress(session, `Cancelling session ${session.name}...`, p => cancelSession(session, this._monitor, p)).then(() => {
+            void this.pushState();
+            vscode.window.showInformationMessage('Session cancellation completed. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.');
+        }).catch(error => {
+            this._logger.error(`Error cancelling session with ID ${sessionId}:`, error);
+            vscode.window.showErrorMessage(`Failed to cancel session: ${errMsg(error)}. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.`);
+            session.status = 'failed';
+            session.errorMessage = `Failed to cancel session: ${errMsg(error)}`;
+            updateSession(session);
+            void this.pushState();
+        });
     }
 
     private _launchSession(sessionId: string) {

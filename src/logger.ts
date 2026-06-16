@@ -26,14 +26,6 @@ export class Logger {
         return Logger._instance;
     }
 
-    setLogLevel(level: LogLevel): void {
-        this._logLevel = level;
-    }
-
-    show(): void {
-        this._outputChannel.show();
-    }
-
     debug(message: string, ...args: unknown[]): void {
         this._log(LogLevel.Debug, message, ...args);
     }

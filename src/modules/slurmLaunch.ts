@@ -34,13 +34,13 @@ export async function checkLinkspanInstallation(session: SlurmSession, run: Remo
         return false;
     }
     if (localVersionResult.code !== 0) {
-        log.error(`Failed to check Linkspan version on cluster ${session.cluster}. Error ${localVersionResult.stderr}`);
+        log.error(`Failed to check Linkspan version on cluster ${session.cluster}. Error: ${localVersionResult.stderr}`);
         return false;
     }
 
     const localVersion = localVersionResult.stdout.trim();
-    // Remove leading 'v' if present in remote version tag
-    const remoteVersion = remoteVersionResult.stdout.trim().startsWith('v') ? remoteVersionResult.stdout.trim().substring(1) : remoteVersionResult.stdout.trim();
+    const remoteTag = remoteVersionResult.stdout.trim();
+    const remoteVersion = remoteTag.startsWith('v') ? remoteTag.slice(1) : remoteTag;
 
     if (localVersion !== '' && remoteVersion !== '' && localVersion === remoteVersion) {
         log.info(`Linkspan is already installed and up to date on cluster ${session.cluster}`);

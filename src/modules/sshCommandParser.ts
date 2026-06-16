@@ -35,10 +35,10 @@ const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => voi
             const listener = m[1];
             const dest = m[3];
             if (listener && dest) { c.LocalForward = `${listener} ${dest}`; return; }
-            throw new CommandParseError(`LocalFoward needs a listener and a destination separate by a colon. ${a} does not match.`);
+            throw new CommandParseError(`LocalForward needs a listener and a destination separated by a colon. ${a} does not match.`);
         }
         const idx = a.indexOf(':');
-        if (idx === -1) { throw new CommandParseError(`LocalFoward needs a listener and a destination separate by a colon. ${a} does not match.`); }
+        if (idx === -1) { throw new CommandParseError(`LocalForward needs a listener and a destination separated by a colon. ${a} does not match.`); }
         c.LocalForward = `${a.substring(0, idx)} ${a.substring(idx + 1)}`;
     },
     l: (c, a) => { c.User = a; },

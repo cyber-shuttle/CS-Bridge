@@ -8,7 +8,7 @@ export interface SlurmSession extends Session {
     memory: string;
     jobDirectory: string;
     allocation: string;
-    batchScript?: string; // Optional field to store the generated batch script content
+    batchScript?: string;
     tunnelId?: string; // cs-bridge-owned Dev Tunnel id (hosted by linkspan, deleted on remove)
     tunnelCluster?: string; // its cluster id; linkspan needs it to resolve the tunnel
 }
@@ -57,7 +57,6 @@ export interface SessionConnectionInfo {
     sshTunnelForwardPort?: number;
     sshPassword?: string;
     sshPrivateKey?: string;
-    logPort?: number;
     apiTunnelId?: string;
     apiTunnelAccessToken?: string;
     apiPort?: number;

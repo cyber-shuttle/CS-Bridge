@@ -1,6 +1,5 @@
 import { AccountInfo, SlurmSession, TunnelCredential } from "../models";
 import * as vscode from 'vscode';
-import * as net from 'net';
 import { Logger } from '../logger';
 import { updateSession } from "../extensionStore";
 import {
@@ -62,23 +61,19 @@ export async function removeDevTunnel(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function createSshServer(session: SlurmSession): Promise<void> {
-
+async function createSshServer(session: SlurmSession): Promise<void> {
     if (!session.connectionInfo) {
-        logger.error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
         throw new Error(`Session ${session.id} does not have connection info. Cannot create SSH server.`);
     }
+    const ci = session.connectionInfo;
     // api* aren't persisted across reload; fail clearly instead of POSTing a malformed URL.
-    if (!session.connectionInfo.apiTunnelId || !session.connectionInfo.apiPort || !session.connectionInfo.apiTunnelAccessToken) {
+    if (!ci.apiTunnelId || !ci.apiPort || !ci.apiTunnelAccessToken) {
         throw new Error(`Session ${session.id} is missing live Dev Tunnel API info; cannot create the SSH server. Wait for status to refresh, then retry, or relaunch.`);
     }
-    // Placeholder for creating an SSH server and returning the local port it's listening on
     logger.info(`Creating SSH server for session ${session.id}...`);
-    // Sample url https://linkspan-tunnel-1774674947651937316-39685.use2.devtunnels.ms/api/v1/vscode/sessions
-    const baseAPIUrl = `https://${session.connectionInfo?.apiTunnelId}-${session.connectionInfo?.apiPort}.${session.connectionInfo?.region}.devtunnels.ms/api/v1`;
-    const apiToken = `tunnel ${session.connectionInfo?.apiTunnelAccessToken}`;
+    const baseAPIUrl = `https://${ci.apiTunnelId}-${ci.apiPort}.${ci.region}.devtunnels.ms/api/v1`;
+    const apiToken = `tunnel ${ci.apiTunnelAccessToken}`;
 
-    // send a post request to the API server to create the SSH server
     const resp = await fetch(`${baseAPIUrl}/vscode/sessions`, {
         method: 'POST',
         headers: {
@@ -98,16 +93,16 @@ export async function createSshServer(session: SlurmSession): Promise<void> {
 
     const respData = await resp.json() as { bind_port: number; password: string; id: string, private_key: string };
     logger.info(`SSH server for session ${session.id} created on port ${respData.bind_port}.`);
-    session.connectionInfo!.sshPort = respData.bind_port;
-    session.connectionInfo!.sshPassword = respData.password;
-    session.connectionInfo!.sshPrivateKey = respData.private_key;
+    ci.sshPort = respData.bind_port;
+    ci.sshPassword = respData.password;
+    ci.sshPrivateKey = respData.private_key;
     // Persist the key to disk now (Step 1) so a reload at ready_to_connect can reconnect without
     // re-fetching it over the login node.
     writeSessionPrivateKey(session.id, respData.private_key);
     updateSession(session);
 }
 
-export async function forwardSshPortOnTunnel(session: SlurmSession): Promise<void> {
+async function forwardSshPortOnTunnel(session: SlurmSession): Promise<void> {
     logger.info('Forwarding SSH port on the existing API tunnel...');
 
     const ci = session.connectionInfo;
@@ -240,7 +235,6 @@ export async function disconnectSessionFromTunnel(session: SlurmSession): Promis
 }
 
 export async function getDevTunnelCredentials(): Promise<TunnelCredential> {
-    // Placeholder for fetching credentials from local storage or configuration
     const token = await getDevTunnelAuthToken();
     logger.info('Obtained Dev Tunnels auth token successfully.');
 
@@ -251,16 +245,7 @@ export async function getDevTunnelCredentials(): Promise<TunnelCredential> {
     };
 }
 
-export async function getFrpTunnelCredentials(): Promise<TunnelCredential> {
-    // Placeholder for fetching credentials from local storage or configuration
-    return {
-        provider: 'frp',
-        authToken: 'example-frp-auth-token',
-        serverUrl: 'https://frp-tunnel-server.com'
-    };
-}
-
-export async function getDevTunnelAuthToken(): Promise<string> {
+async function getDevTunnelAuthToken(): Promise<string> {
     try {
         const session = await vscode.authentication.getSession(
             'microsoft',

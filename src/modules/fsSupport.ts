@@ -16,10 +16,9 @@ export function lock(filepath: string): void {
             return;
         } catch (err: any) {
             if (err.code !== 'EEXIST') { throw err; }
-            let content = '';
-            try { content = fs.readFileSync(lockPath, 'utf-8').trim(); } catch { /* lock vanished */ }
-            const owner = parseInt(content, 10);
-            if (content && Number.isFinite(owner) && !isPidAlive(owner)) {
+            let owner = NaN;
+            try { owner = parseInt(fs.readFileSync(lockPath, 'utf-8').trim(), 10); } catch { /* lock vanished */ }
+            if (Number.isFinite(owner) && !isPidAlive(owner)) {
                 try { fs.unlinkSync(lockPath); } catch { /* someone else cleaned it */ }
                 continue;
             }
