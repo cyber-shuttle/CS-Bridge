@@ -101,7 +101,12 @@ export function SessionCard({ session, readonly }: Props) {
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
                 {session.jobDirectory ? <Text muted size={11} ellipsis>{session.jobDirectory}</Text> : null}
-                {!readonly && canClose ? <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} /> : null}
+                {!readonly && canClose ? (
+                    <Row gap={4} style={{ marginLeft: 'auto' }}>
+                        <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
+                        <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
+                    </Row>
+                ) : null}
             </Row>
             <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
             <Stack gap={6}>
