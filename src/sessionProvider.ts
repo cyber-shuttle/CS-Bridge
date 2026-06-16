@@ -1,14 +1,12 @@
 import * as vscode from 'vscode';
 import { Logger } from './logger';
-import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState, HostsState } from './models';
+import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState } from './models';
 import { getWebviewContent } from './webviewContent';
 import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSessionPrivateKey, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
-import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
-import { USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } from './modules/sshHostsStore';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
 
@@ -30,7 +28,6 @@ function liveAndCleanup(s: SlurmSession): { isCurrent: boolean, windowAlive: boo
 
 export class SessionProvider implements vscode.WebviewViewProvider, vscode.Disposable {
     public static readonly sessionsViewType = 'csbridge.sessionsView';
-    public static readonly hostsViewType = 'csbridge.hostsView';
     public static readonly statsViewType = 'csbridge.statsView';
 
     private readonly _logger = Logger.getInstance();
@@ -39,7 +36,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     private _draftHost: string | null = null;
     private _editingId: string | null = null;
     private _previewSession: SlurmSession | null = null;
-    // One provider instance feeds both views; each resolved webview is keyed by its viewType.
+    // One provider instance feeds the Sessions and Stats views; each resolved webview is keyed by its viewType.
     private readonly _webviews = new Map<string, vscode.Webview>();
     private _sessionsView?: vscode.WebviewView; // kept to set the account on its title (description)
     private readonly _shared: vscode.Disposable[] = [];
@@ -55,9 +52,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
         const webview = webviewView.webview;
         const viewType = webviewView.viewType;
-        const kind = viewType === SessionProvider.hostsViewType ? 'hosts'
-            : viewType === SessionProvider.statsViewType ? 'stats'
-                : 'sessions';
+        const kind = viewType === SessionProvider.statsViewType ? 'stats' : 'sessions';
         webview.options = { enableScripts: true };
         this._webviews.set(viewType, webview);
         if (viewType === SessionProvider.sessionsViewType) { this._sessionsView = webviewView; }
@@ -188,9 +183,6 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             case 'removeSession':
                 this._removeSession(id);
                 break;
-            case 'removeSshHost':
-                this._removeSshHost(data.name);
-                break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
@@ -266,9 +258,16 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
         );
         if (!pick) { return; }
-        this._draftHost = pick.label;
+        this.startSessionDraft(pick.label);
+    }
+
+    // Reveal a new-session draft card for an already-chosen host. Also the handoff target for the SSH
+    // Hosts view's post-add "Connect" action (csbridge.newSessionOnHost).
+    public startSessionDraft(host: string): void {
+        this._draftHost = host;
+        void vscode.commands.executeCommand('csbridge.sessionsView.focus');
         void this._pushState();
-        this._fetchClusterInfo(pick.label);
+        this._fetchClusterInfo(host);
     }
 
     // Map the config-form message onto a session's resource params (shared by add + save).
@@ -298,68 +297,6 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             this._clusterErrors[host] = errMsg(error);
             void this._pushState();
         });
-    }
-
-    // "Refresh SSH Hosts" title action — re-reads ~/.ssh/config + system config so hosts added externally
-    // (e.g. via the Remote-SSH "Add New SSH Host" flow) show up without reloading the window. Hosts only.
-    public refreshSshHosts(): void {
-        this._pushHostsState();
-    }
-
-    // Native "Add SSH Host" title action — Remote-SSH-parity flow: prompt -> parse/validate -> write to ~/.ssh/config -> notify.
-    public async addSshHost(): Promise<void> {
-        const command = (await vscode.window.showInputBox({
-            title: 'Enter SSH Connection Command',
-            placeHolder: 'E.g. ssh hello@microsoft.com -A',
-            ignoreFocusOut: true,
-        }))?.trim();
-        if (!command) { return; }
-
-        let entry: SshConfigEntry;
-        try {
-            entry = sshCommandToConfig(command);
-            assertValidHost(entry);
-        } catch (err) {
-            vscode.window.showErrorMessage(errMsg(err));
-            return;
-        }
-
-        try {
-            addHostToConfigFile(USER_SSH_CONFIG_PATH, entry);
-        } catch (err) {
-            this._logger.error(`Failed to write SSH host to ${USER_SSH_CONFIG_PATH}:`, err);
-            vscode.window.showErrorMessage(`Failed to save SSH host: ${errMsg(err)}`);
-            return;
-        }
-        void this._pushState();
-
-        const choice = await vscode.window.showInformationMessage('Host added!', 'Open Config', 'Connect');
-        if (choice === 'Open Config') {
-            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(USER_SSH_CONFIG_PATH));
-        } else if (choice === 'Connect') {
-            // Start a new-session draft on the freshly added host — reveal the Sessions pane so its config card is seen.
-            this._draftHost = entry.Host;
-            void vscode.commands.executeCommand('csbridge.sessionsView.focus');
-            void this._pushState();
-            this._fetchClusterInfo(entry.Host);
-        }
-    }
-
-    private async _removeSshHost(name: string): Promise<void> {
-        // Delete controls render only on user-config rows (system is read-only), so the target is always ~/.ssh/config.
-        const choice = await vscode.window.showWarningMessage(
-            `Remove SSH host '${name}'?`,
-            { modal: true, detail: 'This removes the Host entry from ~/.ssh/config.' },
-            'Remove'
-        );
-        if (choice !== 'Remove') { return; }
-        try {
-            removeHostFromConfigFile(USER_SSH_CONFIG_PATH, name);
-        } catch (err) {
-            this._logger.error(`Failed to remove SSH host ${name} from ~/.ssh/config:`, err);
-            vscode.window.showErrorMessage(`Failed to remove SSH host: ${errMsg(err)}`);
-        }
-        void this._pushState();
     }
 
     // Cshost windows see only their own session; sidebar windows see all.
@@ -397,19 +334,10 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 };
                 sessionsView.postMessage({ command: 'state', state });
             }
-            this._pushHostsState();
             this._autoCloseIfTerminal();
         } catch (error) {
             this._logger.error('Failed to push webview state:', error);
         }
-    }
-
-    // Re-read the SSH host configs and push only the SSH Hosts view's state — nothing session/account-related.
-    private _pushHostsState(): void {
-        const hostsView = this._webviews.get(SessionProvider.hostsViewType);
-        if (!hostsView) { return; }
-        const state: HostsState = { sshHosts: SshManager.getInstance().getMergedHosts() };
-        hostsView.postMessage({ command: 'state', state });
     }
 
     // Step 2: (re)establish the in-process relay and open a window. Step 1 (remote sshd + tunnel) is the monitor's job.

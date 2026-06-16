@@ -3,6 +3,7 @@ import { Logger } from './logger';
 import { initSessionStore, mutateWindowPids } from './extensionStore';
 import { isPidAlive } from './modules/fsSupport';
 import { SessionProvider } from './sessionProvider';
+import { SshHostProvider } from './sshHostProvider';
 import { SshManager } from './modules/sshSupport';
 
 
@@ -32,15 +33,18 @@ export async function activate(context: vscode.ExtensionContext) {
 
     SshManager.initInstance(context.extensionUri);
     const sessionProvider = new SessionProvider(context.extensionUri, id);
+    const sshHostProvider = new SshHostProvider(context.extensionUri);
     context.subscriptions.push(
         sessionProvider,
         vscode.window.registerWebviewViewProvider(SessionProvider.sessionsViewType, sessionProvider),
-        vscode.window.registerWebviewViewProvider(SessionProvider.hostsViewType, sessionProvider),
         vscode.window.registerWebviewViewProvider(SessionProvider.statsViewType, sessionProvider),
+        vscode.window.registerWebviewViewProvider(SshHostProvider.viewType, sshHostProvider),
         vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
-        vscode.commands.registerCommand('csbridge.addHost', () => sessionProvider.addSshHost()),
-        vscode.commands.registerCommand('csbridge.refreshHosts', () => sessionProvider.refreshSshHosts()),
+        vscode.commands.registerCommand('csbridge.addHost', () => sshHostProvider.addSshHost()),
+        vscode.commands.registerCommand('csbridge.refreshHosts', () => sshHostProvider.refreshSshHosts()),
+        // Internal handoff: the SSH Hosts view's post-add "Connect" starts a session draft in the Sessions view.
+        vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
     );
 
     // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.
