@@ -3,7 +3,7 @@ import { useContext } from 'preact/hooks';
 import type { CSSProperties } from 'preact';
 import type { ViewSession } from '@/models';
 import { statusDescriptor, remainingMs, fmtTime, wallMs, type SessionAction } from '@/ui/logic/session';
-import { Row, Stack, Text, Card, ActionIcon, Button } from '@/ui/components/base';
+import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 
 interface Props {
@@ -41,18 +41,6 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
 
-const chipStyle: CSSProperties = { padding: '1px 6px', borderRadius: '4px', background: 'var(--vscode-keybindingLabel-background)', color: 'var(--vscode-keybindingLabel-foreground)', border: '1px solid var(--vscode-keybindingLabel-border)', fontSize: '11px', whiteSpace: 'nowrap' };
-
-type ChipData = { label: string; title?: string };
-
-function Chip({ label, title }: ChipData) {
-    return <span title={title} style={chipStyle}>{label}</span>;
-}
-
-function ChipRow({ chips }: { chips: ChipData[] }) {
-    return <Row gap={4} wrap>{chips.map(c => <Chip key={c.label} {...c} />)}</Row>;
-}
-
 function StatusText({ session }: { session: ViewSession }) {
     const now = useNow();
     const s = session.status;
@@ -80,17 +68,12 @@ function StatusText({ session }: { session: ViewSession }) {
 export function SessionCard({ session, readonly }: Props) {
     const { dot, canClose, actions } = statusDescriptor(session);
     const status = STATUS_ICON[session.status];
+    const sep = <Text style={{ opacity: 0.4, margin: '0 2px' }}>|</Text>;
 
     const act = (a: SessionAction) => {
         const command = COMMAND_FOR[a.kind];
         if (command) { post({ command, sessionId: session.id }); }
     };
-
-    const resources: ChipData[] = [
-        { label: `${session.cpus} CPU` },
-        { label: `${session.gpuCount} GPU`, title: session.gpuClass !== 'None' ? session.gpuClass : undefined },
-        { label: session.memory },
-    ].filter(c => c.label);
 
     return (
         <Card>
@@ -98,16 +81,19 @@ export function SessionCard({ session, readonly }: Props) {
             <Row gap={6} style={{ minHeight: '20px' }}>
                 <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: dot, flexShrink: 0 }}></vscode-icon>
                 <Text weight={600}>{session.cluster}</Text>
-                <Chip label={session.allocation} />
-                <Chip label={session.queue} />
                 {session.jobDirectory ? <Text muted size={11} ellipsis>{session.jobDirectory}</Text> : null}
                 {!readonly && canClose ? <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} /> : null}
             </Row>
-            <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
-            <Stack gap={6}>
-                <ChipRow chips={resources} />
-                <Row gap={6}>
-                    <Chip label={fmtTime(wallMs(session.wallTime))} />
+            <Stack gap={3}>
+                <Row gap={3} wrap style={{ color: 'var(--vscode-descriptionForeground)', fontSize: '12px' }}>
+                    <Icon name="account" /> {session.allocation} {sep}
+                    <Icon name="server-environment" /> {session.queue} {sep}
+                    <Icon name="vm" /> {session.cpus} {sep}
+                    <Icon name="database" /> {session.memory}
+                    {session.gpuClass !== 'None' ? <>{sep} <Icon name="circuit-board" /> {session.gpuClass}</> : null}
+                    {sep} <Icon name="watch" /> {fmtTime(wallMs(session.wallTime))}
+                </Row>
+                <Row gap={8} justify="space-between">
                     <StatusText session={session} />
                     {!readonly && actions.length ? (
                         // zoom shrinks the label and the vscode-button's fixed-size codicon together.
