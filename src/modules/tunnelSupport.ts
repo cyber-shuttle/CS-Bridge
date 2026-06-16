@@ -10,8 +10,8 @@ import {
 import {
     TunnelRelayTunnelClient,
 } from "@microsoft/dev-tunnels-connections";
-import { TunnelAccessScopes } from "@microsoft/dev-tunnels-contracts";
-import { clearSSHConfigEntry } from "./sshSupport";
+import { TunnelAccessScopes, Tunnel } from "@microsoft/dev-tunnels-contracts";
+import { clearSSHConfigEntry, writeSessionPrivateKey } from "./sshSupport";
 
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
@@ -21,6 +21,46 @@ const logger = Logger.getInstance();
 
 /** Active tunnel relay clients, keyed by session ID, so they can be disconnected later. */
 const activeTunnelClients = new Map<string, TunnelRelayTunnelClient>();
+
+function buildTunnelManagementClient(): TunnelManagementHttpClient {
+    return new TunnelManagementHttpClient(
+        { name: 'csbridge-vscode', version: '1.0' },
+        ManagementApiVersions.Version20230927preview,
+        async () => `Bearer ${await getDevTunnelAuthToken()}`,
+    );
+}
+
+// cs-bridge-owned Dev Tunnel: create or resolve it via the SDK and hydrate the API-tunnel refs.
+export async function ensureDevTunnel(session: SlurmSession): Promise<void> {
+    const mgmt = buildTunnelManagementClient();
+    const ci = session.connectionInfo ?? (session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '' });
+    const opts = { tokenScopes: [TunnelAccessScopes.Connect] };
+
+    const existing = session.tunnelId
+        ? await mgmt.getTunnel({ tunnelId: session.tunnelId, clusterId: session.tunnelCluster }, opts)
+        : null;
+    const tunnel = existing ?? await mgmt.createTunnel(
+        session.tunnelId ? { tunnelId: session.tunnelId, clusterId: session.tunnelCluster } : {}, opts);
+
+    session.tunnelId = tunnel.tunnelId;
+    session.tunnelCluster = tunnel.clusterId;
+    ci.apiTunnelId = tunnel.tunnelId;
+    ci.region = tunnel.clusterId ?? ci.region;
+    ci.apiTunnelAccessToken = tunnel.accessTokens?.[TunnelAccessScopes.Connect] ?? ci.apiTunnelAccessToken;
+    updateSession(session);
+}
+
+export async function deleteSessionDevTunnel(session: SlurmSession): Promise<void> {
+    if (!session.tunnelId) { return; }
+    try {
+        await buildTunnelManagementClient().deleteTunnel({ tunnelId: session.tunnelId, clusterId: session.tunnelCluster });
+    } catch (err) {
+        logger.warn(`Failed to delete dev tunnel ${session.tunnelId}:`, err);
+    }
+    session.tunnelId = undefined;
+    session.tunnelCluster = undefined;
+    updateSession(session);
+}
 
 export async function createSSHServerForSession(session: SlurmSession): Promise<void> {
 
@@ -56,64 +96,64 @@ export async function createSSHServerForSession(session: SlurmSession): Promise<
         throw new Error(`Failed to create SSH server for session ${session.id}. API response: ${resp.status} ${resp.statusText}`);
     }
 
-    // {"id":"s-36327","bind_port":36327,"password":"LSqTAUXEloSRwHB8"}
     const respData = await resp.json() as { bind_port: number; password: string; id: string, private_key: string };
-    logger.info(`SSH server for session ${session.id} created successfully. Data: ${JSON.stringify(respData)}`);
-    const sshPort = respData.bind_port;
-    session.connectionInfo!.sshPort = sshPort;
+    logger.info(`SSH server for session ${session.id} created on port ${respData.bind_port}.`);
+    session.connectionInfo!.sshPort = respData.bind_port;
     session.connectionInfo!.sshPassword = respData.password;
     session.connectionInfo!.sshPrivateKey = respData.private_key;
+    // Persist the key to disk now (Step 1) so a reload at ready_to_connect can reconnect without
+    // re-fetching it over the login node.
+    writeSessionPrivateKey(session.id, respData.private_key);
     updateSession(session);
 }
 
-export async function createTunnelForSSHServer(session: SlurmSession): Promise<void> {
-    logger.info('Adding ssh port for existing tunnel connection...');
+export async function forwardSSHPortOnTunnel(session: SlurmSession): Promise<void> {
+    logger.info('Forwarding SSH port on the existing API tunnel...');
 
-    if (!session.connectionInfo) {
-        logger.error(`Session ${session.id} does not have connection info. Cannot create tunnel for SSH server.`);
-        throw new Error(`Session ${session.id} does not have connection info. Cannot create tunnel for SSH server.`);
+    const ci = session.connectionInfo;
+    if (!ci) {
+        throw new Error(`Session ${session.id} does not have connection info. Cannot forward SSH port.`);
+    }
+    if (!ci.apiTunnelId || !ci.apiPort || !ci.apiTunnelAccessToken) {
+        throw new Error(`Session ${session.id} is missing live Dev Tunnel API info; cannot forward the SSH port. Wait for status to refresh, then retry, or relaunch.`);
     }
 
-    const baseAPIUrl = `https://${session.connectionInfo?.apiTunnelId}-${session.connectionInfo?.apiPort}.${session.connectionInfo?.region}.devtunnels.ms/api/v1`;
-    const apiToken = `tunnel ${session.connectionInfo?.apiTunnelAccessToken}`;
-    const sshPort = session.connectionInfo!.sshPort;
+    const baseAPIUrl = `https://${ci.apiTunnelId}-${ci.apiPort}.${ci.region}.devtunnels.ms/api/v1`;
+    const apiToken = `tunnel ${ci.apiTunnelAccessToken}`;
 
-    // We create a new dev tunnel not to disrupt existing tunnel as it is required for API
-    const forwardResp = await fetch(`${baseAPIUrl}/tunnels/devtunnels`, {
+    const forwardResp = await fetch(`${baseAPIUrl}/tunnels/devtunnels/forward`, {
         method: 'POST',
         headers: {
             'X-Tunnel-Authorization': apiToken,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            "tunnelName": "ssh-tunnel-" + session.id,
-            "open_ports": [sshPort],
-            "expiration": "1d",
-            "authToken": await getDevTunnelAuthToken() // need to use the user auth token for this API call
+            tunnelName: ci.apiTunnelId,
+            port: ci.sshPort,
+            token: await getDevTunnelAuthToken()
         })
     });
 
     if (!forwardResp.ok) {
         const errorText = await forwardResp.text();
-        logger.error(`Failed to add ssh port to tunnel ${session.connectionInfo?.apiTunnelId} in session ${session.id}. API response: ${forwardResp.status} ${forwardResp.statusText} - ${errorText}`);
-        throw new Error(`Failed to add ssh port to tunnel ${session.connectionInfo?.apiTunnelId} in session ${session.id}. API response: ${forwardResp.status} ${forwardResp.statusText}`);
+        logger.error(`Failed to forward SSH port on tunnel ${ci.apiTunnelId} in session ${session.id}. API response: ${forwardResp.status} ${forwardResp.statusText} - ${errorText}`);
+        throw new Error(`Failed to forward SSH port on tunnel ${ci.apiTunnelId} in session ${session.id}. API response: ${forwardResp.status} ${forwardResp.statusText}`);
     }
 
-    // {"id":"s-36327","bind_port":36327,"password":"LSqTAUXEloSRwHB8"}
-    const forwardRespData = await forwardResp.json() as { tunnelName: string; tunnelID: string, };
-    session.connectionInfo!.sshTunnelId = forwardRespData.tunnelID;
+    ci.sshTunnelId = ci.apiTunnelId; // SSH rides the API tunnel; this is the persisted reconnect anchor
     updateSession(session);
-    logger.info(`SSH server forward for session ${session.id} created successfully. Data: ${JSON.stringify(forwardRespData)}`);
+    logger.info(`SSH port ${ci.sshPort} forwarded on tunnel ${ci.apiTunnelId} for session ${session.id}.`);
 }
 
 // Step 1: ensure the remote sshd exists and its port is exposed on a Dev Tunnel. Idempotent.
 export async function ensureRemoteSession(session: SlurmSession): Promise<void> {
     if (session.connectionInfo?.sshTunnelId) { return; }
+    await ensureDevTunnel(session);
     // Reuse an sshd a prior attempt already created (linkspan's create isn't idempotent, so re-creating would leak one).
     if (!session.connectionInfo?.sshPort) {
         await createSSHServerForSession(session);
     }
-    await createTunnelForSSHServer(session);
+    await forwardSSHPortOnTunnel(session);
 }
 
 export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<number> {
@@ -126,14 +166,7 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
     const { sshTunnelId, sshPort, region } = session.connectionInfo;
 
     // Create management client with AAD user token for auth
-    const mgmtClient = new TunnelManagementHttpClient(
-        { name: 'csbridge-vscode', version: '1.0' },
-        ManagementApiVersions.Version20230927preview,
-        async () => {
-            const token = await getDevTunnelAuthToken();
-            return `Bearer ${token}`;
-        },
-    );
+    const mgmtClient = buildTunnelManagementClient();
 
     // Fetch the full tunnel object (with endpoints + ports) from the service
     const tunnel = await mgmtClient.getTunnel(
@@ -162,6 +195,8 @@ export async function connectSessionToSSHTunnel(session: SlurmSession): Promise<
             enableRetry: true,
             enableReconnect: true,
         });
+        // pick up the sshd port added after the host started
+        try { await client.refreshPorts(); } catch (err) { logger.warn(`refreshPorts failed for session ${session.id}:`, err); }
         await client.waitForForwardedPort(sshPort);
         localPort = client.forwardedPorts?.find((p) => p.remotePort === sshPort)?.localPort ?? sshPort;
     } catch (err) {

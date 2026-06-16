@@ -60,11 +60,11 @@ export class JobStatusMonitor {
 
     // Step 1: drive a running session to ready_to_connect. Guarded to run the networked create once despite the 5s poll.
     private async prepareRemote(session: SlurmSession): Promise<void> {
-        if (this.preparing.has(session.id) || session.status !== 'running') { return; }
+        if (this.preparing.has(session.id) || session.status !== 'preparing') { return; }
         this.preparing.add(session.id);
         try {
             await ensureRemoteSession(session);
-            if (session.status === 'running') {
+            if (session.status === 'preparing') {
                 session.status = 'ready_to_connect';
                 logger.info(`Session ${session.name} is ready to connect (remote sshd + tunnel live).`);
                 updateSession(session);
@@ -72,12 +72,12 @@ export class JobStatusMonitor {
             this.monitoringFailedCounts.delete(session.id);
         } catch (err) {
             logger.error(`Failed to prepare session ${session.name} for connect:`, err);
-            // Cap retries so a permanently-broken prepare surfaces instead of looping every poll.
+            // Cap retries so a permanently-broken prepare surfaces as disconnected instead of looping every poll.
+            // Stays monitored (no stopMonitoringInternal): the slurm branch takes it terminal on job death.
             if (this.doesQualifyToFail(session.id)) {
-                session.status = 'connection_broken';
+                session.status = 'disconnected';
                 session.errorMessage = `Failed to prepare session for connect: ${err instanceof Error ? err.message : String(err)}`;
                 updateSession(session);
-                this.stopMonitoringInternal(session.id);
             }
         } finally {
             this.preparing.delete(session.id);
@@ -113,7 +113,7 @@ export class JobStatusMonitor {
             const sessionsToCheck = [...this.monitoringSessions.entries()];
             this._lock.release();
 
-            logger.info(`Polling job status for ${sessionsToCheck.length} sessions...`);
+            if (sessionsToCheck.length > 0) { logger.info(`Polling job status for ${sessionsToCheck.length} sessions...`); }
             for (const [sessionId, session] of sessionsToCheck) {
                 if (session.jobId) {
                     try {
@@ -132,16 +132,16 @@ export class JobStatusMonitor {
                             checkLinkspanHealth(session).then(() => {
                                 this.monitoringFailedCounts.delete(session.id);
                             }).catch(err => {
+                                // The session may have left a live state (e.g. Stop) while this ping was in flight; don't clobber it.
+                                if (session.status !== 'ready_to_connect' && session.status !== 'connecting' && session.status !== 'connected') { return; }
                                 logger.warn(`Health check failed for session ${session.name}:`, err);
                                 if (this.doesQualifyToFail(session.id)) {
-                                    // This will happen either job was externally killed, tunnel expired or the slurm job walltime exceeded.
-                                    logger.warn(`Health check failed for session ${session.name}, and it qualifies to mark the session as failed. Updating session status to 'connection_broken'.`);
+                                    // Job externally killed, tunnel expired, or walltime exceeded.
                                     session.errorMessage = `Health check failed: ${err.message}`;
-                                    session.status = 'connection_broken';
+                                    session.status = 'disconnected';
                                     updateSession(session);
-                                    this.stopMonitoringInternal(session.id);
                                     void disposeSessionTunnelClient(session.id); // free the port; keep refs for a later reattach
-                                    // We can probably check for job exipiry by looking at the walltime of the job
+                                    // Stays monitored: the slurm branch takes it terminal if the job is actually gone.
                                 }
                             });
                             continue;
@@ -156,24 +156,18 @@ export class JobStatusMonitor {
                             updateSession(session);
                         }
 
-                        // After reload api* are stripped (disabling the health-ping branch); re-scrape them for a connect-phase session.
-                        const needsApiRederive = !session.connectionInfo?.apiTunnelId &&
-                            (session.status === 'ready_to_connect' || session.status === 'connected' || session.status === 'connecting');
-                        if (slurmStatus === SlurmJobStatus.RUNNING && (session.status === 'running' || needsApiRederive)) {
+                        if (slurmStatus === SlurmJobStatus.RUNNING && session.status === 'preparing') {
                             //logger.info(`Session ${session.name} is now running. Fetching job output...`);
                             getSlurmJobOutput(session).then(output => {
-                                // Parse all coordinates in one pass, persist once.
+                                // id/region/token come from ensureDevTunnel; only scrape the server port.
                                 const ci = session.connectionInfo ?? (session.connectionInfo = this.initializeConnectionInfo());
-                                let changed = false;
                                 for (const line of output.split('\n')) {
-                                    if (line.includes('listening on')) { ci.apiPort = parseInt(line.split('listening on')[1].trim().split(':')[1]); changed = true; }
-                                    else if (line.includes('DevTunnel ID:')) { ci.apiTunnelId = line.split('DevTunnel ID:')[1].trim(); changed = true; }
-                                    else if (line.includes('DevTunnel Token:')) { ci.apiTunnelAccessToken = line.split('DevTunnel Token:')[1].trim(); changed = true; }
-                                    else if (line.includes('Devtunnel cluster id:')) { ci.region = line.split('Devtunnel cluster id:')[1].trim(); changed = true; }
-                                }
-                                if (changed) {
-                                    updateSession(session);
-                                    logger.info(`Session ${session.name}: tunnel coordinates updated (id=${ci.apiTunnelId}, apiPort=${ci.apiPort}, region=${ci.region})`);
+                                    if (line.includes('listening on')) {
+                                        ci.apiPort = parseInt(line.split('listening on')[1].trim().split(':')[1]);
+                                        updateSession(session);
+                                        logger.info(`Session ${session.name}: linkspan server port = ${ci.apiPort}`);
+                                        break;
+                                    }
                                 }
                             }).catch(err => {
                                 logger.error(`Failed to get job output for session ${session.name}:`, err);
@@ -187,19 +181,17 @@ export class JobStatusMonitor {
                                 this.stopMonitoringInternal(sessionId);
                             });
 
-                            if (session.status === 'running' && session.connectionInfo &&
-                                session.connectionInfo.apiTunnelId && session.connectionInfo.apiTunnelAccessToken &&
-                                session.connectionInfo.region &&
-                                (session.connectionInfo.apiPort ?? 0) > 0) {
+                            if (session.status === 'preparing' && session.tunnelId &&
+                                (session.connectionInfo?.apiPort ?? 0) > 0) {
                                 // Step 1 (auto): linkspan is up - ensure the remote sshd + tunnel are live, then mark ready_to_connect.
                                 void this.prepareRemote(session);
                             }
-                        } else if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'running'
-                            && session.status !== 'ready_to_connect' && session.status !== 'connected' && session.status !== 'connecting') {
-                            // Don't pull a connect-phase session back to 'running' (would clobber reattach).
-                            session.status = 'running';
+                        } else if (slurmStatus === SlurmJobStatus.RUNNING && session.status !== 'preparing'
+                            && session.status !== 'ready_to_connect' && session.status !== 'connected'
+                            && session.status !== 'connecting' && session.status !== 'disconnected') {
+                            // Don't pull a connect-phase / disconnected session back to 'preparing' (would clobber reattach / thrash).
+                            session.status = 'preparing';
                             updateSession(session);
-                            // Todo: Remove from monitoring pool when the Linkspan connection is established
                         } else if (slurmStatus === SlurmJobStatus.COMPLETED) {
                             session.status = 'completed';
                             updateSession(session);
@@ -210,7 +202,7 @@ export class JobStatusMonitor {
                             updateSession(session);
                             this.stopMonitoringInternal(sessionId);
                         } else if (slurmStatus === SlurmJobStatus.PENDING) {
-                            session.status = 'pending';
+                            session.status = 'queued';
                             updateSession(session);
                         } else if (slurmStatus === SlurmJobStatus.CANCELLED) {
                             session.status = 'cancelled';
@@ -402,7 +394,7 @@ async function submitJobToSlurm(session: SlurmSession, progress: vscode.Progress
             const jobId = jobIdMatch[1];
             logger.info(`Job submitted successfully with Job ID: ${jobId}`);
             session.jobId = jobId;
-            session.status = 'pending'; // Job is submitted and waiting in queue
+            session.status = 'queued'; // Job is submitted and waiting in queue
             session.submittedAt = new Date().getTime();
             updateSession(session);
             return true;

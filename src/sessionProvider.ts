@@ -4,13 +4,13 @@ import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState, HostsS
 import { getWebviewContent } from './webviewContent';
 import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSessionPrivateKey, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
-import { connectSessionToSSHTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
 import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
 import { MANAGED_HOSTS_PATH, USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } from './modules/sshHostsStore';
 
-const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed', 'expired']);
+const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
 
 const errMsg = (e: unknown): string => e instanceof Error ? e.message : String(e);
 
@@ -207,7 +207,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         const session = this._requireSession(sessionId, 'remove', true);
         if (!session) { return; }
 
-        const removableStatuses = ['failed', 'completed', 'cancelled', 'not_started', 'expired'];
+        const removableStatuses = ['failed', 'completed', 'cancelled', 'not_started'];
         if (!removableStatuses.includes(session.status)) {
             this._logger.warn(`Session ${sessionId} is in status ${session.status} and cannot be removed.`);
             vscode.window.showWarningMessage(`Session cannot be removed from status: ${session.status}`);
@@ -229,6 +229,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         }
 
         await disposeSessionTunnelClient(sessionId);
+        await deleteSessionDevTunnel(session);
         try {
             clearSSHConfigEntry(sessionId, `cshost-${sessionId}`);
         } catch (err) {
@@ -420,7 +421,9 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         } catch (error) {
             this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
             await disposeSessionTunnelClient(sessionId); // free any partially-established relay client
-            session.status = 'connection_broken';
+            // Remote (Step 1) is still up if sshTunnelId exists - only the relay attempt failed, so
+            // fall back to ready_to_connect for an easy retry; otherwise the remote is gone -> disconnected.
+            session.status = session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected';
             session.errorMessage = `Failed to connect tunnel: ${errMsg(error)}`;
             updateSession(session);
             void this._pushState();
@@ -433,7 +436,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         const session = this._requireSession(sessionId, 'cancel', false);
         if (!session) { return; }
 
-        if (session.status === 'running' || session.status === 'pending' || session.status === 'submitting' || session.status === 'deploying_agent' || session.status === 'connected' || session.status === 'connection_broken' || session.status === 'ready_to_connect' || session.status === 'connecting') {
+        if (session.status === 'preparing' || session.status === 'queued' || session.status === 'submitting' || session.status === 'connected' || session.status === 'disconnected' || session.status === 'ready_to_connect' || session.status === 'connecting') {
             const choice = await vscode.window.showWarningMessage(
                 'Stop session?',
                 { modal: true, detail: 'This cancels the running job.' },
@@ -499,6 +502,15 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
             updateSession(session);
             this._logger.error('Failed to get tunnel credentials:', err);
+            throw err;
+        }
+        try {
+            await ensureDevTunnel(session); // persist the tunnel id before it goes into the launch script
+        } catch (err: any) {
+            vscode.window.showErrorMessage(`Failed to create dev tunnel: ${err.message}`);
+            session.errorMessage = `Failed to create dev tunnel: ${err.message}`;
+            updateSession(session);
+            this._logger.error('Failed to create dev tunnel:', err);
             throw err;
         }
         this._logger.info('Generating Slurm script for session:', session);
