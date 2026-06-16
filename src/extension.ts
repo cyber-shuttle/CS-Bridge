@@ -38,6 +38,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(SessionProvider.hostsViewType, sessionProvider),
         vscode.window.registerWebviewViewProvider(SessionProvider.statsViewType, sessionProvider),
         vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
+        vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sessionProvider.addSshHost()),
     );
 
