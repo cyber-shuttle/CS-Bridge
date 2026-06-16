@@ -1,5 +1,7 @@
-import { SlurmJobStatus, SlurmSession } from "../models";
+import { SlurmClusterInfo, SlurmJobStatus, SlurmSession } from "../models";
+import { Logger } from "../logger";
 import { SshManager } from "./sshSupport";
+import { parsePartitionLine } from "./slurmParse";
 
 
 export async function getSlurmJobOutput(slurmSession: SlurmSession): Promise<string> {
@@ -54,4 +56,77 @@ export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ s
     else if (state.includes('RUNNING')) { status = SlurmJobStatus.RUNNING; }
 
     return { status, elapsedSec };
+}
+
+/**
+* Query SLURM partition and account info for the current user on a remote host.
+* Returns a SlurmClusterInfo with accounts, partitions, and homeDir fields.
+*/
+export async function getSlurmClusterInfo(hostName: string): Promise<SlurmClusterInfo> {
+    const sshManager = SshManager.getInstance();
+    const log = Logger.getInstance();
+    const clusterInfo: SlurmClusterInfo = { host: hostName, accounts: [], partitions: [] };
+    try {
+        const accountResult = await sshManager.runRemoteCommand(hostName,
+            'sacctmgr show associations where user=$USER format=Account -p');
+
+        if (accountResult.code === 0) {
+            log.info(accountResult.stdout);
+
+            // Parse pipe-delimited output into account → QOS mapping
+            const lines = accountResult.stdout.trim().split('\n');
+
+            for (let i = 1; i < lines.length; i++) { // skip header
+                const parts = lines[i].trim().split('|');
+                log.info(`Parsed account line: ${lines[i]} → ${parts} {length: ${parts.length}}`);
+                if (parts.length >= 1) {
+                    const account = parts[0].trim();
+                    if (account) {
+                        clusterInfo.accounts.push(account);
+                    }
+                }
+            }
+        } else {
+            log.warn(`Command exited with code ${accountResult.code}`);
+            if (accountResult.stderr) {
+                log.error(accountResult.stderr);
+            }
+            throw new Error(`Failed to query associations: ${accountResult.stderr || 'Unknown error'}`);
+        }
+
+    } catch (err) {
+        log.error('Error querying associations:', err);
+        throw err;
+    }
+
+    try {
+        const partitionResult = await sshManager.runRemoteCommand(hostName, 'sinfo -h -o "%P|%c|%m|%G"');
+        /* Example output:
+        interactive-cpu|24|191000+|gpu:v100:2(S:0-1)
+        interactive-cpu1|24|385000+|gpu:rtx_6000:4(S:0-1)
+        interactive-cpu2|64|515000|gpu:a100:2(S:2,5)
+        cpu-small*|24+|191000+|(null)
+        cpu-amd|128|515000+|(null)
+        */
+        if (partitionResult.code === 0) {
+            log.info(partitionResult.stdout);
+            clusterInfo.partitions = partitionResult.stdout
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map(parsePartitionLine);
+        }
+    } catch (err) {
+        log.warn(`Failed to query partitions: ${err instanceof Error ? err.message : String(err)}`);
+        // Don't throw, since accounts info may still be useful
+    }
+
+    try {
+        const homeResult = await sshManager.runRemoteCommand(hostName, 'echo $HOME');
+        if (homeResult.code === 0) { clusterInfo.homeDir = homeResult.stdout.trim(); }
+    } catch (err) {
+        log.warn(`Failed to query $HOME: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return clusterInfo;
 }
