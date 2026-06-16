@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 
+// Extract a human-readable message from an unknown thrown value.
+export const errMsg = (e: unknown): string => e instanceof Error ? e.message : String(e);
+
 export enum LogLevel {
     Debug = 0,
     Info = 1,

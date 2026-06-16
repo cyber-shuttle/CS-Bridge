@@ -31,11 +31,14 @@ Press F5 in VS Code to launch Extension Development Host for testing.
 
 ```
 src/
-  extension.ts                       # Entry point; registers the SessionViewProvider
-  sessionProvider.ts                 # Main webview provider; handles all sidebar commands
+  extension.ts                       # Entry point; registers the three view providers + commands
+  baseWebviewProvider.ts             # Shared webview wiring (options, html, message/visibility/dispose) for the providers below
+  sessionProvider.ts                 # Webview provider for the Sessions view; handles session commands + monitoring
+  sshHostProvider.ts                 # Webview provider for the SSH Hosts view (add/refresh/remove; reads ssh configs)
+  statsProvider.ts                   # Webview provider for the Stats view (skeleton; renders a "Coming Soon" placeholder)
   extensionStore.ts                  # Sessions persistence (~/.cybershuttle/sessions.json) + cross-window file watcher
   models.ts                          # SlurmSession + status type definitions
-  logger.ts                          # Output-channel logger
+  logger.ts                          # Output-channel logger (+ errMsg helper)
   webviews/
     sessionWebview.ts                # HTML/CSP generation for the sidebar webview
   modules/
@@ -58,7 +61,7 @@ scripts/
 
 ## Key Patterns
 
-- **`sessionProvider.ts`** is the only webview provider. All user actions flow through its `case` dispatch on webview messages: `addSession`, `prepareLaunchSession`, `launchSession`, `connectTunnel`, `cancelSessionExecution`, `removeSession`, `switchAuth`, `fetchSlurmClusterInfo`, etc. Capability logic lives in `modules/`.
+- **One provider per view, over a shared base.** All three extend `BaseWebviewProvider` (`baseWebviewProvider.ts`), which owns the common wiring — enabling scripts, rendering the view bundle via `getWebviewContent`, routing messages to `handleMessage`, re-pushing on (re)visibility via `pushState`, and tracking/clearing the resolved `_view`. Subclasses set `viewKind` and override `handleMessage`/`pushState`/`onResolved` as needed. `sessionProvider.ts` serves the Sessions view (session-command dispatch + monitoring lifecycle in `onResolved`→`_ensureShared`); `sshHostProvider.ts` serves the SSH Hosts view (its own `addSshHost`/`refreshSshHosts`/`removeSshHost`, reading/writing the SSH config files); `statsProvider.ts` serves the Stats view (skeleton). The providers are decoupled; the only handoff is the SSH Hosts "Connect" action, which calls `csbridge.newSessionOnHost` to start a session draft on the Sessions view. Capability logic lives in `modules/`.
 - **Webview UI is plain JS/CSS** (`resources/webviews/`) — not compiled from TypeScript. Communicates via `postMessage` / `onDidReceiveMessage`. All webviews use nonce-based CSP.
 - **Microsoft auth** uses `vscode.authentication.getSession('microsoft', [DEV_TUNNELS_SCOPE], ...)`. There is no OAuth/device-flow against any CyberShuttle-hosted endpoint.
 - **OS-native ssh + ControlMaster** — every remote command (info.sh, linkspan deploy, status polling, sbatch) goes through the system `ssh` binary multiplexed over a ControlMaster socket. CyberShuttle does not bundle an SSH client. Socket name = SHA-256 hash of host name to stay under the 104-byte Unix socket path limit (`modules/sshSupport.ts:118-131`). ControlMaster is skipped on Windows (no Unix-socket ControlMaster support).

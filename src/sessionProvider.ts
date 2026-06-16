@@ -1,18 +1,14 @@
 import * as vscode from 'vscode';
-import { Logger } from './logger';
-import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState, HostsState } from './models';
-import { getWebviewContent } from './webviewContent';
+import { errMsg } from './logger';
+import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState } from './models';
+import { BaseWebviewProvider } from './baseWebviewProvider';
 import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSessionPrivateKey, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
 import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
 import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
 import { isPidAlive } from './modules/fsSupport';
-import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
-import { USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } from './modules/sshHostsStore';
 
 const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
-
-const errMsg = (e: unknown): string => e instanceof Error ? e.message : String(e);
 
 function openSessionWindow(sessionId: string): void {
     const path = findSession(sessionId)?.workingDirectory ?? '';
@@ -28,60 +24,35 @@ function liveAndCleanup(s: SlurmSession): { isCurrent: boolean, windowAlive: boo
     return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
 }
 
-export class SessionProvider implements vscode.WebviewViewProvider, vscode.Disposable {
-    public static readonly sessionsViewType = 'csbridge.sessionsView';
-    public static readonly hostsViewType = 'csbridge.hostsView';
-    public static readonly statsViewType = 'csbridge.statsView';
+export class SessionProvider extends BaseWebviewProvider implements vscode.Disposable {
+    public static readonly viewType = 'csbridge.sessionsView';
+    protected readonly viewKind = 'sessions' as const;
 
-    private readonly _logger = Logger.getInstance();
     private readonly _clusterInfo = new Map<string, SlurmClusterInfo>();
     private readonly _clusterErrors: Record<string, string> = {};
     private _draftHost: string | null = null;
     private _editingId: string | null = null;
     private _previewSession: SlurmSession | null = null;
-    // One provider instance feeds both views; each resolved webview is keyed by its viewType.
-    private readonly _webviews = new Map<string, vscode.Webview>();
-    private _sessionsView?: vscode.WebviewView; // kept to set the account on its title (description)
     private readonly _shared: vscode.Disposable[] = [];
     private readonly _connecting = new Set<string>(); // session ids with an in-flight connect, to drop re-entrant requests
     private _sharedReady = false;
 
     // _myId: undefined in sidebar/non-remote windows (sees all sessions, drives monitoring); set to sessionId in cshost remote windows (scoped to that session, observes only).
-    constructor(private readonly _extensionUri: vscode.Uri, private readonly _myId?: string) {
+    constructor(extensionUri: vscode.Uri, private readonly _myId?: string) {
+        super(extensionUri);
     }
 
-    resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext,
-        token: vscode.CancellationToken): Thenable<void> | void {
-
-        const webview = webviewView.webview;
-        const viewType = webviewView.viewType;
-        const kind = viewType === SessionProvider.hostsViewType ? 'hosts'
-            : viewType === SessionProvider.statsViewType ? 'stats'
-                : 'sessions';
-        webview.options = { enableScripts: true };
-        this._webviews.set(viewType, webview);
-        if (viewType === SessionProvider.sessionsViewType) { this._sessionsView = webviewView; }
-
-        const msgSub = webview.onDidReceiveMessage((data) => this._onMessageFromJs(data));
-        const visSub = webviewView.onDidChangeVisibility(() => { if (webviewView.visible) { void this._pushState(); } });
-        webviewView.onDidDispose(() => {
-            // Only evict if still ours — a late dispose of an old webview must not remove a freshly re-resolved one.
-            if (this._webviews.get(viewType) === webview) { this._webviews.delete(viewType); }
-            if (this._sessionsView === webviewView) { this._sessionsView = undefined; }
-            msgSub.dispose();
-            visSub.dispose();
-        });
-
+    // Wire the window-scoped session subscriptions the first time the Sessions view resolves.
+    protected onResolved(): void {
         this._ensureShared();
-        webview.html = getWebviewContent(webview, this._extensionUri, kind);
     }
 
-    // Window-scoped subscriptions shared by both views; set up once, disposed with the provider.
+    // Window-scoped subscriptions; set up once, disposed with the provider.
     private _ensureShared(): void {
         if (this._sharedReady) { return; }
         this._sharedReady = true;
         this._shared.push(vscode.authentication.onDidChangeSessions((e) => {
-            if (e.provider.id === 'microsoft') { void this._pushState(); }
+            if (e.provider.id === 'microsoft') { void this.pushState(); }
         }));
         // cshost windows only react to changes in their own session.
         let lastMine: string | undefined;
@@ -89,7 +60,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             const mine = this._myId ? JSON.stringify(findSession(this._myId)) : undefined;
             if (mine !== undefined && mine === lastMine) { return; }
             lastMine = mine;
-            void this._pushState();
+            void this.pushState();
         });
         this._shared.push({ dispose: () => sessionsWatcher.close() });
         JobStatusMonitor.init();
@@ -107,22 +78,22 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     }
 
     // Handle messages from the webview here (e.g., refresh sessions, open terminal, etc.)
-    private _onMessageFromJs(data: any) {
+    protected handleMessage(data: any) {
         this._logger.info('Received message from webview:', data);
 
         const command = data.command;
         const id = data.sessionId;
         switch (command) {
             case 'ready':
-                void this._pushState();
+                void this.pushState();
                 break;
             case 'cancelDraftSession':
                 this._draftHost = null;
-                void this._pushState();
+                void this.pushState();
                 break;
             case 'dismissPreview':
                 this._previewSession = null;
-                void this._pushState();
+                void this.pushState();
                 break;
             case 'addSession': {
                 const newSession: SlurmSession = {
@@ -140,20 +111,20 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 };
                 addSession(newSession);
                 this._draftHost = null;
-                void this._pushState();
+                void this.pushState();
                 break;
             }
             case 'editSession': {
                 const s = this._requireSession(id, 'edit', true);
                 if (!s) { break; }
                 this._editingId = id;
-                void this._pushState();
+                void this.pushState();
                 this._fetchClusterInfo(s.cluster);
                 break;
             }
             case 'cancelEditSession':
                 this._editingId = null;
-                void this._pushState();
+                void this.pushState();
                 break;
             case 'saveSession': {
                 const s = this._requireSession(id, 'save', true);
@@ -162,7 +133,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 s.batchScript = undefined; // params changed; the script is regenerated at launch
                 updateSession(s);
                 this._editingId = null;
-                void this._pushState();
+                void this.pushState();
                 break;
             }
             case 'prepareLaunchSession':
@@ -171,7 +142,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                     this._logger.info(`Preparation for session launch completed for session ID: ${id}`);
                 }).catch((error: Error) => {
                     this._logger.error(`Error preparing session launch for session ID ${id}:`, error);
-                    void this._pushState();
+                    void this.pushState();
                 });
                 break;
             case 'launchSession':
@@ -188,9 +159,6 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             case 'removeSession':
                 this._removeSession(id);
                 break;
-            case 'removeSshHost':
-                this._removeSshHost(data.name);
-                break;
             default:
                 this._logger.warn('Unknown command from webview:', command);
         }
@@ -201,7 +169,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         if (!s) {
             this._logger.error(`Session with ID ${id} not found to ${action}.`);
             vscode.window.showErrorMessage('Session not found.');
-            if (push) { void this._pushState(); }
+            if (push) { void this.pushState(); }
         }
         return s;
     }
@@ -216,7 +184,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         if (!removableStatuses.includes(session.status)) {
             this._logger.warn(`Session ${sessionId} is in status ${session.status} and cannot be removed.`);
             vscode.window.showWarningMessage(`Session cannot be removed from status: ${session.status}`);
-            void this._pushState();
+            void this.pushState();
             return;
         }
 
@@ -229,7 +197,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             'Remove'
         );
         if (choice !== 'Remove') {
-            void this._pushState();
+            void this.pushState();
             return;
         }
 
@@ -241,7 +209,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             this._logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
         }
         deleteSession(sessionId);
-        void this._pushState();
+        void this.pushState();
     }
 
     // Native account title action: open the Microsoft account switcher (sign in if needed), then refresh.
@@ -251,7 +219,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         } catch (error) {
             this._logger.error('Error switching Dev Tunnels authentication account:', error);
         }
-        void this._pushState();
+        void this.pushState();
     }
 
     // Native "New Session" title action: pick a host, then show its config card as a draft in the Sessions view.
@@ -266,9 +234,16 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
         );
         if (!pick) { return; }
-        this._draftHost = pick.label;
-        void this._pushState();
-        this._fetchClusterInfo(pick.label);
+        this.startSessionDraft(pick.label);
+    }
+
+    // Reveal a new-session draft card for an already-chosen host. Also the handoff target for the SSH
+    // Hosts view's post-add "Connect" action (csbridge.newSessionOnHost).
+    public startSessionDraft(host: string): void {
+        this._draftHost = host;
+        void vscode.commands.executeCommand('csbridge.sessionsView.focus');
+        void this.pushState();
+        this._fetchClusterInfo(host);
     }
 
     // Map the config-form message onto a session's resource params (shared by add + save).
@@ -287,79 +262,17 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
     // Shared by the host picker and the post-add "Connect" action.
     private _fetchClusterInfo(host: string): void {
         const cached = this._clusterInfo.get(host);
-        if (cached) { void this._pushState(); return; }
+        if (cached) { void this.pushState(); return; }
         this._logger.info(`Fetching slurm cluster info for host: ${host}`);
         getSlurmClusterInfo(host).then(clusterInfo => {
             this._clusterInfo.set(host, clusterInfo);
             delete this._clusterErrors[host];
-            void this._pushState();
+            void this.pushState();
         }).catch(error => {
             this._logger.error('Error fetching slurm cluster info:', error);
             this._clusterErrors[host] = errMsg(error);
-            void this._pushState();
+            void this.pushState();
         });
-    }
-
-    // "Refresh SSH Hosts" title action — re-reads ~/.ssh/config + system config so hosts added externally
-    // (e.g. via the Remote-SSH "Add New SSH Host" flow) show up without reloading the window. Hosts only.
-    public refreshSshHosts(): void {
-        this._pushHostsState();
-    }
-
-    // Native "Add SSH Host" title action — Remote-SSH-parity flow: prompt -> parse/validate -> write to ~/.ssh/config -> notify.
-    public async addSshHost(): Promise<void> {
-        const command = (await vscode.window.showInputBox({
-            title: 'Enter SSH Connection Command',
-            placeHolder: 'E.g. ssh hello@microsoft.com -A',
-            ignoreFocusOut: true,
-        }))?.trim();
-        if (!command) { return; }
-
-        let entry: SshConfigEntry;
-        try {
-            entry = sshCommandToConfig(command);
-            assertValidHost(entry);
-        } catch (err) {
-            vscode.window.showErrorMessage(errMsg(err));
-            return;
-        }
-
-        try {
-            addHostToConfigFile(USER_SSH_CONFIG_PATH, entry);
-        } catch (err) {
-            this._logger.error(`Failed to write SSH host to ${USER_SSH_CONFIG_PATH}:`, err);
-            vscode.window.showErrorMessage(`Failed to save SSH host: ${errMsg(err)}`);
-            return;
-        }
-        void this._pushState();
-
-        const choice = await vscode.window.showInformationMessage('Host added!', 'Open Config', 'Connect');
-        if (choice === 'Open Config') {
-            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(USER_SSH_CONFIG_PATH));
-        } else if (choice === 'Connect') {
-            // Start a new-session draft on the freshly added host — reveal the Sessions pane so its config card is seen.
-            this._draftHost = entry.Host;
-            void vscode.commands.executeCommand('csbridge.sessionsView.focus');
-            void this._pushState();
-            this._fetchClusterInfo(entry.Host);
-        }
-    }
-
-    private async _removeSshHost(name: string): Promise<void> {
-        // Delete controls render only on user-config rows (system is read-only), so the target is always ~/.ssh/config.
-        const choice = await vscode.window.showWarningMessage(
-            `Remove SSH host '${name}'?`,
-            { modal: true, detail: 'This removes the Host entry from ~/.ssh/config.' },
-            'Remove'
-        );
-        if (choice !== 'Remove') { return; }
-        try {
-            removeHostFromConfigFile(USER_SSH_CONFIG_PATH, name);
-        } catch (err) {
-            this._logger.error(`Failed to remove SSH host ${name} from ~/.ssh/config:`, err);
-            vscode.window.showErrorMessage(`Failed to remove SSH host: ${errMsg(err)}`);
-        }
-        void this._pushState();
     }
 
     // Cshost windows see only their own session; sidebar windows see all.
@@ -376,40 +289,29 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         }
     }
 
-    // Build each resolved view's own state slice and send it; the Sessions account fetch is skipped unless that view is open.
-    private async _pushState(): Promise<void> {
-        if (this._webviews.size === 0) { return; }
+    // Build the Sessions view state slice and send it; no-op until the view is resolved.
+    protected async pushState(): Promise<void> {
+        const view = this._view;
+        if (!view) { return; }
         try {
-            const sessionsView = this._webviews.get(SessionProvider.sessionsViewType);
-            if (sessionsView) {
-                const account = await getMicrosoftAccountInfo();
-                if (this._sessionsView) { this._sessionsView.description = account.label ?? 'Not Signed In'; }
-                const state: SessionsState = {
-                    isRemote: this._myId !== undefined,
-                    sessions: this._scopedSessions()
-                        .map(s => ({ ...s, ...liveAndCleanup(s) }))
-                        .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first
-                    draftHost: this._draftHost,
-                    editingId: this._editingId,
-                    clusterInfo: Object.fromEntries(this._clusterInfo),
-                    clusterErrors: this._clusterErrors,
-                    previewSession: this._previewSession,
-                };
-                sessionsView.postMessage({ command: 'state', state });
-            }
-            this._pushHostsState();
+            const account = await getMicrosoftAccountInfo();
+            view.description = account.label ?? 'Not Signed In';
+            const state: SessionsState = {
+                isRemote: this._myId !== undefined,
+                sessions: this._scopedSessions()
+                    .map(s => ({ ...s, ...liveAndCleanup(s) }))
+                    .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first
+                draftHost: this._draftHost,
+                editingId: this._editingId,
+                clusterInfo: Object.fromEntries(this._clusterInfo),
+                clusterErrors: this._clusterErrors,
+                previewSession: this._previewSession,
+            };
+            view.webview.postMessage({ command: 'state', state });
             this._autoCloseIfTerminal();
         } catch (error) {
             this._logger.error('Failed to push webview state:', error);
         }
-    }
-
-    // Re-read the SSH host configs and push only the SSH Hosts view's state — nothing session/account-related.
-    private _pushHostsState(): void {
-        const hostsView = this._webviews.get(SessionProvider.hostsViewType);
-        if (!hostsView) { return; }
-        const state: HostsState = { sshHosts: SshManager.getInstance().getMergedHosts() };
-        hostsView.postMessage({ command: 'state', state });
     }
 
     // Step 2: (re)establish the in-process relay and open a window. Step 1 (remote sshd + tunnel) is the monitor's job.
@@ -426,8 +328,8 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             // Already attached in this window with a live local forward - just open another window.
             if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
                 openSessionWindow(session.id);
-                // windowAlive turns true once the new window registers its pid (fs.watch -> _pushState).
-                void this._pushState();
+                // windowAlive turns true once the new window registers its pid (fs.watch -> pushState).
+                void this.pushState();
                 return;
             }
 
@@ -448,8 +350,8 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             openSessionWindow(session.id);
             session.status = 'connected';
             updateSession(session);
-            // windowAlive turns true once the new window registers its pid (fs.watch -> _pushState).
-            void this._pushState();
+            // windowAlive turns true once the new window registers its pid (fs.watch -> pushState).
+            void this.pushState();
             this._logger.info(`Window opened for session ID: ${sessionId}`);
         } catch (error) {
             this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
@@ -459,7 +361,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
             session.status = session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected';
             session.errorMessage = `Failed to connect tunnel: ${errMsg(error)}`;
             updateSession(session);
-            void this._pushState();
+            void this.pushState();
         } finally {
             this._connecting.delete(sessionId);
         }
@@ -475,11 +377,11 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 { modal: true, detail: 'This cancels the running job.' },
                 'Stop'
             );
-            if (choice !== 'Stop') { void this._pushState(); return; }
+            if (choice !== 'Stop') { void this.pushState(); return; }
             session.status = 'cancelling';
             session.errorMessage = '';
             cancelRunningSession(session).then(() => {
-                void this._pushState();
+                void this.pushState();
                 vscode.window.showInformationMessage('Session cancellation completed. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.');
             }).catch(error => {
                 this._logger.error(`Error cancelling session with ID ${sessionId}:`, error);
@@ -487,16 +389,16 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
                 session.status = 'failed';
                 session.errorMessage = `Failed to cancel session: ${errMsg(error)}`;
                 updateSession(session);
-                void this._pushState();
+                void this.pushState();
             });
         } else {
             this._logger.warn(`Session with ID ${sessionId} is in status ${session.status} and cannot be cancelled.`);
             vscode.window.showWarningMessage(`Session cannot be cancelled from status: ${session.status}`);
-            void this._pushState();
+            void this.pushState();
             return;
         }
         updateSession(session);
-        void this._pushState();
+        void this.pushState();
     }
 
     private _launchSession(sessionId: string) {
@@ -509,17 +411,17 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         session.errorMessage = '';
         session.status = 'submitting';
         updateSession(session);
-        void this._pushState();
+        void this.pushState();
         launchSessionWithProgress(session).then(() => {
             this._logger.info(`Session launch completed for session ID: ${sessionId}`);
-            void this._pushState();
+            void this.pushState();
         }).catch(error => {
             this._logger.error(`Error launching session with ID ${sessionId}:`, error);
             vscode.window.showErrorMessage(`Failed to launch session: ${errMsg(error)}. Please clean up any resources on the cluster if necessary.`);
             session.status = 'failed';
             session.errorMessage = `Failed to launch session: ${errMsg(error)}`;
             updateSession(session);
-            void this._pushState();
+            void this.pushState();
         });
     }
 
@@ -561,7 +463,7 @@ export class SessionProvider implements vscode.WebviewViewProvider, vscode.Dispo
         session.errorMessage = '';
         updateSession(session);
         this._previewSession = session;
-        void this._pushState();
+        void this.pushState();
     }
 
 }
