@@ -2,10 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 
 const vscode = acquireVsCodeApi();
 
-/** The webview's only outbound channel to the extension host. */
 export const post = (msg: unknown) => vscode.postMessage(msg);
 
-/** Subscribe to the extension's pushed state: posts `ready` once, re-renders on each `state` message. */
+// Posts `ready` once on mount, then re-renders on each `state` message the extension pushes.
 export function useWebviewState<T>(): T | null {
     const [state, setState] = useState<T | null>(null);
     useEffect(() => {

@@ -1,10 +1,8 @@
-import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from "../models";
+import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
 
-// Pure SLURM text helpers: parse `sinfo`/`sacctmgr` output and build the sbatch script. No SSH/vscode
-// dependency, so these are unit-testable in isolation (see slurmParse.test.ts).
+// Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
 export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
-    // Parse memory value (e.g. "8 GB" → "8G")
     const memSlurm = session.memory.replace(/\s+/g, '');
 
     const sbatchLines = [
@@ -17,7 +15,6 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         `#SBATCH --account=${session.allocation}`,
     ];
 
-    // Add GPU if selected (format: "type:count" or "count")
     if (session.gpuClass !== '' && session.gpuCount > 0) {
         sbatchLines.push(`#SBATCH --gres=gpu:${session.gpuClass}`);
     }
@@ -39,8 +36,8 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
     return scriptLines.join('\n');
 }
 
-// Classify one `sacct ... --parsable2` row (State|ExitCode|Reason|ElapsedRaw) into a job status + elapsed seconds.
-export function parseSacctStatus(output: string): { status: SlurmJobStatus, elapsedSec: number } {
+// One `sacct --parsable2` row: State|ExitCode|Reason|ElapsedRaw
+export function parseSacctStatus(output: string): { status: SlurmJobStatus; elapsedSec: number } {
     if (!output) {
         throw new Error('Failed to get job status. No output from sacct command.');
     }
@@ -70,9 +67,9 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus, elap
     return { status, elapsedSec };
 }
 
-// Parse one `sinfo -h -o "%P|%c|%m|%G"` line into a partition descriptor.
+// One `sinfo -h -o "%P|%c|%m|%G"` line: name|cpuCount|memory|gres
 export function parsePartitionLine(line: string): SlurmPartitionInfo {
-    const parts = line.split("|").map((p) => p.trim());
+    const parts = line.split('|').map(p => p.trim());
 
     if (parts.length !== 4) {
         throw new Error(`Invalid sinfo line: ${line}`);
@@ -81,9 +78,9 @@ export function parsePartitionLine(line: string): SlurmPartitionInfo {
     const [rawName, rawCpuCount, rawMemory, rawGres] = parts;
 
     return {
-        name: rawName.replace(/\*$/, ""), // remove default-partition marker
-        cpuCount: parseLeadingInt(rawCpuCount), // handles "24+"
-        memory: rawMemory, // keep "191000+" as-is
+        name: rawName.replace(/\*$/, ''), // trailing "*" marks the default partition
+        cpuCount: parseLeadingInt(rawCpuCount),
+        memory: rawMemory,
         gres: parseGres(rawGres),
     };
 }
@@ -97,11 +94,11 @@ function parseLeadingInt(value: string): number {
 }
 
 function parseGres(rawGres: string): GresInfo[] {
-    if (!rawGres || rawGres === "(null)") {
+    if (!rawGres || rawGres === '(null)') {
         return [];
     }
 
-    return splitTopLevelComma(rawGres).map((entry) => {
+    return splitCommaOutsideParens(rawGres).map((entry) => {
         // Examples: gpu:v100:2(S:0-1), gpu:rtx_6000:4(S:0-1), gpu:8
         const match = entry.match(/^(.+):(\d+)(?:\([^)]*\))?$/);
 
@@ -110,24 +107,24 @@ function parseGres(rawGres: string): GresInfo[] {
         }
 
         return {
-            name: match[1],   // e.g. "gpu:v100"
+            name: match[1],
             count: Number.parseInt(match[2], 10),
         };
     });
 }
 
-function splitTopLevelComma(value: string): string[] {
+function splitCommaOutsideParens(value: string): string[] {
     const result: string[] = [];
-    let current = "";
+    let current = '';
     let depth = 0;
 
     for (const ch of value) {
-        if (ch === "(") { depth++; }
-        if (ch === ")") { depth--; }
+        if (ch === '(') { depth++; }
+        if (ch === ')') { depth--; }
 
-        if (ch === "," && depth === 0) {
+        if (ch === ',' && depth === 0) {
             result.push(current.trim());
-            current = "";
+            current = '';
             continue;
         }
 

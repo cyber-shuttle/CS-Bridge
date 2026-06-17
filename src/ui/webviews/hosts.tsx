@@ -18,7 +18,6 @@ function DetailRow({ label, children }: { label: string; children: ComponentChil
     );
 }
 
-// One host: a click-to-expand header (chevron + source icon + alias) over a read-only detail panel.
 function HostItem({ host }: { host: SshHost }) {
     const [open, setOpen] = useState(false);
     const src = host.source ?? 'system';
@@ -33,8 +32,8 @@ function HostItem({ host }: { host: SshHost }) {
                 <Stack gap={4} pad="0 0 6px 22px">
                     <DetailRow label="Username">{host.user ?? '—'}</DetailRow>
                     <DetailRow label="Hostname">{host.hostname ?? '—'}</DetailRow>
-                    {host.args?.length ? (
-                        <DetailRow label="Args"><Stack gap={1}>{host.args.map(a => <div key={a}>{a}</div>)}</Stack></DetailRow>
+                    {host.extraDirectives?.length ? (
+                        <DetailRow label="Args"><Stack gap={1}>{host.extraDirectives.map(a => <div key={a}>{a}</div>)}</Stack></DetailRow>
                     ) : null}
                     {src === 'user' ? (
                         // zoom 0.85 matches the Sessions-view action buttons (e.g. Restart).

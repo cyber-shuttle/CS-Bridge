@@ -1,24 +1,23 @@
-import { Logger } from "../logger";
-import { SlurmSession } from "../models";
+import { Logger } from '../logger';
+import { SlurmSession } from '../models';
+import { devtunnelApiUrl, devtunnelAuthHeader } from './tunnelSupport';
 
 const logger = Logger.getInstance();
 
 export async function checkLinkspanHealth(session: SlurmSession) {
-    const healthCheckUrl = `https://${session.connectionInfo?.apiTunnelId}-${session.connectionInfo?.apiPort}.${session.connectionInfo?.region}.devtunnels.ms/api/v1/health`;
-    const apiToken = `tunnel ${session.connectionInfo?.apiTunnelAccessToken}`;
-
-    const resp = await fetch(healthCheckUrl, {
+    const resp = await fetch(devtunnelApiUrl(session.connectionInfo, '/health'), {
         method: 'GET',
         headers: {
-            'X-Tunnel-Authorization': apiToken,
-            'Content-Type': 'application/json'
+            'X-Tunnel-Authorization': devtunnelAuthHeader(session.connectionInfo),
+            'Content-Type': 'application/json',
         },
-        signal: AbortSignal.timeout(2000) // 2 seconds timeout for health check
+        signal: AbortSignal.timeout(2000),
     });
 
     if (resp.ok) {
         logger.info(`Health check for session ${session.name} succeeded.`);
-    } else {
+    }
+    else {
         const errorText = await resp.text();
         logger.error(`Health check for session ${session.name} failed. API response: ${resp.status} ${resp.statusText} - ${errorText}`);
         throw new Error(`Health check failed with status ${resp.status}: ${errorText}`);

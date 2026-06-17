@@ -14,17 +14,17 @@ test('parseHostsFromConfigText reads Host/HostName/User and skips wildcards', ()
     assert.deepEqual(parseHostsFromConfigText(text), [{ name: 'work', hostname: 'work.example.com', user: 'alice' }]);
 });
 
-test('parseHostsFromConfigText captures extra directives as args', () => {
+test('parseHostsFromConfigText captures extra directives', () => {
     const text = 'Host gpu\n  HostName gpu.example.com\n  User bob\n  Port 2222\n  ForwardAgent yes\n';
     assert.deepEqual(parseHostsFromConfigText(text), [
-        { name: 'gpu', hostname: 'gpu.example.com', user: 'bob', args: ['Port 2222', 'ForwardAgent yes'] },
+        { name: 'gpu', hostname: 'gpu.example.com', user: 'bob', extraDirectives: ['Port 2222', 'ForwardAgent yes'] },
     ]);
 });
 
 test('parseHostsFromConfigText flattens multi-token directives instead of emitting [object Object]', () => {
     const text = 'Host bastioned\n  HostName internal.example.com\n  User carol\n  ProxyCommand ssh -W %h:%p bastion\n  SendEnv LANG LC_*\n';
     assert.deepEqual(parseHostsFromConfigText(text), [
-        { name: 'bastioned', hostname: 'internal.example.com', user: 'carol', args: ['ProxyCommand ssh -W %h:%p bastion', 'SendEnv LANG LC_*'] },
+        { name: 'bastioned', hostname: 'internal.example.com', user: 'carol', extraDirectives: ['ProxyCommand ssh -W %h:%p bastion', 'SendEnv LANG LC_*'] },
     ]);
 });
 
@@ -58,8 +58,8 @@ test('buildSshConfigBlock emits the six SSH resilience options', () => {
     }
     assert.match(block, /^# CS-Bridge auto-generated for session sess1$/m);
     assert.match(block, /^Host cshost-sess1$/m);
-    assert.match(block, /^    Port 50122$/m);
-    assert.match(block, /^    IdentityFile \/keys\/id_cshost-sess1$/m);
+    assert.match(block, /^ {4}Port 50122$/m);
+    assert.match(block, /^ {4}IdentityFile \/keys\/id_cshost-sess1$/m);
 });
 
 // removeSshConfigEntry's removal regex only matches 4-space-indented directive lines.

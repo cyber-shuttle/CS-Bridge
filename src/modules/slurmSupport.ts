@@ -1,8 +1,7 @@
-import { SlurmClusterInfo, SlurmJobStatus, SlurmSession } from "../models";
-import { Logger } from "../logger";
-import { SshManager } from "./sshSupport";
-import { parsePartitionLine, parseSacctStatus } from "./slurmParse";
-
+import { SlurmClusterInfo, SlurmJobStatus, SlurmSession } from '../models';
+import { Logger, errMsg } from '../logger';
+import { SshManager } from './sshSupport';
+import { parsePartitionLine, parseSacctStatus } from './slurmParse';
 
 export async function getSlurmJobOutput(slurmSession: SlurmSession): Promise<string> {
     const sshManager = SshManager.getInstance();
@@ -16,7 +15,7 @@ export async function getSlurmJobOutput(slurmSession: SlurmSession): Promise<str
     return commandResult.stdout.trim();
 }
 
-export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ status: SlurmJobStatus, elapsedSec: number }> {
+export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ status: SlurmJobStatus; elapsedSec: number }> {
     const command = `sacct -j ${slurmSession.jobId} -n -o State%20,ExitCode,Reason%40,ElapsedRaw --parsable2 2>/dev/null | head -1`;
     const commandResult = await SshManager.getInstance().runRemoteCommand(slurmSession.cluster, command);
     if (commandResult.code !== 0) {
@@ -25,10 +24,6 @@ export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ s
     return parseSacctStatus(commandResult.stdout.trim());
 }
 
-/**
-* Query SLURM partition and account info for the current user on a remote host.
-* Returns a SlurmClusterInfo with accounts, partitions, and homeDir fields.
-*/
 export async function getSlurmClusterInfo(hostName: string): Promise<SlurmClusterInfo> {
     const sshManager = SshManager.getInstance();
     const log = Logger.getInstance();
@@ -43,11 +38,12 @@ export async function getSlurmClusterInfo(hostName: string): Promise<SlurmCluste
                 const account = lines[i].trim().split('|')[0].trim();
                 if (account) { clusterInfo.accounts.push(account); }
             }
-        } else {
+        }
+        else {
             throw new Error(`Failed to query associations (exit ${accountResult.code}): ${accountResult.stderr || 'Unknown error'}`);
         }
-
-    } catch (err) {
+    }
+    catch (err) {
         log.error('Error querying associations:', err);
         throw err;
     }
@@ -65,20 +61,21 @@ export async function getSlurmClusterInfo(hostName: string): Promise<SlurmCluste
             log.info(partitionResult.stdout);
             clusterInfo.partitions = partitionResult.stdout
                 .split(/\r?\n/)
-                .map((line) => line.trim())
+                .map(line => line.trim())
                 .filter(Boolean)
                 .map(parsePartitionLine);
         }
-    } catch (err) {
-        log.warn(`Failed to query partitions: ${err instanceof Error ? err.message : String(err)}`);
-        // Don't throw, since accounts info may still be useful
+    }
+    catch (err) {
+        log.warn(`Failed to query partitions: ${errMsg(err)}`); // non-fatal: accounts info may still be useful
     }
 
     try {
         const homeResult = await sshManager.runRemoteCommand(hostName, 'echo $HOME');
         if (homeResult.code === 0) { clusterInfo.homeDir = homeResult.stdout.trim(); }
-    } catch (err) {
-        log.warn(`Failed to query $HOME: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    catch (err) {
+        log.warn(`Failed to query $HOME: ${errMsg(err)}`);
     }
 
     return clusterInfo;

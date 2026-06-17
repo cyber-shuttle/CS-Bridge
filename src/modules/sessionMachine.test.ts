@@ -1,23 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeStatusTransition, isTerminal, isCloseable, isStoppable, isRelayLive } from './sessionMachine';
-import { SlurmJobStatus, SlurmSession } from '../models';
+import { SlurmJobStatus } from '../models';
 
 test('status-category predicates classify each status correctly', () => {
-    assert.deepEqual(['stopped', 'failed', 'completed'].map(isTerminal as any), [true, true, true]);
+    assert.deepEqual((['stopped', 'failed', 'completed'] as const).map(isTerminal), [true, true, true]);
     assert.equal(isTerminal('queued'), false);
 
-    assert.equal(isCloseable('not_started'), true);   // terminal + not_started
+    assert.equal(isCloseable('not_started'), true); // terminal + not_started
     assert.equal(isCloseable('stopped'), true);
     assert.equal(isCloseable('queued'), false);
 
-    assert.equal(isStoppable('connected'), true);     // can stop a live session
+    assert.equal(isStoppable('connected'), true); // can stop a live session
     assert.equal(isStoppable('queued'), true);
-    assert.equal(isStoppable('stopped'), false);      // already terminal
-    assert.equal(isStoppable('not_started'), false);  // nothing to stop yet
-    assert.equal(isStoppable('stopping'), false);     // a stop is already in flight
+    assert.equal(isStoppable('stopped'), false); // already terminal
+    assert.equal(isStoppable('not_started'), false); // nothing to stop yet
+    assert.equal(isStoppable('stopping'), false); // a stop is already in flight
 
-    assert.deepEqual(['ready_to_connect', 'connecting', 'connected'].map(isRelayLive as any), [true, true, true]);
+    assert.deepEqual((['ready_to_connect', 'connecting', 'connected'] as const).map(isRelayLive), [true, true, true]);
     assert.equal(isRelayLive('preparing'), false);
 });
 

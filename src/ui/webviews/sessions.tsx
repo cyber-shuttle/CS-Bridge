@@ -6,7 +6,6 @@ import { SessionCard, NowContext } from '@/ui/components/SessionCard';
 import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
-// The config form card, used both to create a session (icon "add") and to edit one (icon "edit").
 function ConfigCard({ icon, host, info, error, onDismiss, initial, saveId }: {
     icon: string; host: string; info: SlurmClusterInfo | undefined; error: string | undefined;
     onDismiss: () => void; initial?: HostFormInitial; saveId?: string;
@@ -30,7 +29,6 @@ function gpuInitial(gpuClass: string): Partial<HostFormInitial> {
     return count ? { tab: 'gpu', gpuType: type, gpuCount: count } : { tab: 'gpu', gpuCount: type };
 }
 
-// Pre-fill the edit form from an existing session.
 function editInitial(session: ViewSession): HostFormInitial {
     return {
         ...gpuInitial(session.gpuClass),

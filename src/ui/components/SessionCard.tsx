@@ -11,7 +11,7 @@ interface Props {
     readonly?: boolean;
 }
 
-// The 1s clock: the Sessions root owns `now` and feeds it through this provider; StatusText reads it.
+// 1s clock owned by the Sessions root, fed through this context so StatusText re-renders each tick.
 export const NowContext = createContext(Date.now());
 const useNow = () => useContext(NowContext);
 
@@ -78,7 +78,7 @@ function StatusText({ session }: { session: ViewSession }) {
 }
 
 export function SessionCard({ session, readonly }: Props) {
-    const { dot, canClose, actions } = statusDescriptor(session);
+    const { statusColor, canClose, actions } = statusDescriptor(session);
     const status = STATUS_ICON[session.status];
 
     const act = (a: SessionAction) => {
@@ -94,19 +94,21 @@ export function SessionCard({ session, readonly }: Props) {
 
     return (
         <Card>
-            {/* Fixed-height title row so the gap to the detail row is identical whether or not the close button shows. */}
+            {/* Fixed height keeps the gap to the detail row constant whether or not the close button shows. */}
             <Row gap={6} style={{ minHeight: '20px' }}>
-                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: dot, flexShrink: 0 }}></vscode-icon>
+                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0 }}></vscode-icon>
                 <Text weight={600}>{session.cluster}</Text>
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
                 {session.jobDirectory ? <Text muted size={11} ellipsis>{session.jobDirectory}</Text> : null}
-                {!readonly && canClose ? (
-                    <Row gap={4} style={{ marginLeft: 'auto' }}>
-                        <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
-                        <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
-                    </Row>
-                ) : null}
+                {!readonly && canClose
+                    ? (
+                            <Row gap={4} style={{ marginLeft: 'auto' }}>
+                                <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
+                                <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
+                            </Row>
+                        )
+                    : null}
             </Row>
             <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
             <Stack gap={6}>

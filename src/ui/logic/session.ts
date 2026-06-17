@@ -6,16 +6,15 @@ type ActionKind = 'start' | 'restart' | 'stop' | 'switch' | 'connect' | 'current
 export interface SessionAction {
     kind: ActionKind;
     label: string;
-    icon: string; // codicon name
+    icon: string;
 }
 
 interface SessionDescriptor {
-    dot: string; // CSS colour var for the status indicator
+    statusColor: string;
     canClose: boolean;
     actions: SessionAction[];
 }
 
-/** "HH:MM:SS" → milliseconds. */
 export function wallMs(wallTime: string): number {
     const p = (wallTime || '').split(':').map(Number);
     return ((p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0)) * 1000;
@@ -59,7 +58,8 @@ export function sessionActions(session: ViewSession): SessionAction[] {
         actions.push(session.isCurrent
             ? { kind: 'current', label: 'Current', icon: 'check' }
             : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' });
-    } else if (s === 'ready_to_connect' || s === 'disconnected') {
+    }
+    else if (s === 'ready_to_connect' || s === 'disconnected') {
         actions.push({ kind: 'connect', label: s === 'disconnected' ? 'Reconnect' : 'Connect', icon: 'arrow-swap' });
     }
     return actions;
@@ -67,7 +67,7 @@ export function sessionActions(session: ViewSession): SessionAction[] {
 
 export function statusDescriptor(session: ViewSession): SessionDescriptor {
     return {
-        dot: dotColor(session.status),
+        statusColor: dotColor(session.status),
         canClose: isCloseable(session.status),
         actions: sessionActions(session),
     };

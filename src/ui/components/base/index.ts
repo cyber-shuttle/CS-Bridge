@@ -1,4 +1,3 @@
-/** Coerce a number to a `px` string; pass strings/undefined through unchanged. */
 export const px = (v?: number | string) => (typeof v === 'number' ? `${v}px` : v);
 
 export { Row } from './Row';

@@ -14,26 +14,26 @@ const OPTSTRING = ':1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:PQ:R:S:T
 
 // Flag -> ssh_config directive (Remote-SSH 0.123.0). Flags in OPTSTRING but absent here are consumed by getopt without producing a directive.
 const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => void> = {
-    '1': c => { c.Protocol = '1'; },
-    '2': c => { c.Protocol = '2'; },
-    '4': c => { c.AddressFamily = 'inet'; },
-    '6': c => { c.AddressFamily = 'inet6'; },
-    A: c => { c.ForwardAgent = 'yes'; },
+    1: (c) => { c.Protocol = '1'; },
+    2: (c) => { c.Protocol = '2'; },
+    4: (c) => { c.AddressFamily = 'inet'; },
+    6: (c) => { c.AddressFamily = 'inet6'; },
+    A: (c) => { c.ForwardAgent = 'yes'; },
     b: (c, a) => { c.BindAddress = a; },
-    C: c => { c.Compression = 'yes'; },
+    C: (c) => { c.Compression = 'yes'; },
     c: (c, a) => { c.Cipher = a; },
     D: (c, a) => { c.DynamicForward = a; },
-    g: c => { c.GatewayPorts = 'yes'; },
+    g: (c) => { c.GatewayPorts = 'yes'; },
     I: (c, a) => { c.SmartcardDevice = a; },
     i: (c, a) => { c.IdentityFile = a; },
     J: (c, a) => { c.ProxyJump = a; },
-    K: c => { c.GSSAPIAuthentication = 'yes'; },
-    k: c => { c.GSSAPIDelegateCredentials = 'no'; },
+    K: (c) => { c.GSSAPIAuthentication = 'yes'; },
+    k: (c) => { c.GSSAPIDelegateCredentials = 'no'; },
     L: (c, a) => {
-        const m = a.match(/^((.*):?\d+)?:(.+?)?$/);
-        if (m) {
-            const listener = m[1];
-            const dest = m[3];
+        const localForwardMatch = a.match(/^((.*):?\d+)?:(.+?)?$/);
+        if (localForwardMatch) {
+            const listener = localForwardMatch[1];
+            const dest = localForwardMatch[3];
             if (listener && dest) { c.LocalForward = `${listener} ${dest}`; return; }
             throw new CommandParseError(`LocalForward needs a listener and a destination separated by a colon. ${a} does not match.`);
         }
@@ -42,7 +42,7 @@ const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => voi
         c.LocalForward = `${a.substring(0, idx)} ${a.substring(idx + 1)}`;
     },
     l: (c, a) => { c.User = a; },
-    M: c => { c.ControlMaster = 'yes'; },
+    M: (c) => { c.ControlMaster = 'yes'; },
     m: (c, a) => { c.MACs = a; },
     o: (c, a) => {
         const idx = a.indexOf('=');
@@ -52,12 +52,12 @@ const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => voi
     p: (c, a) => { c.Port = a; },
     R: (c, a) => { c.RemoteForward = a; },
     S: (c, a) => { c.ControlPath = a; },
-    v: c => { c.LogLevel = 'verbose'; },
+    v: (c) => { c.LogLevel = 'verbose'; },
     W: (c, a) => { c.RemoteForward = a; },
     w: (c, a) => { c.TunnelDevice = a; },
-    X: c => { c.ForwardX11 = 'yes'; },
-    x: c => { c.ForwardX11 = 'no'; },
-    Y: c => { c.ForwardX11Trusted = 'yes'; },
+    X: (c) => { c.ForwardX11 = 'yes'; },
+    x: (c) => { c.ForwardX11 = 'no'; },
+    Y: (c) => { c.ForwardX11Trusted = 'yes'; },
 };
 
 function consumeFlags(tokens: string[], config: Record<string, string>): number {
@@ -75,19 +75,20 @@ function consumeFlags(tokens: string[], config: Record<string, string>): number 
 
 function parseHostToken(token: string): { hostname: string; username?: string; port?: string } {
     let url: URL | undefined;
-    try { url = new URL(token); } catch { /* not a URL */ }
+    try { url = new URL(token); }
+    catch { /* not a URL */ }
     if (url && url.protocol === 'ssh:') {
         return { hostname: url.hostname, username: url.username || undefined, port: url.port || undefined };
     }
-    const at = token.lastIndexOf('@');
-    if (at === -1) { return { hostname: token }; }
-    let host = token.slice(at + 1);
-    let user = token.slice(0, at);
-    const userColon = user.indexOf(':');
-    if (userColon !== -1) { user = user.slice(0, userColon); }
+    const atIndex = token.lastIndexOf('@');
+    if (atIndex === -1) { return { hostname: token }; }
+    let host = token.slice(atIndex + 1);
+    let user = token.slice(0, atIndex);
+    const userColonIndex = user.indexOf(':');
+    if (userColonIndex !== -1) { user = user.slice(0, userColonIndex); }
     let port: string | undefined;
-    const hostColon = host.indexOf(':');
-    if (hostColon !== -1) { port = host.slice(hostColon + 1); host = host.slice(0, hostColon); }
+    const hostColonIndex = host.indexOf(':');
+    if (hostColonIndex !== -1) { port = host.slice(hostColonIndex + 1); host = host.slice(0, hostColonIndex); }
     return { hostname: host, username: user, port };
 }
 
@@ -110,7 +111,7 @@ export function sshCommandToConfig(command: string): SshConfigEntry {
     return { Host, HostName, ...rest };
 }
 
-const INVALID_HOST_CHARS = ['\\', "'", '"', '`', '!', '%', '\r', '\n'];
+const INVALID_HOST_CHARS = ['\\', '\'', '"', '`', '!', '%', '\r', '\n'];
 
 export function assertValidHost(entry: SshConfigEntry): void {
     const hostName = entry.HostName;
