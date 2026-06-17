@@ -42,7 +42,6 @@ export function gpuOptions(partition: SlurmPartitionInfo | undefined, tab: Resou
     };
 }
 
-/** SLURM gres string the extension expects (mirrors the old submit handler). */
 export function gpuString(gpuType: string, gpuCount: number): string {
     if (gpuCount <= 0) { return 'None'; }
     return gpuType ? `${gpuType}:${gpuCount}` : `${gpuCount}`;

@@ -11,14 +11,14 @@ interface Props {
     readonly?: boolean;
 }
 
-// The 1s clock: the Sessions root owns `now` and feeds it through this provider; StatusText reads it.
+// 1s clock owned by the Sessions root, fed through this context so StatusText re-renders each tick.
 export const NowContext = createContext(Date.now());
 const useNow = () => useContext(NowContext);
 
 const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
     start: 'prepareLaunchSession',
     restart: 'prepareLaunchSession',
-    stop: 'cancelSessionExecution',
+    stop: 'stopSessionExecution',
     switch: 'connectTunnel',
     connect: 'connectTunnel',
     current: null,
@@ -35,8 +35,8 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     disconnected: { name: 'debug-disconnect' },
     completed: { name: 'pass' },
     failed: { name: 'error' },
-    cancelled: { name: 'circle-slash' },
-    cancelling: { name: 'loading', spin: true },
+    stopped: { name: 'debug-stop' },
+    stopping: { name: 'loading', spin: true },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -69,8 +69,8 @@ function StatusText({ session }: { session: ViewSession }) {
             const elapsed = secs >= 60 ? ` (${Math.floor(secs / 60)}m ${secs % 60}s)` : ` (${secs}s)`;
             return <Row style={statusStyle}>Queued{session.submittedAt ? elapsed : ''}</Row>;
         }
-        case 'cancelling': return <Row style={statusStyle}>Stopping…</Row>;
-        case 'cancelled': return <Row style={statusStyle}>{session.errorMessage ? `Cancel failed: ${session.errorMessage}` : 'Cancelled'}</Row>;
+        case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
+        case 'stopped': return <Row style={statusStyle}>{session.errorMessage ? `Stop failed: ${session.errorMessage}` : 'Stopped'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;
         case 'completed': return <Row style={statusStyle}>Completed</Row>;
         default: return null;
@@ -78,7 +78,7 @@ function StatusText({ session }: { session: ViewSession }) {
 }
 
 export function SessionCard({ session, readonly }: Props) {
-    const { dot, canClose, actions } = statusDescriptor(session);
+    const { statusColor, canClose, actions } = statusDescriptor(session);
     const status = STATUS_ICON[session.status];
 
     const act = (a: SessionAction) => {
@@ -94,19 +94,21 @@ export function SessionCard({ session, readonly }: Props) {
 
     return (
         <Card>
-            {/* Fixed-height title row so the gap to the detail row is identical whether or not the close button shows. */}
+            {/* Fixed height keeps the gap to the detail row constant whether or not the close button shows. */}
             <Row gap={6} style={{ minHeight: '20px' }}>
-                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: dot, flexShrink: 0 }}></vscode-icon>
+                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0 }}></vscode-icon>
                 <Text weight={600}>{session.cluster}</Text>
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
                 {session.jobDirectory ? <Text muted size={11} ellipsis>{session.jobDirectory}</Text> : null}
-                {!readonly && canClose ? (
-                    <Row gap={4} style={{ marginLeft: 'auto' }}>
-                        <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
-                        <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
-                    </Row>
-                ) : null}
+                {!readonly && canClose
+                    ? (
+                            <Row gap={4} style={{ marginLeft: 'auto' }}>
+                                <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
+                                <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
+                            </Row>
+                        )
+                    : null}
             </Row>
             <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
             <Stack gap={6}>

@@ -139,12 +139,15 @@
 		"watch": "node esbuild.js --watch",
 		"check-types": "tsc -p ./ && tsc -p src/ui/tsconfig.json",
 		"lint": "eslint src",
+		"lint:fix": "eslint src --fix",
 		"test": "node --import tsx --test src/modules/*.test.ts src/ui/logic/*.test.ts",
 		"package": "npx @vscode/vsce package",
 		"install-ext": "code --install-extension csbridge-0.0.2.vsix",
 		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.39.4",
+		"@stylistic/eslint-plugin": "^2.13.0",
 		"@types/node": "^20.19.43",
 		"@types/shell-quote": "^1.7.5",
 		"@types/vscode": "^1.98.0",
@@ -154,7 +157,8 @@
 		"esbuild": "^0.28.1",
 		"eslint": "^9.39.4",
 		"tsx": "^4.22.4",
-		"typescript": "^5.9.3"
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.61.1"
 	},
 	"dependencies": {
 		"@microsoft/dev-tunnels-connections": "^1.3.48",

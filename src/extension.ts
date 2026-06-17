@@ -7,7 +7,6 @@ import { SshHostProvider } from './sshHostProvider';
 import { StatsProvider } from './statsProvider';
 import { SshManager } from './modules/sshSupport';
 
-
 export async function activate(context: vscode.ExtensionContext) {
     const logger = Logger.getInstance();
     logger.info('CS Bridge extension activating');
@@ -25,7 +24,7 @@ export async function activate(context: vscode.ExtensionContext) {
             dispose: () => {
                 try { mutateWindowPids(id, pids => pids.filter(p => p !== process.pid)); }
                 catch (err) { logger.error(`Failed to unregister windowPid for session ${id}`, err); }
-            }
+            },
         });
     }
 
@@ -45,7 +44,6 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sshHostProvider.addSshHost()),
         vscode.commands.registerCommand('csbridge.refreshHosts', () => sshHostProvider.refreshSshHosts()),
-        // Internal handoff: the SSH Hosts view's post-add "Connect" starts a session draft in the Sessions view.
         vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
     );
 

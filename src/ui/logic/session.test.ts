@@ -27,7 +27,7 @@ function sess(status: SlurmSession['status'], extra: Partial<SlurmSession & { is
 
 test('dotColor buckets statuses into idle/activating/live/failed colours', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-errorForeground)');
-    assert.equal(dotColor('cancelled'), 'var(--vscode-errorForeground)');
+    assert.equal(dotColor('stopped'), 'var(--vscode-errorForeground)');
     assert.equal(dotColor('queued'), 'var(--vscode-charts-yellow)');
     assert.equal(dotColor('submitting'), 'var(--vscode-charts-yellow)');
     assert.equal(dotColor('preparing'), 'var(--vscode-charts-green)');
@@ -42,6 +42,8 @@ test('sessionActions returns the right buttons per status', () => {
     assert.deepEqual(sessionActions(sess('preparing')).map(a => a.kind), ['stop']);
     assert.deepEqual(sessionActions(sess('ready_to_connect')).map(a => a.kind), ['stop', 'connect']);
     assert.deepEqual(sessionActions(sess('disconnected')).map(a => a.kind), ['stop', 'connect']);
+    assert.deepEqual(sessionActions(sess('stopped')).map(a => a.kind), ['restart']);
+    assert.deepEqual(sessionActions(sess('stopping')).map(a => a.kind), []); // stop in flight: spinner only, no Stop button
 });
 
 test('connected session: Current when this window, else Switch/Connect by window liveness', () => {

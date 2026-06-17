@@ -1,188 +1,168 @@
 import * as vscode from 'vscode';
 import { errMsg } from './logger';
-import { SlurmClusterInfo, SlurmSession, TunnelCredential, SessionsState } from './models';
-import { BaseWebviewProvider } from './baseWebviewProvider';
-import { clearSSHConfigEntry, createSSHConfigEntry, generateSlurmScript, getSessionPrivateKey, getSlurmClusterInfo, SshManager } from './modules/sshSupport';
-import { addSession, deleteSession, findSession, getAllSessions, mutateWindowPids, updateSession, watchSessions } from './extensionStore';
-import { connectSessionToSSHTunnel, deleteSessionDevTunnel, disposeAllTunnelClients, disposeSessionTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
-import { cancelRunningSession, JobStatusMonitor, launchSessionWithProgress } from './modules/sessionSupport';
-import { isPidAlive } from './modules/fsSupport';
-
-const TERMINAL_STATUSES = new Set(['cancelled', 'failed', 'completed']);
+import { SlurmClusterInfo, SlurmSession, SessionsState, WebviewMessage } from './models';
+import { WebviewProvider } from './webviewProvider';
+import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
+import { getSlurmClusterInfo } from './modules/slurmSupport';
+import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
+import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { stopSession, JobStatusMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
+import { isTerminal, isCloseable, isStoppable } from './modules/sessionMachine';
 
 function openSessionWindow(sessionId: string): void {
-    const path = findSession(sessionId)?.workingDirectory ?? '';
+    const path = getSession(sessionId)?.workingDirectory ?? '';
     const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
 }
 
-// Probe all windowPids; lazily evict dead ones. Drives the Current/Switch/Connect button.
-function liveAndCleanup(s: SlurmSession): { isCurrent: boolean, windowAlive: boolean } {
-    const pids = s.windowPids ?? [];
-    const live = pids.filter(isPidAlive);
-    if (live.length !== pids.length) { mutateWindowPids(s.id, () => live); }
-    return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
-}
-
-export class SessionProvider extends BaseWebviewProvider implements vscode.Disposable {
+export class SessionProvider extends WebviewProvider implements vscode.Disposable {
     public static readonly viewType = 'csbridge.sessionsView';
     protected readonly viewKind = 'sessions' as const;
 
-    private readonly _clusterInfo = new Map<string, SlurmClusterInfo>();
-    private readonly _clusterErrors: Record<string, string> = {};
-    private _draftHost: string | null = null;
-    private _editingId: string | null = null;
-    private _previewSession: SlurmSession | null = null;
-    private readonly _shared: vscode.Disposable[] = [];
-    private readonly _connecting = new Set<string>(); // session ids with an in-flight connect, to drop re-entrant requests
-    private _sharedReady = false;
+    private readonly clusterInfo = new Map<string, SlurmClusterInfo>();
+    private readonly clusterErrors: Record<string, string> = {};
+    private draftHost: string | null = null;
+    private editingId: string | null = null;
+    private previewSession: SlurmSession | null = null;
+    private readonly shared: vscode.Disposable[] = [];
+    private readonly connecting = new Set<string>();
+    private readonly monitor = new JobStatusMonitor();
+    private sharedReady = false;
 
-    // _myId: undefined in sidebar/non-remote windows (sees all sessions, drives monitoring); set to sessionId in cshost remote windows (scoped to that session, observes only).
-    constructor(extensionUri: vscode.Uri, private readonly _myId?: string) {
+    // Set in a cshost remote window (session-scoped, observe-only); undefined in the sidebar.
+    constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
         super(extensionUri);
     }
 
-    // Wire the window-scoped session subscriptions the first time the Sessions view resolves.
     protected onResolved(): void {
-        this._ensureShared();
+        this.initSharedSubscriptions();
     }
 
-    // Window-scoped subscriptions; set up once, disposed with the provider.
-    private _ensureShared(): void {
-        if (this._sharedReady) { return; }
-        this._sharedReady = true;
-        this._shared.push(vscode.authentication.onDidChangeSessions((e) => {
+    private initSharedSubscriptions(): void {
+        if (this.sharedReady) { return; }
+        this.sharedReady = true;
+        this.shared.push(vscode.authentication.onDidChangeSessions((e) => {
             if (e.provider.id === 'microsoft') { void this.pushState(); }
         }));
-        // cshost windows only react to changes in their own session.
+        // A remote window re-renders only when its own session changes.
         let lastMine: string | undefined;
         const sessionsWatcher = watchSessions(() => {
-            const mine = this._myId ? JSON.stringify(findSession(this._myId)) : undefined;
+            const mine = this.remoteSessionId ? JSON.stringify(getSession(this.remoteSessionId)) : undefined;
             if (mine !== undefined && mine === lastMine) { return; }
             lastMine = mine;
             void this.pushState();
         });
-        this._shared.push({ dispose: () => sessionsWatcher.close() });
-        JobStatusMonitor.init();
-        // Sidebar only - cshost windows observe one session and don't drive monitoring.
-        if (!this._myId) {
+        this.shared.push({ dispose: () => sessionsWatcher.close() });
+        // The sidebar drives monitoring; remote windows only observe.
+        if (!this.remoteSessionId) {
             for (const s of getAllSessions()) {
-                if (s.jobId && !TERMINAL_STATUSES.has(s.status)) { JobStatusMonitor.getInstance().startMonitoring(s); }
+                if (s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
             }
         }
     }
 
     dispose(): void {
-        this._shared.forEach(d => d.dispose());
+        this.shared.forEach(d => d.dispose());
         void disposeAllTunnelClients(); // window close: free local ports (remote stays, reaped by linkspan)
     }
 
-    // Handle messages from the webview here (e.g., refresh sessions, open terminal, etc.)
-    protected handleMessage(data: any) {
-        this._logger.info('Received message from webview:', data);
+    protected handleMessage(data: WebviewMessage) {
+        this.logger.info('Received message from webview:', data);
 
         const command = data.command;
-        const id = data.sessionId;
+        const id = data.sessionId ?? '';
         switch (command) {
             case 'ready':
                 void this.pushState();
                 break;
-            case 'cancelDraftSession':
-                this._draftHost = null;
+            case 'dismissDraftSession':
+                this.draftHost = null;
                 void this.pushState();
                 break;
             case 'dismissPreview':
-                this._previewSession = null;
+                this.previewSession = null;
                 void this.pushState();
                 break;
             case 'addSession': {
+                const now = Date.now();
+                const host = data.host ?? '';
                 const newSession: SlurmSession = {
-                    id: `session-${Date.now()}`,
-                    name: `Session ${Date.now()}`,
-                    cluster: data.host,
+                    id: `session-${now}`,
+                    name: `Session ${now}`,
+                    cluster: host,
                     status: 'not_started',
-                    tunnelType: 'devtunnel',
                     jobId: '',
                     jobDirectory: '',
-                    submittedAt: Date.now(),
+                    submittedAt: now,
                     errorMessage: '',
-                    workingDirectory: this._clusterInfo.get(data.host)?.homeDir,
-                    ...this._paramsFromData(data),
+                    workingDirectory: this.clusterInfo.get(host)?.homeDir,
+                    ...this.paramsFromData(data),
                 };
                 addSession(newSession);
-                this._draftHost = null;
+                this.draftHost = null;
                 void this.pushState();
                 break;
             }
             case 'editSession': {
-                const s = this._requireSession(id, 'edit', true);
+                const s = this.requireSession(id, 'edit', true);
                 if (!s) { break; }
-                this._editingId = id;
+                this.editingId = id;
                 void this.pushState();
-                this._fetchClusterInfo(s.cluster);
+                this.fetchClusterInfo(s.cluster);
                 break;
             }
-            case 'cancelEditSession':
-                this._editingId = null;
+            case 'dismissEditSession':
+                this.editingId = null;
                 void this.pushState();
                 break;
             case 'saveSession': {
-                const s = this._requireSession(id, 'save', true);
+                const s = this.requireSession(id, 'save', true);
                 if (!s) { break; }
-                Object.assign(s, this._paramsFromData(data));
+                Object.assign(s, this.paramsFromData(data));
                 s.batchScript = undefined; // params changed; the script is regenerated at launch
                 updateSession(s);
-                this._editingId = null;
+                this.editingId = null;
                 void this.pushState();
                 break;
             }
             case 'prepareLaunchSession':
-                this._logger.info(`Preparing to launch session with ID: ${id}`);
-                this._prepareLaunchSession(id).then(() => {
-                    this._logger.info(`Preparation for session launch completed for session ID: ${id}`);
-                }).catch((error: Error) => {
-                    this._logger.error(`Error preparing session launch for session ID ${id}:`, error);
-                    void this.pushState();
-                });
+                this.prepareLaunchSession(id).catch(() => void this.pushState());
                 break;
             case 'launchSession':
-                this._logger.info(`Launching session with ID: ${id}`);
-                this._launchSession(id);
+                this.launchSession(id);
                 break;
-            case 'cancelSessionExecution':
-                this._logger.info(`Cancelling session execution with ID: ${id}`);
-                this._cancelSessionExecution(id);
+            case 'stopSessionExecution':
+                this.stopSessionExecution(id);
                 break;
             case 'connectTunnel':
-                void this._connectSessionToTunnel(id);
+                void this.connectSessionToTunnel(id);
                 break;
             case 'removeSession':
-                this._removeSession(id);
+                this.removeSession(id);
                 break;
             default:
-                this._logger.warn('Unknown command from webview:', command);
+                this.logger.warn('Unknown command from webview:', command);
         }
     }
 
-    private _requireSession(id: string, action: string, push: boolean): SlurmSession | undefined {
-        const s = findSession(id);
+    private requireSession(id: string, action: string, push: boolean): SlurmSession | undefined {
+        const s = getSession(id);
         if (!s) {
-            this._logger.error(`Session with ID ${id} not found to ${action}.`);
+            this.logger.error(`Session with ID ${id} not found to ${action}.`);
             vscode.window.showErrorMessage('Session not found.');
             if (push) { void this.pushState(); }
         }
         return s;
     }
 
-    private async _removeSession(sessionId: string) {
+    private async removeSession(sessionId: string) {
         // The webview disables this card's buttons on click, so every exit path must
         // refresh to re-enable them (or to drop the card after a successful remove).
-        const session = this._requireSession(sessionId, 'remove', true);
+        const session = this.requireSession(sessionId, 'remove', true);
         if (!session) { return; }
 
-        const removableStatuses = ['failed', 'completed', 'cancelled', 'not_started'];
-        if (!removableStatuses.includes(session.status)) {
-            this._logger.warn(`Session ${sessionId} is in status ${session.status} and cannot be removed.`);
+        if (!isCloseable(session.status)) {
+            this.logger.warn(`Session ${sessionId} is in status ${session.status} and cannot be removed.`);
             vscode.window.showWarningMessage(`Session cannot be removed from status: ${session.status}`);
             void this.pushState();
             return;
@@ -192,37 +172,37 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
             'Remove session?',
             {
                 modal: true,
-                detail: 'This removes the session record and cleans up its SSH config entry and key file.'
+                detail: 'This removes the session record and cleans up its SSH config entry and key file.',
             },
-            'Remove'
+            'Remove',
         );
         if (choice !== 'Remove') {
             void this.pushState();
             return;
         }
 
-        await disposeSessionTunnelClient(sessionId);
-        await deleteSessionDevTunnel(session);
+        await disposeTunnelClient(sessionId);
+        await removeDevTunnel(session);
         try {
-            clearSSHConfigEntry(sessionId, `cshost-${sessionId}`);
-        } catch (err) {
-            this._logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
+            removeSshConfigEntry(sessionId, `cshost-${sessionId}`);
         }
-        deleteSession(sessionId);
+        catch (err) {
+            this.logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
+        }
+        removeSession(sessionId);
         void this.pushState();
     }
 
-    // Native account title action: open the Microsoft account switcher (sign in if needed), then refresh.
     public async switchAccount(): Promise<void> {
         try {
             await switchDevTunnelAccount();
-        } catch (error) {
-            this._logger.error('Error switching Dev Tunnels authentication account:', error);
+        }
+        catch (error) {
+            this.showError('Dev Tunnels sign-in failed', error);
         }
         void this.pushState();
     }
 
-    // Native "New Session" title action: pick a host, then show its config card as a draft in the Sessions view.
     public async startNewSession(): Promise<void> {
         const hosts = SshManager.getInstance().getMergedHosts();
         if (hosts.length === 0) {
@@ -237,233 +217,197 @@ export class SessionProvider extends BaseWebviewProvider implements vscode.Dispo
         this.startSessionDraft(pick.label);
     }
 
-    // Reveal a new-session draft card for an already-chosen host. Also the handoff target for the SSH
-    // Hosts view's post-add "Connect" action (csbridge.newSessionOnHost).
     public startSessionDraft(host: string): void {
-        this._draftHost = host;
+        this.draftHost = host;
         void vscode.commands.executeCommand('csbridge.sessionsView.focus');
         void this.pushState();
-        this._fetchClusterInfo(host);
+        this.fetchClusterInfo(host);
     }
 
-    // Map the config-form message onto a session's resource params (shared by add + save).
-    private _paramsFromData(data: any): Pick<SlurmSession, 'queue' | 'wallTime' | 'gpuCount' | 'gpuClass' | 'cpus' | 'memory' | 'allocation'> {
+    private paramsFromData(data: WebviewMessage): Pick<SlurmSession, 'queue' | 'wallTime' | 'gpuCount' | 'gpuClass' | 'cpus' | 'memory' | 'allocation'> {
         return {
             queue: data.queue || '',
             wallTime: data.wallTime || '',
             gpuCount: data.gpu === 'None' ? 0 : 1,
-            gpuClass: data.gpu,
-            cpus: parseInt(data.cpus) || 0,
+            gpuClass: data.gpu ?? '',
+            cpus: parseInt(data.cpus ?? '') || 0,
             memory: data.memory || '',
             allocation: data.allocation || '',
         };
     }
 
-    // Shared by the host picker and the post-add "Connect" action.
-    private _fetchClusterInfo(host: string): void {
-        const cached = this._clusterInfo.get(host);
+    private fetchClusterInfo(host: string): void {
+        const cached = this.clusterInfo.get(host);
         if (cached) { void this.pushState(); return; }
-        this._logger.info(`Fetching slurm cluster info for host: ${host}`);
-        getSlurmClusterInfo(host).then(clusterInfo => {
-            this._clusterInfo.set(host, clusterInfo);
-            delete this._clusterErrors[host];
+        this.logger.info(`Fetching slurm cluster info for host: ${host}`);
+        getSlurmClusterInfo(host).then((clusterInfo) => {
+            this.clusterInfo.set(host, clusterInfo);
+            delete this.clusterErrors[host];
             void this.pushState();
-        }).catch(error => {
-            this._logger.error('Error fetching slurm cluster info:', error);
-            this._clusterErrors[host] = errMsg(error);
+        }).catch((error) => {
+            this.logger.error('Error fetching slurm cluster info:', error);
+            this.clusterErrors[host] = errMsg(error);
             void this.pushState();
         });
     }
 
-    // Cshost windows see only their own session; sidebar windows see all.
-    private _scopedSessions(): SlurmSession[] {
-        return this._myId ? getAllSessions().filter(s => s.id === this._myId) : getAllSessions();
+    private scopedSessions(): SlurmSession[] {
+        return this.remoteSessionId ? getAllSessions().filter(s => s.id === this.remoteSessionId) : getAllSessions();
     }
 
-    // closeWindow (not process.kill) so we don't tear down the SSH extension host mid-cancel.
-    private _autoCloseIfTerminal(): void {
-        if (!this._myId) { return; }
-        const s = findSession(this._myId);
-        if (s && TERMINAL_STATUSES.has(s.status)) {
+    // closeWindow (not process.kill) so we don't tear down the SSH extension host mid-stop.
+    private autoCloseIfTerminal(): void {
+        if (!this.remoteSessionId) { return; }
+        const s = getSession(this.remoteSessionId);
+        if (s && isTerminal(s.status)) {
             vscode.commands.executeCommand('workbench.action.closeWindow');
         }
     }
 
-    // Build the Sessions view state slice and send it; no-op until the view is resolved.
     protected async pushState(): Promise<void> {
-        const view = this._view;
+        const view = this.view;
         if (!view) { return; }
         try {
             const account = await getMicrosoftAccountInfo();
             view.description = account.label ?? 'Not Signed In';
             const state: SessionsState = {
-                isRemote: this._myId !== undefined,
-                sessions: this._scopedSessions()
+                isRemote: this.remoteSessionId !== undefined,
+                sessions: this.scopedSessions()
                     .map(s => ({ ...s, ...liveAndCleanup(s) }))
-                    .sort((a, b) => b.submittedAt - a.submittedAt), // most recently added first
-                draftHost: this._draftHost,
-                editingId: this._editingId,
-                clusterInfo: Object.fromEntries(this._clusterInfo),
-                clusterErrors: this._clusterErrors,
-                previewSession: this._previewSession,
+                    .sort((a, b) => b.submittedAt - a.submittedAt),
+                draftHost: this.draftHost,
+                editingId: this.editingId,
+                clusterInfo: Object.fromEntries(this.clusterInfo),
+                clusterErrors: this.clusterErrors,
+                previewSession: this.previewSession,
             };
             view.webview.postMessage({ command: 'state', state });
-            this._autoCloseIfTerminal();
-        } catch (error) {
-            this._logger.error('Failed to push webview state:', error);
+            this.autoCloseIfTerminal();
+        }
+        catch (error) {
+            this.logger.error('Failed to push webview state:', error);
         }
     }
 
     // Step 2: (re)establish the in-process relay and open a window. Step 1 (remote sshd + tunnel) is the monitor's job.
-    private async _connectSessionToTunnel(sessionId: string) {
-        const session = this._requireSession(sessionId, 'connect tunnel', true);
+    private async connectSessionToTunnel(sessionId: string) {
+        const session = this.requireSession(sessionId, 'connect tunnel', true);
         if (!session) { return; }
-        if (this._connecting.has(sessionId)) {
-            this._logger.info(`Connect already in progress for session ${sessionId}; ignoring re-entrant request`);
+        if (this.connecting.has(sessionId)) {
+            this.logger.info(`Connect already in progress for session ${sessionId}; ignoring re-entrant request`);
             return;
         }
-        this._connecting.add(sessionId);
-        this._logger.info(`Opening window for session with ID: ${sessionId}`);
+        this.connecting.add(sessionId);
         try {
             // Already attached in this window with a live local forward - just open another window.
             if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
                 openSessionWindow(session.id);
-                // windowAlive turns true once the new window registers its pid (fs.watch -> pushState).
                 void this.pushState();
                 return;
             }
 
-            session.status = 'connecting';
-            updateSession(session);
-
+            this.setStatus(session, 'connecting');
             await ensureRemoteSession(session); // Step 1 safety net (idempotent; usually already done by the monitor)
-
-            // Open the local relay (reattaches from the persisted refs after a reload).
-            const localPort = await connectSessionToSSHTunnel(session);
+            const localPort = await connectSessionToTunnel(session);
 
             // Key is in memory on first connect, read back from disk on reattach.
             const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
             if (!privateKey) { throw new Error('SSH private key not found for session'); }
-            const hostAlias = createSSHConfigEntry(session.id, localPort, privateKey);
-            this._logger.info(`SSH config entry ready for session ${session.id} (alias ${hostAlias}); ssh ${hostAlias}`);
+            const hostAlias = addSshConfigEntry(session.id, localPort, privateKey);
+            this.logger.info(`SSH config entry ready for session ${session.id} (ssh ${hostAlias})`);
 
             openSessionWindow(session.id);
-            session.status = 'connected';
-            updateSession(session);
+            this.setStatus(session, 'connected');
             // windowAlive turns true once the new window registers its pid (fs.watch -> pushState).
             void this.pushState();
-            this._logger.info(`Window opened for session ID: ${sessionId}`);
-        } catch (error) {
-            this._logger.error(`Error connecting tunnel for session ID ${sessionId}:`, error);
-            await disposeSessionTunnelClient(sessionId); // free any partially-established relay client
-            // Remote (Step 1) is still up if sshTunnelId exists - only the relay attempt failed, so
-            // fall back to ready_to_connect for an easy retry; otherwise the remote is gone -> disconnected.
-            session.status = session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected';
-            session.errorMessage = `Failed to connect tunnel: ${errMsg(error)}`;
-            updateSession(session);
+        }
+        catch (error) {
+            this.logger.error(`Error connecting tunnel for session ${sessionId}:`, error);
+            await disposeTunnelClient(sessionId);
+            // Step 1 still up (sshTunnelId persisted) -> only the relay failed: ready_to_connect for retry; else the remote is gone -> disconnected.
+            this.setStatus(session, session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected', `Failed to connect tunnel: ${errMsg(error)}`);
             void this.pushState();
-        } finally {
-            this._connecting.delete(sessionId);
+        }
+        finally {
+            this.connecting.delete(sessionId);
         }
     }
 
-    private async _cancelSessionExecution(sessionId: string) {
-        const session = this._requireSession(sessionId, 'cancel', false);
+    private async stopSessionExecution(sessionId: string) {
+        const session = this.requireSession(sessionId, 'stop', false);
         if (!session) { return; }
 
-        if (session.status === 'preparing' || session.status === 'queued' || session.status === 'submitting' || session.status === 'connected' || session.status === 'disconnected' || session.status === 'ready_to_connect' || session.status === 'connecting') {
-            const choice = await vscode.window.showWarningMessage(
-                'Stop session?',
-                { modal: true, detail: 'This cancels the running job.' },
-                'Stop'
-            );
-            if (choice !== 'Stop') { void this.pushState(); return; }
-            session.status = 'cancelling';
-            session.errorMessage = '';
-            cancelRunningSession(session).then(() => {
-                void this.pushState();
-                vscode.window.showInformationMessage('Session cancellation completed. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.');
-            }).catch(error => {
-                this._logger.error(`Error cancelling session with ID ${sessionId}:`, error);
-                vscode.window.showErrorMessage(`Failed to cancel session: ${errMsg(error)}. Please check the cluster to ensure the job has been cancelled and clean up any resources if necessary.`);
-                session.status = 'failed';
-                session.errorMessage = `Failed to cancel session: ${errMsg(error)}`;
-                updateSession(session);
-                void this.pushState();
-            });
-        } else {
-            this._logger.warn(`Session with ID ${sessionId} is in status ${session.status} and cannot be cancelled.`);
-            vscode.window.showWarningMessage(`Session cannot be cancelled from status: ${session.status}`);
+        if (!isStoppable(session.status)) {
+            this.logger.warn(`Session with ID ${sessionId} is in status ${session.status} and cannot be stopped.`);
+            vscode.window.showWarningMessage(`Session cannot be stopped from status: ${session.status}`);
             void this.pushState();
             return;
         }
-        updateSession(session);
+
+        const choice = await vscode.window.showWarningMessage(
+            'Stop session?',
+            { modal: true, detail: 'This stops the running job.' },
+            'Stop',
+        );
+        if (choice !== 'Stop') { void this.pushState(); return; }
+
+        this.setStatus(session, 'stopping', '');
         void this.pushState();
+        const hint = 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.';
+        this.runSessionTask(session, `Stopping session ${session.name}...`, 'stop',
+            p => stopSession(session, this.monitor, p), hint, `Session stopped. ${hint}`);
     }
 
-    private _launchSession(sessionId: string) {
-        const session = this._requireSession(sessionId, 'launch', false);
+    private launchSession(sessionId: string) {
+        const session = this.requireSession(sessionId, 'launch', false);
         if (!session) { return; }
-        this._logger.info(`Launching session with IDs: ${sessionId}`);
-        this._previewSession = null;
+        this.previewSession = null;
         session.connectionInfo = undefined;
         session.startedAt = undefined; // fresh launch: re-anchor the wall-time countdown when the new job starts running
-        session.errorMessage = '';
-        session.status = 'submitting';
-        updateSession(session);
+        this.setStatus(session, 'submitting', '');
         void this.pushState();
-        launchSessionWithProgress(session).then(() => {
-            this._logger.info(`Session launch completed for session ID: ${sessionId}`);
+        this.runSessionTask(session, `Launching session ${session.name}...`, 'launch',
+            p => launchSession(session, this.monitor, p), 'Please clean up any resources on the cluster if necessary.');
+    }
+
+    private setStatus(session: SlurmSession, status: SlurmSession['status'], errorMessage?: string): void {
+        session.status = status;
+        if (errorMessage !== undefined) { session.errorMessage = errorMessage; }
+        updateSession(session);
+    }
+
+    // Dismissing the progress notification marks the session stopped; a failure marks it failed and shows a dialog.
+    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string, successMessage?: string): void {
+        const task = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
+            token.onCancellationRequested(() => this.setStatus(session, 'stopped'));
+            await run(progress);
+        });
+        Promise.resolve(task).then(() => {
             void this.pushState();
-        }).catch(error => {
-            this._logger.error(`Error launching session with ID ${sessionId}:`, error);
-            vscode.window.showErrorMessage(`Failed to launch session: ${errMsg(error)}. Please clean up any resources on the cluster if necessary.`);
-            session.status = 'failed';
-            session.errorMessage = `Failed to launch session: ${errMsg(error)}`;
-            updateSession(session);
+            if (successMessage) { vscode.window.showInformationMessage(successMessage); }
+        }).catch((error) => {
+            const detail = `Failed to ${verb} session: ${errMsg(error)}`;
+            this.logger.error(`${detail} (id ${session.id})`, error);
+            vscode.window.showErrorMessage(`${detail}. ${cleanupHint}`);
+            this.setStatus(session, 'failed', detail);
             void this.pushState();
         });
     }
 
-    private async _prepareLaunchSession(sessionId: string) {
-        const session = this._requireSession(sessionId, 'prepare launch', false);
+    private async prepareLaunchSession(sessionId: string) {
+        const session = this.requireSession(sessionId, 'prepare launch', false);
         if (!session) { return; }
-
-        let creds: TunnelCredential;
         try {
-            creds = await getDevTunnelCredentials();
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to get tunnel credentials: ${err.message}`);
-            session.errorMessage = `Failed to get tunnel credentials: ${err.message}`;
-            updateSession(session);
-            this._logger.error('Failed to get tunnel credentials:', err);
-            throw err;
+            await prepareLaunch(session);
         }
-        try {
-            await ensureDevTunnel(session); // persist the tunnel id before it goes into the launch script
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to create dev tunnel: ${err.message}`);
-            session.errorMessage = `Failed to create dev tunnel: ${err.message}`;
+        catch (err) {
+            vscode.window.showErrorMessage(errMsg(err));
+            session.errorMessage = errMsg(err);
             updateSession(session);
-            this._logger.error('Failed to create dev tunnel:', err);
-            throw err;
+            this.logger.error('Failed to prepare session launch:', err);
+            throw err; // the dispatch's .catch re-pushes state so the card shows the error
         }
-        this._logger.info('Generating Slurm script for session:', session);
-        try {
-            session.batchScript = generateSlurmScript(session, creds);
-            this._logger.info('Generated Slurm script:', session.batchScript);
-        } catch (err: any) {
-            vscode.window.showErrorMessage(`Failed to generate Slurm script: ${err.message}`);
-            session.errorMessage = `Failed to generate Slurm script: ${err.message}`;
-            updateSession(session);
-            this._logger.error('Failed to generate Slurm script:', err);
-            throw err;
-        }
-
-        session.errorMessage = '';
-        updateSession(session);
-        this._previewSession = session;
+        this.previewSession = session;
         void this.pushState();
     }
-
 }

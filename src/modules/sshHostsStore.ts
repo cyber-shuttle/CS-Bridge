@@ -20,8 +20,8 @@ export const SSH_RESILIENCE_OPTIONS: ReadonlyArray<readonly [string, string]> = 
     ['IPQoS', 'cs0'],
 ];
 
-// Per-session cshost block appended to ~/.cybershuttle/ssh_config (4-space indent matches clearSSHConfigEntry).
-export function buildSessionSshConfigBlock(
+// Per-session cshost block appended to ~/.cybershuttle/ssh_config (4-space indent matches removeSshConfigEntry).
+export function buildSshConfigBlock(
     sessionId: string,
     hostAlias: string,
     hostname: string,
@@ -43,9 +43,17 @@ export function buildSessionSshConfigBlock(
     ].join('\n');
 }
 
-// ssh-config returns multi-token directives (ProxyCommand, SendEnv, …) as arrays of token objects; flatten to text.
-const directiveText = (value: any): string =>
-    Array.isArray(value) ? value.map((t: { val: string }) => t.val).join(' ') : value;
+// ssh-config models a directive value as a plain string or, for multi-token directives, an array of tokens.
+type DirectiveValue = string | { val: string }[];
+interface SshConfigDirective {
+    type: LineType;
+    param: string;
+    value: DirectiveValue;
+    config: SshConfigDirective[];
+}
+
+const directiveText = (value: DirectiveValue): string =>
+    Array.isArray(value) ? value.map(t => t.val).join(' ') : value;
 
 export function parseHostsFromConfigText(text: string): SshHost[] {
     const config = parse(text);
@@ -54,21 +62,21 @@ export function parseHostsFromConfigText(text: string): SshHost[] {
         if (line.type !== LineType.DIRECTIVE) { continue; }
         // Keep Host sections only: they carry a `config` array, Match sections also carry `criteria`.
         if (!('config' in line) || 'criteria' in line) { continue; }
-        const section = line as any;
+        const section = line as unknown as SshConfigDirective;
         if (section.param !== 'Host') { continue; }
         const raw = Array.isArray(section.value) ? section.value[0] : section.value;
         const alias = typeof raw === 'string' ? raw.trim().split(/\s+/)[0] : '';
         if (!alias || alias.includes('*') || alias.includes('?')) { continue; }
         const host: SshHost = { name: alias };
-        const args: string[] = [];
+        const extraDirectives: string[] = [];
         for (const child of section.config) {
             if (child.type !== LineType.DIRECTIVE) { continue; }
             const value = directiveText(child.value);
             if (child.param === 'HostName') { host.hostname = value; }
             else if (child.param === 'User') { host.user = value; }
-            else { args.push(`${child.param} ${value}`); }
+            else { extraDirectives.push(`${child.param} ${value}`); }
         }
-        if (args.length) { host.args = args; }
+        if (extraDirectives.length) { host.extraDirectives = extraDirectives; }
         hosts.push(host);
     }
     return hosts;
@@ -77,7 +85,7 @@ export function parseHostsFromConfigText(text: string): SshHost[] {
 export function addHostToConfigText(text: string, entry: SshConfigEntry): string {
     const config = parse(text);
     config.remove({ Host: entry.Host }); // replace-on-readd: clean recreate, no duplicates
-    config.prepend(entry, true);         // top of file, after any Include lines
+    config.prepend(entry, true); // top of file, after any Include lines
     return config.toString();
 }
 
@@ -87,7 +95,6 @@ export function removeHostFromConfigText(text: string, name: string): string {
     return config.toString();
 }
 
-// Merge host lists in priority order; the first occurrence of each name wins.
 export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
     const seen = new Set<string>();
     const result: SshHost[] = [];

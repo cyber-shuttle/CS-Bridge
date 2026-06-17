@@ -5,7 +5,7 @@ import {
     addHostToConfigText,
     removeHostFromConfigText,
     mergeHostsByPriority,
-    buildSessionSshConfigBlock,
+    buildSshConfigBlock,
     SSH_RESILIENCE_OPTIONS,
 } from './sshHostsStore';
 
@@ -14,17 +14,17 @@ test('parseHostsFromConfigText reads Host/HostName/User and skips wildcards', ()
     assert.deepEqual(parseHostsFromConfigText(text), [{ name: 'work', hostname: 'work.example.com', user: 'alice' }]);
 });
 
-test('parseHostsFromConfigText captures extra directives as args', () => {
+test('parseHostsFromConfigText captures extra directives', () => {
     const text = 'Host gpu\n  HostName gpu.example.com\n  User bob\n  Port 2222\n  ForwardAgent yes\n';
     assert.deepEqual(parseHostsFromConfigText(text), [
-        { name: 'gpu', hostname: 'gpu.example.com', user: 'bob', args: ['Port 2222', 'ForwardAgent yes'] },
+        { name: 'gpu', hostname: 'gpu.example.com', user: 'bob', extraDirectives: ['Port 2222', 'ForwardAgent yes'] },
     ]);
 });
 
 test('parseHostsFromConfigText flattens multi-token directives instead of emitting [object Object]', () => {
     const text = 'Host bastioned\n  HostName internal.example.com\n  User carol\n  ProxyCommand ssh -W %h:%p bastion\n  SendEnv LANG LC_*\n';
     assert.deepEqual(parseHostsFromConfigText(text), [
-        { name: 'bastioned', hostname: 'internal.example.com', user: 'carol', args: ['ProxyCommand ssh -W %h:%p bastion', 'SendEnv LANG LC_*'] },
+        { name: 'bastioned', hostname: 'internal.example.com', user: 'carol', extraDirectives: ['ProxyCommand ssh -W %h:%p bastion', 'SendEnv LANG LC_*'] },
     ]);
 });
 
@@ -50,21 +50,21 @@ test('removeHostFromConfigText removes the named entry', () => {
     assert.deepEqual(parseHostsFromConfigText(removeHostFromConfigText(text, 'h')), []);
 });
 
-test('buildSessionSshConfigBlock emits the six SSH resilience options', () => {
-    const block = buildSessionSshConfigBlock('sess1', 'cshost-sess1', '127.0.0.1', 50122, 'cs-ssh-user', '/keys/id_cshost-sess1');
+test('buildSshConfigBlock emits the six SSH resilience options', () => {
+    const block = buildSshConfigBlock('sess1', 'cshost-sess1', '127.0.0.1', 50122, 'cs-ssh-user', '/keys/id_cshost-sess1');
     assert.equal(SSH_RESILIENCE_OPTIONS.length, 6);
     for (const [key, value] of SSH_RESILIENCE_OPTIONS) {
         assert.match(block, new RegExp(`^    ${key} ${value}$`, 'm'));
     }
     assert.match(block, /^# CS-Bridge auto-generated for session sess1$/m);
     assert.match(block, /^Host cshost-sess1$/m);
-    assert.match(block, /^    Port 50122$/m);
-    assert.match(block, /^    IdentityFile \/keys\/id_cshost-sess1$/m);
+    assert.match(block, /^ {4}Port 50122$/m);
+    assert.match(block, /^ {4}IdentityFile \/keys\/id_cshost-sess1$/m);
 });
 
-// clearSSHConfigEntry's removal regex only matches 4-space-indented directive lines.
-test('buildSessionSshConfigBlock indents every directive so clearSSHConfigEntry can remove it', () => {
-    const block = buildSessionSshConfigBlock('s', 'cshost-s', '127.0.0.1', 22, 'u', '/k');
+// removeSshConfigEntry's removal regex only matches 4-space-indented directive lines.
+test('buildSshConfigBlock indents every directive so removeSshConfigEntry can remove it', () => {
+    const block = buildSshConfigBlock('s', 'cshost-s', '127.0.0.1', 22, 'u', '/k');
     for (const line of block.split('\n')) {
         if (line === '' || line.startsWith('#') || line.startsWith('Host ')) { continue; }
         assert.match(line, /^ {4}\S/);
