@@ -34,6 +34,8 @@ test('dotColor buckets statuses into idle/activating/live/failed colours', () =>
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('completed'), 'var(--vscode-descriptionForeground)');
     assert.equal(dotColor('not_started'), 'var(--vscode-descriptionForeground)');
+    assert.equal(dotColor('awaiting_input'), 'var(--vscode-charts-yellow)'); // same spinner-yellow as submitting; only the text changes
+    assert.equal(dotColor('interrupted'), 'var(--vscode-descriptionForeground)'); // neutral resting state
 });
 
 test('sessionActions returns the right buttons per status', () => {
@@ -44,6 +46,10 @@ test('sessionActions returns the right buttons per status', () => {
     assert.deepEqual(sessionActions(sess('disconnected')).map(a => a.kind), ['stop', 'connect']);
     assert.deepEqual(sessionActions(sess('stopped')).map(a => a.kind), ['restart']);
     assert.deepEqual(sessionActions(sess('stopping')).map(a => a.kind), []); // stop in flight: spinner only, no Stop button
+    assert.deepEqual(sessionActions(sess('awaiting_input')).map(a => a.kind), []); // the input box is the action
+    const retry = sessionActions(sess('interrupted'));
+    assert.deepEqual(retry.map(a => a.kind), ['restart']);
+    assert.equal(retry[0].label, 'Retry');
 });
 
 test('connected session: Current when this window, else Switch/Connect by window liveness', () => {

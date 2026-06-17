@@ -9,7 +9,13 @@ test('status-category predicates classify each status correctly', () => {
 
     assert.equal(isCloseable('not_started'), true); // terminal + not_started
     assert.equal(isCloseable('stopped'), true);
+    assert.equal(isCloseable('interrupted'), true); // dismissed launch: removable + retryable
+    assert.equal(isCloseable('awaiting_input'), false); // prompt still open
     assert.equal(isCloseable('queued'), false);
+
+    assert.equal(isStoppable('interrupted'), false); // nothing running
+    assert.equal(isStoppable('awaiting_input'), false); // waiting on the user, not running
+    assert.equal(isTerminal('interrupted'), false); // retryable, not terminal
 
     assert.equal(isStoppable('connected'), true); // can stop a live session
     assert.equal(isStoppable('queued'), true);

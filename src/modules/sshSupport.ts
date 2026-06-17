@@ -1,4 +1,4 @@
-import { SshHost } from '../models';
+import { SshHost, PromptObserver, PromptCancelledError } from '../models';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -85,7 +85,7 @@ export class SshManager {
         ];
     }
 
-    public runRemoteCommand(hostName: string, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+    public runRemoteCommand(hostName: string, command: string, observer?: PromptObserver): Promise<{ stdout: string; stderr: string; code: number }> {
         return new Promise((resolve, reject) => {
             const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
             const cancelFile = path.join(askpassDir, 'cancel');
@@ -121,6 +121,7 @@ export class SshManager {
             let stdoutData = '';
             let stderrData = '';
             let disposed = false;
+            let dismissed = false;
             const handledPrompts = new Set<string>();
 
             sshProcess.stdout.on('data', (data: Buffer) => {
@@ -150,6 +151,7 @@ export class SshManager {
                         const { id, prompt } = JSON.parse(content);
                         const responseFile = path.join(askpassDir, `response-${id}`);
 
+                        observer?.('opened');
                         const password = await vscode.window.showInputBox({
                             title: `SSH Authentication — ${hostName}`,
                             prompt: prompt.trim(),
@@ -159,8 +161,12 @@ export class SshManager {
 
                         if (password !== undefined) {
                             fs.writeFileSync(responseFile, password, 'utf-8');
+                            observer?.('answered');
                         }
                         else {
+                            // Only callers that opted into prompt handling (passed an observer) treat a dismiss as a
+                            // cancellation; others keep the legacy non-zero exit from the killed ssh.
+                            dismissed = observer !== undefined;
                             fs.writeFileSync(cancelFile, '', 'utf-8');
                             sshProcess.kill();
                         }
@@ -180,7 +186,8 @@ export class SshManager {
 
             sshProcess.on('close', (code: number | null) => {
                 cleanup();
-                resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 });
+                if (dismissed) { reject(new PromptCancelledError('Interrupted by user')); }
+                else { resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 }); }
             });
 
             sshProcess.on('error', (err: Error) => {

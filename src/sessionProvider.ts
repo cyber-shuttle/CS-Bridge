@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { errMsg } from './logger';
-import { SlurmClusterInfo, SlurmSession, SessionsState, WebviewMessage } from './models';
+import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
 import { WebviewProvider } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
@@ -19,8 +19,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     public static readonly viewType = 'csbridge.sessionsView';
     protected readonly viewKind = 'sessions' as const;
 
-    private readonly clusterInfo = new Map<string, SlurmClusterInfo>();
-    private readonly clusterErrors: Record<string, string> = {};
+    private readonly hostRuntime = new Map<string, HostRuntime>();
     private draftHost: string | null = null;
     private editingId: string | null = null;
     private previewSession: SlurmSession | null = null;
@@ -86,6 +85,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             case 'addSession': {
                 const now = Date.now();
                 const host = data.host ?? '';
+                const runtime = this.hostRuntime.get(host);
                 const newSession: SlurmSession = {
                     id: `session-${now}`,
                     name: `Session ${now}`,
@@ -95,7 +95,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     jobDirectory: '',
                     submittedAt: now,
                     errorMessage: '',
-                    workingDirectory: this.clusterInfo.get(host)?.homeDir,
+                    workingDirectory: runtime?.phase === 'ready' ? runtime.info.homeDir : undefined,
                     ...this.paramsFromData(data),
                 };
                 addSession(newSession);
@@ -114,6 +114,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             case 'dismissEditSession':
                 this.editingId = null;
                 void this.pushState();
+                break;
+            case 'retryClusterInfo':
+                this.fetchClusterInfo(data.host ?? '');
                 break;
             case 'saveSession': {
                 const s = this.requireSession(id, 'save', true);
@@ -236,19 +239,23 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         };
     }
 
+    private setHostRuntime(host: string, runtime: HostRuntime): void {
+        this.hostRuntime.set(host, runtime);
+        void this.pushState();
+    }
+
     private fetchClusterInfo(host: string): void {
-        const cached = this.clusterInfo.get(host);
-        if (cached) { void this.pushState(); return; }
+        if (this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
         this.logger.info(`Fetching slurm cluster info for host: ${host}`);
-        getSlurmClusterInfo(host).then((clusterInfo) => {
-            this.clusterInfo.set(host, clusterInfo);
-            delete this.clusterErrors[host];
-            void this.pushState();
-        }).catch((error) => {
-            this.logger.error('Error fetching slurm cluster info:', error);
-            this.clusterErrors[host] = errMsg(error);
-            void this.pushState();
-        });
+        this.setHostRuntime(host, { phase: 'loading' });
+        // The auth box (if any) surfaces during the fetch: reflect it on the draft form, treat a dismiss as an interruption.
+        const observer: PromptObserver = e => this.setHostRuntime(host, { phase: e === 'opened' ? 'awaiting' : 'loading' });
+        getSlurmClusterInfo(host, observer)
+            .then(info => this.setHostRuntime(host, { phase: 'ready', info }))
+            .catch((error) => {
+                this.logger.error('Error fetching slurm cluster info:', error);
+                this.setHostRuntime(host, { phase: 'error', message: error instanceof PromptCancelledError ? 'Interrupted — input dismissed' : errMsg(error) });
+            });
     }
 
     private scopedSessions(): SlurmSession[] {
@@ -277,8 +284,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     .sort((a, b) => b.submittedAt - a.submittedAt),
                 draftHost: this.draftHost,
                 editingId: this.editingId,
-                clusterInfo: Object.fromEntries(this.clusterInfo),
-                clusterErrors: this.clusterErrors,
+                hostRuntime: Object.fromEntries(this.hostRuntime),
                 previewSession: this.previewSession,
             };
             view.webview.postMessage({ command: 'state', state });
@@ -366,8 +372,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         session.startedAt = undefined; // fresh launch: re-anchor the wall-time countdown when the new job starts running
         this.setStatus(session, 'submitting', '');
         void this.pushState();
+        // An SSH auth box during launch shows on the card as awaiting_input, reverting to submitting once answered.
+        const observer: PromptObserver = (e) => { this.setStatus(session, e === 'opened' ? 'awaiting_input' : 'submitting'); void this.pushState(); };
         this.runSessionTask(session, `Launching session ${session.name}...`, 'launch',
-            p => launchSession(session, this.monitor, p), 'Please clean up any resources on the cluster if necessary.');
+            p => launchSession(session, this.monitor, p, observer), 'Please clean up any resources on the cluster if necessary.');
     }
 
     private setStatus(session: SlurmSession, status: SlurmSession['status'], errorMessage?: string): void {
@@ -386,6 +394,11 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             void this.pushState();
             if (successMessage) { vscode.window.showInformationMessage(successMessage); }
         }).catch((error) => {
+            if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: offer Retry, no error dialog
+                this.setStatus(session, 'interrupted', '');
+                void this.pushState();
+                return;
+            }
             const detail = `Failed to ${verb} session: ${errMsg(error)}`;
             this.logger.error(`${detail} (id ${session.id})`, error);
             vscode.window.showErrorMessage(`${detail}. ${cleanupHint}`);

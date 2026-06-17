@@ -1,4 +1,4 @@
-import { SlurmClusterInfo, SlurmJobStatus, SlurmSession } from '../models';
+import { SlurmClusterInfo, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
 import { Logger, errMsg } from '../logger';
 import { SshManager } from './sshSupport';
 import { parsePartitionLine, parseSacctStatus } from './slurmParse';
@@ -24,13 +24,14 @@ export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ s
     return parseSacctStatus(commandResult.stdout.trim());
 }
 
-export async function getSlurmClusterInfo(hostName: string): Promise<SlurmClusterInfo> {
+export async function getSlurmClusterInfo(hostName: string, observer?: PromptObserver): Promise<SlurmClusterInfo> {
     const sshManager = SshManager.getInstance();
     const log = Logger.getInstance();
     const clusterInfo: SlurmClusterInfo = { host: hostName, accounts: [], partitions: [] };
+    // Only the first command authenticates (later ones reuse the ControlMaster socket), so the auth box surfaces here.
     try {
         const accountResult = await sshManager.runRemoteCommand(hostName,
-            'sacctmgr show associations where user=$USER format=Account -p');
+            'sacctmgr show associations where user=$USER format=Account -p', observer);
 
         if (accountResult.code === 0) {
             const lines = accountResult.stdout.trim().split('\n');

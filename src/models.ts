@@ -15,11 +15,12 @@ export interface SlurmSession extends Session {
 
 // Lifecycle: not_started → submitting → queued → preparing (job + Step-1 sshd/tunnel) →
 // ready_to_connect → connecting → connected; disconnected on a dropped link; stopping → stopped/failed/completed.
+// An SSH auth prompt during launch shows as awaiting_input (reverts to submitting once answered); dismissing it → interrupted.
 export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'stopped' | 'not_started' | 'stopping' | 'disconnected';
+    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'stopped' | 'not_started' | 'stopping' | 'disconnected' | 'awaiting_input' | 'interrupted';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
@@ -46,6 +47,13 @@ export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined)
     const { sshTunnelId, sshPort, region } = ci;
     return { sshTunnelId, sshPort, region };
 }
+
+// A remote command reports its SSH auth box opening and being answered so the caller can reflect
+// "awaiting input" on the UI; a dismissed box instead rejects the command with PromptCancelledError,
+// letting the caller treat it as a deliberate interruption rather than a failure.
+export type PromptObserver = (event: 'opened' | 'answered') => void;
+
+export class PromptCancelledError extends Error {}
 
 export interface SshHost {
     name: string;
@@ -97,13 +105,19 @@ export enum SlurmJobStatus {
 
 export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean };
 
+// A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.
+export type HostRuntime =
+    | { phase: 'loading' }
+    | { phase: 'awaiting' } // an SSH auth box is open
+    | { phase: 'error'; message: string }
+    | { phase: 'ready'; info: SlurmClusterInfo };
+
 export interface SessionsState {
     isRemote: boolean;
     sessions: ViewSession[];
     draftHost: string | null;
     editingId: string | null;
-    clusterInfo: Record<string, SlurmClusterInfo>;
-    clusterErrors: Record<string, string>;
+    hostRuntime: Record<string, HostRuntime>;
     previewSession: SlurmSession | null;
 }
 

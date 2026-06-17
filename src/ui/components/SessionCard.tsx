@@ -37,6 +37,8 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     failed: { name: 'error' },
     stopped: { name: 'debug-stop' },
     stopping: { name: 'loading', spin: true },
+    awaiting_input: { name: 'loading', spin: true },
+    interrupted: { name: 'warning' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -64,6 +66,7 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'disconnected': return <Row style={statusStyle}>{session.errorMessage ? `Disconnected: ${session.errorMessage}` : 'Disconnected'}</Row>;
         case 'connecting': return <Row style={statusStyle}>Connecting…</Row>;
         case 'submitting': return <Row style={statusStyle}>Submitting…</Row>;
+        case 'awaiting_input': return <Row style={statusStyle}>Action needed — check the input box…</Row>;
         case 'queued': {
             const secs = session.submittedAt ? Math.floor((now - session.submittedAt) / 1000) : 0;
             const elapsed = secs >= 60 ? ` (${Math.floor(secs / 60)}m ${secs % 60}s)` : ` (${secs}s)`;
@@ -72,6 +75,7 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
         case 'stopped': return <Row style={statusStyle}>{session.errorMessage ? `Stop failed: ${session.errorMessage}` : 'Stopped'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;
+        case 'interrupted': return <Row style={statusStyle}>Interrupted — input dismissed</Row>;
         case 'completed': return <Row style={statusStyle}>Completed</Row>;
         default: return null;
     }
