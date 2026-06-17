@@ -23,6 +23,8 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
             s.status = LEGACY_STATUS[s.status as string] ?? s.status;
             // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
             if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
+            // A prompt that outlived its window can't be answered anymore; surface it as interrupted (offers Retry).
+            if (s.status === 'awaiting_input') { s.status = 'interrupted'; }
         }
         logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
     }

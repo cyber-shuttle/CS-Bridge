@@ -35,7 +35,7 @@ export function remainingMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt'
 }
 
 const FAILED: SlurmSession['status'][] = ['failed', 'stopped'];
-const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting'];
+const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting', 'awaiting_input'];
 const LIVE: SlurmSession['status'][] = ['preparing', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
@@ -50,6 +50,7 @@ export function dotColor(status: SlurmSession['status']): string {
 export function sessionActions(session: ViewSession): SessionAction[] {
     const s = session.status;
     if (isTerminal(s)) { return [{ kind: 'restart', label: 'Restart', icon: 'debug-restart' }]; }
+    if (s === 'interrupted') { return [{ kind: 'restart', label: 'Retry', icon: 'debug-restart' }]; }
     if (s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
 
     const actions: SessionAction[] = [];

@@ -1,4 +1,4 @@
-import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
+import { SlurmJobStatus, SlurmSession, TunnelCredential, PromptObserver } from '../models';
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
 import { updateSession } from '../extensionStore';
@@ -6,7 +6,7 @@ import { SshManager } from './sshSupport';
 import { getSlurmJobOutput, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive } from './sessionMachine';
-import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm } from './slurmLaunch';
+import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from './tunnelSupport';
 import { checkLinkspanHealth } from './linkspanSupport';
 
@@ -246,9 +246,9 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function launchSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
+export async function launchSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>, observer: PromptObserver): Promise<void> {
     logger.info(`Initiating launch for session: ${session.name}`);
-    const run = SshManager.getInstance();
+    const run: RemoteRunner = { runRemoteCommand: (host, command) => SshManager.getInstance().runRemoteCommand(host, command, observer) };
 
     progress.report({ message: 'Checking Slurm availability on cluster' });
     await checkSlurmAvailability(session, run, logger);

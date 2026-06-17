@@ -16,7 +16,7 @@ const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'ready_to_conn
 const RELAY_LIVE: Status[] = ['ready_to_connect', 'connecting', 'connected'];
 
 export const isTerminal = (status: Status): boolean => TERMINAL.includes(status);
-export const isCloseable = (status: Status): boolean => isTerminal(status) || status === 'not_started';
+export const isCloseable = (status: Status): boolean => isTerminal(status) || status === 'not_started' || status === 'interrupted';
 export const isStoppable = (status: Status): boolean => STOPPABLE.includes(status);
 export const isRelayLive = (status: Status): boolean => RELAY_LIVE.includes(status);
 

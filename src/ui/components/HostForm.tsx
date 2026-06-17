@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import type { SlurmClusterInfo, SlurmPartitionInfo } from '@/models';
+import type { SlurmClusterInfo, SlurmPartitionInfo, HostRuntime } from '@/models';
 import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuString, type ResourceTab } from '@/ui/logic/cluster';
 import { Row, Stack, Text, Spinner, Button, SingleSelect, Option } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
@@ -18,8 +18,7 @@ export type HostFormInitial = {
 
 interface Props {
     host: string;
-    info: SlurmClusterInfo | undefined;
-    error: string | undefined;
+    runtime: HostRuntime | undefined;
     initial?: HostFormInitial;
     saveId?: string; // when set, the form edits this session ("Save") instead of creating one ("Add")
 }
@@ -132,12 +131,18 @@ function HostFormFields({ host, info, initial, saveId }: { host: string; info: S
     );
 }
 
-export function HostForm({ host, info, error, initial, saveId }: Props) {
-    if (error) {
-        return <Text color="var(--vscode-errorForeground)" style={{ padding: '8px' }}>{error}</Text>;
+export function HostForm({ host, runtime, initial, saveId }: Props) {
+    switch (runtime?.phase) {
+        case 'error':
+            return (
+                <Stack gap={6} pad="8px">
+                    <Text color="var(--vscode-errorForeground)">{runtime.message}</Text>
+                    <Button onClick={() => post({ command: 'retryClusterInfo', host })}>Retry</Button>
+                </Stack>
+            );
+        case 'ready':
+            return <HostFormFields host={host} info={runtime.info} initial={initial} saveId={saveId} />;
+        default: // undefined | loading | awaiting — same spinner; the message says whether it needs you
+            return <Row gap={6} pad="8px"><Spinner size={16} /> {runtime?.phase === 'awaiting' ? 'Action needed — check the input box…' : 'Fetching runtime details…'}</Row>;
     }
-    if (!info) {
-        return <Row gap={6} pad="8px"><Spinner size={16} /> Fetching runtime details…</Row>;
-    }
-    return <HostFormFields host={host} info={info} initial={initial} saveId={saveId} />;
 }

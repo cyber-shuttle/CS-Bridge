@@ -1,23 +1,23 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { SessionsState, ViewSession, SlurmClusterInfo } from '@/models';
+import type { SessionsState, ViewSession, HostRuntime } from '@/models';
 import { post, useWebviewState } from '@/ui/platform/vscode';
 import { SessionCard, NowContext } from '@/ui/components/SessionCard';
 import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
-function ConfigCard({ icon, host, info, error, onDismiss, initial, saveId }: {
-    icon: string; host: string; info: SlurmClusterInfo | undefined; error: string | undefined;
+function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId }: {
+    icon: string; muted?: boolean; host: string; runtime: HostRuntime | undefined;
     onDismiss: () => void; initial?: HostFormInitial; saveId?: string;
 }) {
     return (
         <Card>
             <Row gap={6}>
-                <Icon name={icon} />
+                <Icon name={icon} style={muted ? { color: 'var(--vscode-descriptionForeground)' } : undefined} />
                 <Text weight={600}>{host}</Text>
                 <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
             </Row>
-            <HostForm host={host} info={info} error={error} initial={initial} saveId={saveId} />
+            <HostForm host={host} runtime={runtime} initial={initial} saveId={saveId} />
         </Card>
     );
 }
@@ -69,9 +69,9 @@ function SessionsView({ state }: { state: SessionsState }) {
     }
     return (
         <>
-            {state.draftHost ? <ConfigCard key={state.draftHost} icon="add" host={state.draftHost} info={state.clusterInfo[state.draftHost]} error={state.clusterErrors[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} /> : null}
+            {state.draftHost ? <ConfigCard key={state.draftHost} icon="circle-outline" muted host={state.draftHost} runtime={state.hostRuntime[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} /> : null}
             {state.sessions.map(s => s.id === state.editingId
-                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} info={state.clusterInfo[s.cluster]} error={state.clusterErrors[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} />
+                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} runtime={state.hostRuntime[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} />
                 : <SessionCard key={s.id} session={s} />)}
             {!state.sessions.length && !state.draftHost
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
