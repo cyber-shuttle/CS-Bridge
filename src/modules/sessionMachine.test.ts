@@ -3,19 +3,20 @@ import assert from 'node:assert/strict';
 import { computeStatusTransition, isTerminal, isCloseable, isStoppable, isRelayLive } from './sessionMachine';
 import { SlurmJobStatus, SlurmSession } from '../models';
 
-test('status-category predicates partition the status space as expected', () => {
-    const all: SlurmSession['status'][] = ['connecting', 'connected', 'ready_to_connect', 'preparing', 'failed', 'completed', 'queued', 'submitting', 'stopped', 'not_started', 'stopping', 'disconnected'];
-    // every status is exactly one of: terminal, not_started, or stoppable
-    for (const s of all) {
-        const buckets = [isTerminal(s), s === 'not_started', isStoppable(s)].filter(Boolean).length;
-        assert.equal(buckets, 1, `${s} should fall in exactly one of terminal/not_started/stoppable`);
-    }
+test('status-category predicates classify each status correctly', () => {
     assert.deepEqual(['stopped', 'failed', 'completed'].map(isTerminal as any), [true, true, true]);
+    assert.equal(isTerminal('queued'), false);
+
     assert.equal(isCloseable('not_started'), true);   // terminal + not_started
     assert.equal(isCloseable('stopped'), true);
     assert.equal(isCloseable('queued'), false);
+
     assert.equal(isStoppable('connected'), true);     // can stop a live session
-    assert.equal(isStoppable('stopped'), false);
+    assert.equal(isStoppable('queued'), true);
+    assert.equal(isStoppable('stopped'), false);      // already terminal
+    assert.equal(isStoppable('not_started'), false);  // nothing to stop yet
+    assert.equal(isStoppable('stopping'), false);     // a stop is already in flight
+
     assert.deepEqual(['ready_to_connect', 'connecting', 'connected'].map(isRelayLive as any), [true, true, true]);
     assert.equal(isRelayLive('preparing'), false);
 });

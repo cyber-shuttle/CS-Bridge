@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { HostsState } from './models';
-import { BaseWebviewProvider } from './baseWebviewProvider';
+import { WebviewProvider } from './webviewProvider';
 import { errMsg } from './logger';
 import { SshManager } from './modules/sshSupport';
 import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
@@ -9,7 +9,7 @@ import { USER_SSH_CONFIG_PATH, addHostToConfigFile, removeHostFromConfigFile } f
 // Webview provider for the SSH Hosts view. Independent of sessions: it reads ~/.ssh/config + the
 // read-only system SSH config via SshManager and writes user hosts to ~/.ssh/config. The post-add
 // "Connect" action hands off to the Sessions view through the csbridge.newSessionOnHost command.
-export class SshHostProvider extends BaseWebviewProvider {
+export class SshHostProvider extends WebviewProvider {
     public static readonly viewType = 'csbridge.hostsView';
     protected readonly viewKind = 'hosts' as const;
 

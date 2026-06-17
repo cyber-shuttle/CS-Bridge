@@ -13,7 +13,8 @@ const CONNECT_PHASE: Status[] = ['preparing', 'ready_to_connect', 'connected', '
 
 // Session-status categories — the single source of truth shared by the provider, the monitor, and the webview UI.
 const TERMINAL: Status[] = ['stopped', 'failed', 'completed'];
-const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'connecting', 'ready_to_connect', 'connected', 'disconnected', 'stopping'];
+// Note: 'stopping' is excluded — a stop is already in flight, so Stop neither shows nor re-triggers.
+const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'connecting', 'ready_to_connect', 'connected', 'disconnected'];
 const RELAY_LIVE: Status[] = ['ready_to_connect', 'connecting', 'connected'];
 
 // Terminal: the job has finished (stopped, failed, or completed); drop from monitoring, and it can be started again.

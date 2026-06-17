@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { errMsg } from './logger';
 import { SlurmClusterInfo, SlurmSession, SessionsState } from './models';
-import { BaseWebviewProvider } from './baseWebviewProvider';
+import { WebviewProvider } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
@@ -15,7 +15,7 @@ function openSessionWindow(sessionId: string): void {
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
 }
 
-export class SessionProvider extends BaseWebviewProvider implements vscode.Disposable {
+export class SessionProvider extends WebviewProvider implements vscode.Disposable {
     public static readonly viewType = 'csbridge.sessionsView';
     protected readonly viewKind = 'sessions' as const;
 
