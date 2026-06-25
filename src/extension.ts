@@ -47,6 +47,8 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
     );
 
+    void sessionProvider.reattachLiveSessions();
+
     // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.
     const marker = vscode.Uri.joinPath(context.globalStorageUri, 'opened.marker');
     if (!(await vscode.workspace.fs.stat(marker).then(() => true, () => false))) {

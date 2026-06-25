@@ -35,7 +35,7 @@ export function remainingMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt'
 }
 
 const FAILED: SlurmSession['status'][] = ['failed', 'stopped'];
-const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting', 'awaiting_input'];
+const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting', 'awaiting_input', 'unreachable'];
 const LIVE: SlurmSession['status'][] = ['preparing', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
@@ -60,8 +60,9 @@ export function sessionActions(session: ViewSession): SessionAction[] {
             ? { kind: 'current', label: 'Current', icon: 'check' }
             : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' });
     }
-    else if (s === 'ready_to_connect' || s === 'disconnected') {
-        actions.push({ kind: 'connect', label: s === 'disconnected' ? 'Reconnect' : 'Connect', icon: 'arrow-swap' });
+    else if (s === 'ready_to_connect' || s === 'disconnected' || s === 'unreachable') {
+        // For 'unreachable', Reconnect rebuilds the relay via the tunnel API → back to relay-live, off the login-node path.
+        actions.push({ kind: 'connect', label: s === 'ready_to_connect' ? 'Connect' : 'Reconnect', icon: 'arrow-swap' });
     }
     return actions;
 }

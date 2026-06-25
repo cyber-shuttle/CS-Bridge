@@ -5,14 +5,15 @@ import { updateSession } from '../extensionStore';
 import { SshManager } from './sshSupport';
 import { getSlurmJobOutput, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
-import { computeStatusTransition, isRelayLive } from './sessionMachine';
+import { computeStatusTransition, isRelayLive, unreachableStatus } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from './tunnelSupport';
 import { checkLinkspanHealth } from './linkspanSupport';
 
 const logger = Logger.getInstance();
 const POLLING_INTERVAL_MS = 5000;
-const MAX_POLL_FAILURES = 3;
+// Consecutive failed /health pings before we stop trusting the tunnel and cross-check the job over batch sacct.
+const HEALTH_GIVEUP = 6;
 
 class AsyncLock {
     private acquired = false;
@@ -39,7 +40,7 @@ class AsyncLock {
 
 export class JobStatusMonitor {
     private monitoringSessions: Map<string, SlurmSession> = new Map();
-    private monitoringFailedCounts: Map<string, number> = new Map();
+    private healthFailedCounts: Map<string, number> = new Map();
     private lock = new AsyncLock();
     private remotePrepareInFlight = new Set<string>();
 
@@ -58,16 +59,12 @@ export class JobStatusMonitor {
                 logger.info(`Session ${session.name} is ready to connect (remote sshd + tunnel live).`);
                 updateSession(session);
             }
-            this.monitoringFailedCounts.delete(session.id);
         }
         catch (err) {
-            logger.error(`Failed to prepare session ${session.name} for connect:`, err);
-            // Stays monitored: the slurm branch takes it terminal on job death.
-            if (this.shouldGiveUp(session.id)) {
-                session.status = 'disconnected';
-                session.errorMessage = `Failed to prepare session for connect: ${errMsg(err)}`;
-                updateSession(session);
-            }
+            // A dev-tunnel/linkspan API blip while bringing Step 1 up is transient, not job death — hold 'preparing' and retry.
+            logger.warn(`Could not prepare session ${session.name} for connect (will retry):`, err);
+            session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
+            updateSession(session);
         }
         finally {
             this.remotePrepareInFlight.delete(session.id);
@@ -86,13 +83,6 @@ export class JobStatusMonitor {
             sshTunnelId: '',
             sshTunnelForwardPort: 0,
         };
-    }
-
-    // Counts a poll failure for the session and reports whether retries are now exhausted.
-    private shouldGiveUp(sessionId: string): boolean {
-        const failCount = this.monitoringFailedCounts.get(sessionId) || 0;
-        this.monitoringFailedCounts.set(sessionId, failCount + 1);
-        return failCount >= MAX_POLL_FAILURES;
     }
 
     private async monitorSessions() {
@@ -114,22 +104,40 @@ export class JobStatusMonitor {
                         }
 
                         if (session.connectionInfo?.apiTunnelId && isRelayLive(session.status)) {
-                            logger.info(`Session ${session.name} is in status ${session.status}, health-pinging the tunnel instead of polling Slurm.`);
+                            const healthFails = this.healthFailedCounts.get(session.id) ?? 0;
+                            if (healthFails < HEALTH_GIVEUP) {
+                                logger.info(`Session ${session.name} is in status ${session.status}, health-pinging the tunnel instead of polling Slurm.`);
+                                checkLinkspanHealth(session).then(() => {
+                                    this.healthFailedCounts.delete(session.id);
+                                }).catch((err) => {
+                                    if (!isRelayLive(session.status)) { return; } // left a live state (e.g. Stop) mid-ping
+                                    // A /health blip is not job death: keep the relay (it self-heals via enableReconnect), count, cross-check below.
+                                    this.healthFailedCounts.set(session.id, (this.healthFailedCounts.get(session.id) ?? 0) + 1);
+                                    logger.warn(`Health check failed for session ${session.name} (relay kept):`, err);
+                                    session.errorMessage = `Health check failed: ${errMsg(err)}`;
+                                    updateSession(session);
+                                });
+                                continue;
+                            }
 
-                            checkLinkspanHealth(session).then(() => {
-                                this.monitoringFailedCounts.delete(session.id);
-                            }).catch((err) => {
-                                // The session may have left a live state (e.g. Stop) while this ping was in flight; don't clobber it.
-                                if (!isRelayLive(session.status)) { return; }
-                                logger.warn(`Health check failed for session ${session.name}:`, err);
-                                if (this.shouldGiveUp(session.id)) {
-                                    session.errorMessage = `Health check failed: ${err.message}`;
-                                    session.status = 'disconnected';
+                            // /health gave up — only an authoritative sacct terminal state may now tear the relay down.
+                            try {
+                                const { status: slurmStatus } = await getSlurmJobStatus(session);
+                                const t = computeStatusTransition(session.status, slurmStatus);
+                                if (t.stopMonitoring) {
+                                    session.status = t.next!;
+                                    if (t.error) { session.errorMessage = t.error; }
                                     updateSession(session);
                                     void disposeTunnelClient(session.id);
-                                    // Stays monitored: the slurm branch takes it terminal if the job is actually gone.
+                                    this.untrackSession(sessionId);
                                 }
-                            });
+                                else {
+                                    this.healthFailedCounts.delete(session.id); // alive — resume health-pinging
+                                }
+                            }
+                            catch (err) {
+                                logger.warn(`Liveness cross-check unreachable for session ${session.name} (keeping relay):`, err);
+                            }
                             continue;
                         }
 
@@ -155,15 +163,8 @@ export class JobStatusMonitor {
                                     }
                                 }
                             }).catch((err) => {
-                                logger.error(`Failed to get job output for session ${session.name}:`, err);
-                                if (!this.shouldGiveUp(sessionId)) {
-                                    logger.warn(`Job output retrieval failed for session ${session.name}, but it does not yet qualify to mark the session as failed. Will retry in the next polling cycle.`);
-                                    return;
-                                }
-                                session.errorMessage = `Failed to get job output: ${err.message || err}`;
-                                session.status = 'failed';
-                                updateSession(session);
-                                this.untrackSession(sessionId);
+                                // .err not written yet, or login node briefly unreachable — not death; keep 'preparing' and retry.
+                                logger.warn(`Job output not yet available for session ${session.name} (will retry):`, err);
                             });
 
                             if (session.status === 'preparing' && session.tunnelId
@@ -179,21 +180,21 @@ export class JobStatusMonitor {
                                 if (t.error) { session.errorMessage = t.error; }
                                 updateSession(session);
                             }
-                            if (t.stopMonitoring) { this.untrackSession(sessionId); }
+                            if (t.stopMonitoring) {
+                                void disposeTunnelClient(session.id); // free any relay on authoritative job death
+                                this.untrackSession(sessionId);
+                            }
                         }
                     }
                     catch (error) {
-                        const errorMessage = `Error while monitoring Slurm job status for session ${session.name}: ${errMsg(error)}`;
-                        logger.error(errorMessage, error);
-                        if (!this.shouldGiveUp(sessionId)) {
-                            logger.warn(`Slurm job status check failed for session ${session.name}, but it does not yet qualify to mark the session as failed. Will retry in the next polling cycle.`);
-                            continue;
+                        // Login node unreachable (dead ControlMaster, Duo-needed under BatchMode) — not death; stay recoverable.
+                        logger.warn(`Cluster unreachable while polling session ${session.name} (will retry): ${errMsg(error)}`);
+                        const next = unreachableStatus(session.status);
+                        if (next && session.status !== next) {
+                            session.status = next;
+                            session.errorMessage = `Cluster unreachable: ${errMsg(error)}`;
+                            updateSession(session);
                         }
-
-                        session.status = 'failed';
-                        session.errorMessage = errorMessage;
-                        updateSession(session);
-                        this.untrackSession(sessionId);
                     }
                 }
             }
@@ -203,7 +204,7 @@ export class JobStatusMonitor {
 
     private untrackSession(sessionId: string) {
         this.monitoringSessions.delete(sessionId);
-        this.monitoringFailedCounts.delete(sessionId);
+        this.healthFailedCounts.delete(sessionId);
         logger.info(`Stopped monitoring Slurm job status for session ID ${sessionId}`);
     }
 
