@@ -46,7 +46,7 @@ test('parsePartitionLine throws on a malformed line', () => {
 test('buildSlurmScript emits the resource #SBATCH directives and the linkspan invocation', () => {
     const session = {
         cpus: 4, memory: '8 GB', wallTime: '02:00:00', queue: 'gpu', allocation: 'acct1',
-        gpuClass: 'a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
+        gpuClass: 'gpu:a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
     } as SlurmSession;
     const cred = { provider: 'devtunnel', authToken: 'tok' } as TunnelCredential;
     const script = buildSlurmScript(session, cred);
@@ -64,4 +64,20 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
     } as SlurmSession;
     const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
     assert.doesNotMatch(script, /--gres=/);
+});
+
+test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launching linkspan', () => {
+    const session = {
+        cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
+        gpuClass: '', gpuCount: 0,
+    } as SlurmSession;
+    const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
+
+    // The compute node has no logind, so the inherited /run/user/<uid> XDG_RUNTIME_DIR is absent there;
+    // unset it (and TMPDIR) so the VS Code server falls back to its node-local /tmp default.
+    assert.match(script, /^unset XDG_RUNTIME_DIR TMPDIR$/m);
+
+    // linkspan must inherit the cleaned env, so the unset has to precede its invocation.
+    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('--tunnel-auth-token'),
+        'unset precedes linkspan invocation');
 });
