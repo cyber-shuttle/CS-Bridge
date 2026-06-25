@@ -4,6 +4,34 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.3] - 2026-06-25
+
+### Added
+
+- **Edit a session's parameters from its card** — change partition, CPU, memory, GPU, allocation, and wall time without recreating the session.
+- **Account switcher** in the Sessions title bar, plus automatic reuse of a signed-in Microsoft account when creating a session.
+- **SSH Hosts view** improvements — expandable host rows and a refresh action.
+- **SSH auth prompts surface in the Sessions view** — password/Duo prompts raised during launch are reflected on the session card.
+
+### Changed
+
+- **Session resilience** — only an authoritative SLURM terminal state (`COMPLETED`/`FAILED`/`TIMEOUT`/`OUT_OF_MEMORY`/`CANCELLED`) now ends a session. A transient login-node or tunnel failure becomes a recoverable **`unreachable`** state instead of `failed`, and the in-process relay is rebuilt automatically on extension restart from the persisted reattach refs, so a live session reconnects without a manual Connect.
+- Background SLURM polling now runs non-interactively (`BatchMode`), so a dead `ControlMaster` fails fast instead of raising an unanswerable auth prompt and exhausting local ports.
+- **Tunnel reliability** — a single client-owned Dev Tunnel per session with a clearer connect/reattach lifecycle.
+- Session-card metadata redesigned as compact chips.
+- Internal refactor — one provider per sidebar view over a shared base, with vscode-free, unit-tested capability modules and lint/type tooling.
+
+### Fixed
+
+- **Remote server death on compute nodes without systemd-logind** — the server inherited a stale `XDG_RUNTIME_DIR=/run/user/<uid>` that does not exist on the compute node; the SLURM script now unsets `XDG_RUNTIME_DIR`/`TMPDIR` so the server falls back to node-local `/tmp`.
+- A transient tunnel `/health` blip no longer tears down a working relay (it self-heals), and a brief login-node outage no longer sticks a session at `failed`.
+- **GPU type and count now pre-populate** when editing a GPU session (the gres name's own colon was being mis-split).
+- Corrected the SLURM `--gres` resource specification format.
+
+### Removed
+
+- The managed `~/.cybershuttle/ssh_hosts` host level — SSH hosts are now read directly from `~/.ssh/config` and the read-only system config (the legacy `Include` is cleaned up automatically).
+
 ## [0.0.2] - 2026-06-12
 
 ### Added
