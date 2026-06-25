@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
+import { lock, release } from './fsSupport';
 import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock } from './sshHostsStore';
 
 const logger = Logger.getInstance();
@@ -85,8 +86,10 @@ export class SshManager {
         ];
     }
 
-    public runRemoteCommand(hostName: string, command: string, observer?: PromptObserver): Promise<{ stdout: string; stderr: string; code: number }> {
+    // batch: background polls fail fast and silent (BatchMode) instead of raising a Duo box they can't answer and churning ports.
+    public runRemoteCommand(hostName: string, command: string, observer?: PromptObserver, opts?: { batch?: boolean }): Promise<{ stdout: string; stderr: string; code: number }> {
         return new Promise((resolve, reject) => {
+            const batchArgs = opts?.batch ? ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'] : [];
             const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
             const cancelFile = path.join(askpassDir, 'cancel');
 
@@ -102,6 +105,7 @@ export class SshManager {
             // Detach stdin so SSH is forced to use SSH_ASKPASS
             const sshProcess = spawn('ssh', [
                 ...this.buildControlMasterArgs(hostName),
+                ...batchArgs,
                 '-o', 'NumberOfPasswordPrompts=3',
                 hostName,
                 command,
@@ -245,11 +249,16 @@ export function addSshConfigEntry(sessionId: string, localPort: number, privateK
     const user = 'cs-ssh-user'; // any non-empty value works; the custom SSH server ignores the username
     const configBlock = buildSshConfigBlock(sessionId, hostAlias, hostname, localPort, user, sessionKeyPath(sessionId));
 
+    // Locked: startup reattach can rewrite this concurrently, so the append must not interleave.
+    lock(CS_SSH_CONFIG_PATH);
     try {
         fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
     }
     catch (err) {
         logger.error(`Failed to write SSH config for session ${sessionId}:`, err);
+    }
+    finally {
+        release(CS_SSH_CONFIG_PATH);
     }
     return hostAlias;
 }
@@ -277,6 +286,7 @@ export function removeSessionPrivateKey(sessionId: string): void {
 }
 
 export function removeSshConfigEntry(sessionId: string, hostAlias: string): void {
+    lock(CS_SSH_CONFIG_PATH);
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
         const re = new RegExp(
@@ -292,5 +302,8 @@ export function removeSshConfigEntry(sessionId: string, hostAlias: string): void
     }
     catch (err) {
         logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
+    }
+    finally {
+        release(CS_SSH_CONFIG_PATH);
     }
 }

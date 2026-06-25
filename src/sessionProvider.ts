@@ -5,9 +5,9 @@ import { WebviewProvider } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
-import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, JobStatusMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
-import { isTerminal, isCloseable, isStoppable } from './modules/sessionMachine';
+import { isTerminal, isCloseable, isStoppable, isReattachable } from './modules/sessionMachine';
 
 function openSessionWindow(sessionId: string): void {
     const path = getSession(sessionId)?.workingDirectory ?? '';
@@ -52,10 +52,18 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             void this.pushState();
         });
         this.shared.push({ dispose: () => sessionsWatcher.close() });
-        // The sidebar drives monitoring; remote windows only observe.
-        if (!this.remoteSessionId) {
-            for (const s of getAllSessions()) {
-                if (s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
+    }
+
+    // At activation (sidebar only): resume monitoring and rebuild the relay (gone after restart) for every live-backend session.
+    public async reattachLiveSessions(): Promise<void> {
+        if (this.remoteSessionId) { return; }
+        for (const s of getAllSessions()) {
+            if (s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
+        }
+        if ((await getMicrosoftAccountInfo()).label === null) { return; } // don't force a sign-in popup at startup
+        for (const s of getAllSessions()) {
+            if (isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id)) {
+                void this.establishRelay(s);
             }
         }
     }
@@ -295,48 +303,51 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         }
     }
 
-    // Step 2: (re)establish the in-process relay and open a window. Step 1 (remote sshd + tunnel) is the monitor's job.
-    private async connectSessionToTunnel(sessionId: string) {
-        const session = this.requireSession(sessionId, 'connect tunnel', true);
-        if (!session) { return; }
-        if (this.connecting.has(sessionId)) {
-            this.logger.info(`Connect already in progress for session ${sessionId}; ignoring re-entrant request`);
-            return;
+    // Step 2 core: (re)build the in-process relay from the persisted refs. No window — reattach and connect share this.
+    private async establishRelay(session: SlurmSession): Promise<boolean> {
+        if (this.connecting.has(session.id)) {
+            this.logger.info(`Connect already in progress for session ${session.id}; ignoring re-entrant request`);
+            return false;
         }
-        this.connecting.add(sessionId);
+        this.connecting.add(session.id);
         try {
-            // Already attached in this window with a live local forward - just open another window.
-            if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
-                openSessionWindow(session.id);
-                void this.pushState();
-                return;
-            }
-
             this.setStatus(session, 'connecting');
-            await ensureRemoteSession(session); // Step 1 safety net (idempotent; usually already done by the monitor)
+            await ensureRemoteSession(session); // idempotent; refreshes tunnel creds for reattach
             const localPort = await connectSessionToTunnel(session);
-
-            // Key is in memory on first connect, read back from disk on reattach.
             const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
             if (!privateKey) { throw new Error('SSH private key not found for session'); }
             const hostAlias = addSshConfigEntry(session.id, localPort, privateKey);
             this.logger.info(`SSH config entry ready for session ${session.id} (ssh ${hostAlias})`);
-
-            openSessionWindow(session.id);
             this.setStatus(session, 'connected');
-            // windowAlive turns true once the new window registers its pid (fs.watch -> pushState).
-            void this.pushState();
+            return true;
         }
         catch (error) {
-            this.logger.error(`Error connecting tunnel for session ${sessionId}:`, error);
-            await disposeTunnelClient(sessionId);
-            // Step 1 still up (sshTunnelId persisted) -> only the relay failed: ready_to_connect for retry; else the remote is gone -> disconnected.
+            this.logger.error(`Error establishing relay for session ${session.id}:`, error);
+            await disposeTunnelClient(session.id);
+            // Step 1 still up (sshTunnelId persisted) -> relay-only failure, retry from ready_to_connect; else disconnected.
             this.setStatus(session, session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected', `Failed to connect tunnel: ${errMsg(error)}`);
-            void this.pushState();
+            return false;
         }
         finally {
-            this.connecting.delete(sessionId);
+            this.connecting.delete(session.id);
         }
+    }
+
+    // Open a fresh cshost window only when none is live; a surviving one reconnects through the rewritten ssh_config.
+    private openWindowIfNone(session: SlurmSession): void {
+        if (!liveAndCleanup(session).windowAlive) { openSessionWindow(session.id); }
+    }
+
+    private async connectSessionToTunnel(sessionId: string) {
+        const session = this.requireSession(sessionId, 'connect tunnel', true);
+        if (!session) { return; }
+        if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
+            this.openWindowIfNone(session);
+            void this.pushState();
+            return;
+        }
+        if (await this.establishRelay(session)) { this.openWindowIfNone(session); }
+        void this.pushState();
     }
 
     private async stopSessionExecution(sessionId: string) {

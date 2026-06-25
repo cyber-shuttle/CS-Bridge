@@ -122,13 +122,18 @@ async function forwardSshPortOnTunnel(session: SlurmSession): Promise<void> {
 
 // Step 1: remote sshd up + its port exposed on a Dev Tunnel. Idempotent.
 export async function ensureRemoteSession(session: SlurmSession): Promise<void> {
-    if (session.connectionInfo?.sshTunnelId) { return; }
+    // First, so reattach re-mints apiTunnelId+token over the MS API (no login-node SSH) before the early-return.
     await ensureDevTunnel(session);
+    if (session.connectionInfo?.sshTunnelId) { return; }
     // Reuse an sshd a prior attempt created; linkspan's create isn't idempotent and would leak one.
     if (!session.connectionInfo?.sshPort) {
         await createSshServer(session);
     }
     await forwardSshPortOnTunnel(session);
+}
+
+export function hasActiveTunnelClient(sessionId: string): boolean {
+    return activeTunnelClients.has(sessionId);
 }
 
 export async function connectSessionToTunnel(session: SlurmSession): Promise<number> {

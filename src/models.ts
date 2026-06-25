@@ -20,7 +20,7 @@ export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'stopped' | 'not_started' | 'stopping' | 'disconnected' | 'awaiting_input' | 'interrupted';
+    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'stopped' | 'not_started' | 'stopping' | 'disconnected' | 'unreachable' | 'awaiting_input' | 'interrupted';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
@@ -44,8 +44,9 @@ export interface SessionConnectionInfo {
 
 export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): SessionConnectionInfo | undefined {
     if (!ci?.sshTunnelId) { return undefined; }
-    const { sshTunnelId, sshPort, region } = ci;
-    return { sshTunnelId, sshPort, region };
+    // apiPort persists so a reattached session health-pings the tunnel instead of polling the login node; the token is re-minted.
+    const { sshTunnelId, sshPort, region, apiPort } = ci;
+    return { sshTunnelId, sshPort, region, apiPort };
 }
 
 // A remote command reports its SSH auth box opening and being answered so the caller can reflect

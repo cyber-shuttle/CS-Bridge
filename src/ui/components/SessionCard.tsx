@@ -33,6 +33,7 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     connecting: { name: 'loading', spin: true },
     connected: { name: 'vm-active' },
     disconnected: { name: 'debug-disconnect' },
+    unreachable: { name: 'warning' },
     completed: { name: 'pass' },
     failed: { name: 'error' },
     stopped: { name: 'debug-stop' },
@@ -64,6 +65,7 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'connected': return <Row style={statusStyle}>{fmtTime(remainingMs(session, now))} left</Row>;
         case 'preparing': return <Row style={statusStyle}>Establishing secure tunnel…</Row>;
         case 'disconnected': return <Row style={statusStyle}>{session.errorMessage ? `Disconnected: ${session.errorMessage}` : 'Disconnected'}</Row>;
+        case 'unreachable': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Unreachable: ${session.errorMessage}` : 'Cluster unreachable — retrying…'}</Text></Row>;
         case 'connecting': return <Row style={statusStyle}>Connecting…</Row>;
         case 'submitting': return <Row style={statusStyle}>Submitting…</Row>;
         case 'awaiting_input': return <Row style={statusStyle}>Action needed — check the input box…</Row>;
