@@ -46,3 +46,13 @@ export function gpuString(gpuType: string, gpuCount: number): string {
     if (gpuCount <= 0) { return 'None'; }
     return gpuType ? `${gpuType}:${gpuCount}` : `${gpuCount}`;
 }
+
+// Inverse of gpuString for the edit-form prefill. The gres type can contain colons (e.g. "gpu:a100"), so the count
+// is the segment after the LAST colon, not the first.
+export function parseGpuClass(gpuClass: string): { gpuType: string; gpuCount: string } | undefined {
+    if (!gpuClass || gpuClass === 'None') { return undefined; }
+    const idx = gpuClass.lastIndexOf(':');
+    return idx === -1
+        ? { gpuType: '', gpuCount: gpuClass }
+        : { gpuType: gpuClass.slice(0, idx), gpuCount: gpuClass.slice(idx + 1) };
+}

@@ -4,6 +4,7 @@ import type { SessionsState, ViewSession, HostRuntime } from '@/models';
 import { post, useWebviewState } from '@/ui/platform/vscode';
 import { SessionCard, NowContext } from '@/ui/components/SessionCard';
 import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
+import { parseGpuClass } from '@/ui/logic/cluster';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
 function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId }: {
@@ -22,11 +23,9 @@ function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId }: 
     );
 }
 
-// gpuClass is gpuString output ("type:count" | "count" | "None"); split it back into form fields.
 function gpuInitial(gpuClass: string): Partial<HostFormInitial> {
-    if (!gpuClass || gpuClass === 'None') { return { tab: 'cpu' }; }
-    const [type, count] = gpuClass.split(':');
-    return count ? { tab: 'gpu', gpuType: type, gpuCount: count } : { tab: 'gpu', gpuCount: type };
+    const gpu = parseGpuClass(gpuClass);
+    return gpu ? { tab: 'gpu', gpuType: gpu.gpuType, gpuCount: gpu.gpuCount } : { tab: 'cpu' };
 }
 
 function editInitial(session: ViewSession): HostFormInitial {
