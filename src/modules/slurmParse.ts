@@ -16,7 +16,7 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
     ];
 
     if (session.gpuClass !== '' && session.gpuCount > 0) {
-        sbatchLines.push(`#SBATCH --gres=gpu:${session.gpuClass}`);
+        sbatchLines.push(`#SBATCH --gres=${session.gpuClass}`);
     }
 
     const scriptLines = [
