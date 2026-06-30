@@ -8,11 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **One persistent SSH connection per host** — every remote command (SLURM queries, linkspan install, `sbatch`) now rides a single SSH connection that is established on first use and reused until it drops, then lazily re-established. On macOS/Linux a `ControlMaster` socket is still layered in so multiple windows share one authentication.
+- **One persistent SSH connection per host** — every remote command (SLURM queries, linkspan install, `sbatch`) now rides a single SSH connection established on first use and reused until it drops, then lazily re-established. On Windows (no `ControlMaster`) this is what makes connection reuse work at all; on macOS/Linux a `ControlMaster` socket is still layered in so multiple windows share one authentication. (#66)
+- **Session statuses consolidated and reordered** — hitting the wall-time limit is now a restartable **`stopped`** (was `failed`), and a dropped link is a self-recovering **`unreachable`** state (replacing `disconnected`). The status set is ordered by lifecycle and the session-card icons/labels were refreshed. (#62)
+- **Time-ordered session ids** — session ids are now UUIDv7, so the sidebar keeps a stable order across relaunches and a restarted session no longer jumps to the top. (#65)
+- **Higher resource floors** — the minimum session memory is now **2 GB** (1 GB could OOM-kill the VS Code remote server) and the minimum CPU count is now **2**. (#57, #59)
 
 ### Fixed
 
-- **Windows: an auth prompt on every SSH operation against 2FA hosts** — Windows OpenSSH has no `ControlMaster`, so each operation re-authenticated and raised a fresh Duo prompt. The persistent connection now authenticates **once** at connect and is reused for all subsequent operations until it actually drops (#60).
+- **Windows: a fresh auth prompt on every SSH operation against 2FA hosts** — Windows OpenSSH has no `ControlMaster`, so each operation re-authenticated and raised a new Duo prompt. The persistent connection now authenticates **once** at connect and is reused until it actually drops. (#66)
+- **Remote sessions stalling under heavy I/O** — opening a large file (or other bursts) no longer stalls or drops the Remote-SSH connection; the Dev Tunnel relay now uses keepalives and the SSH connection has tuned resilience options. (#56)
+- **Repeated launches failing with tunnel port exhaustion** — each launch now uses a fresh Dev Tunnel, avoiding the `PortsPerTunnel` (HTTP 429) buildup that made successive launches on a cluster fail. (#58)
+- **Wall-time-expired sessions handled reliably** — a session that reaches its SLURM `--time` limit is now ended even when the login node is briefly unreachable for `sacct`, no longer offers a doomed Connect/Stop, and the queued-time counter no longer flashes `-1`. (#63)
+- **Cross-window connect race** — connecting two sessions at once no longer reverts both to "Connect"; session state now merges reliably across windows. (#64)
+
+### Removed
+
+- Legacy migration shims — the old `cancelled`/`cancelling` status migration, the legacy `~/.cybershuttle/ssh_hosts` Include cleanup, and the unused `frp` tunnel-provider vestige. (#61)
 
 ## [0.0.3] - 2026-06-25
 
