@@ -14,8 +14,8 @@ test('partitionsForTab splits by presence of gres', () => {
     assert.equal(hasTab({ ...info, partitions: [cpuPart] }, 'gpu'), false);
 });
 
-test('cpuOptions lists 1..cpuCount', () => {
-    assert.deepEqual(cpuOptions(cpuPart), [1, 2, 3]);
+test('cpuOptions lists 2..cpuCount (2-CPU floor)', () => {
+    assert.deepEqual(cpuOptions(cpuPart), [2, 3]); // cpuCount 3
     assert.deepEqual(cpuOptions(undefined), []);
 });
 

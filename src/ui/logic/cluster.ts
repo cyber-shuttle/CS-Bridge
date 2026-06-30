@@ -19,7 +19,8 @@ export function hasTab(info: SlurmClusterInfo, tab: ResourceTab): boolean {
 
 export function cpuOptions(partition: SlurmPartitionInfo | undefined): number[] {
     const max = Math.max(0, partition?.cpuCount ?? 0);
-    return Array.from({ length: max }, (_, i) => i + 1);
+    // 2-CPU floor: a 1-CPU dev host is impractical for the VS Code server.
+    return Array.from({ length: Math.max(0, max - 1) }, (_, i) => i + 2);
 }
 
 // 2 GB floor: 1 GB OOM-kills the VS Code remote server/extension host.
