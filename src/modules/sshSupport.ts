@@ -3,10 +3,11 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as vscode from 'vscode';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release } from './fsSupport';
+import { buildShellCommand, extractCommandResult, READY_MARKER } from './sshShell';
 import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock } from './sshHostsStore';
 
 const logger = Logger.getInstance();
@@ -16,8 +17,29 @@ const CS_SSH_CONTROL_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_control
 
 const sessionKeyPath = (sessionId: string): string => path.join(CS_SSH_KEYS_DIR, `id_cshost-${sessionId}`);
 
+type CommandResult = { stdout: string; stderr: string; code: number };
+
+// The single command in flight on a shell; its streams accumulate until both sentinels arrive (see sshShell).
+type Pending = { rid: string; outBuf: string; errBuf: string; settled: boolean; resolve: (r: CommandResult) => void };
+
+// One persistent `ssh … bash -l` per host. `ready` resolves once the connect noise is drained; on Win32 (no
+// ControlMaster) this in-process channel is the only multiplexing, so authentication happens once here.
+type HostShell = {
+    proc: ChildProcess;
+    askpassDir: string;
+    ready: Promise<void>;
+    alive: boolean;
+    connecting: boolean;
+    dismissed: boolean;
+    current?: Pending;
+};
+
 export class SshManager {
     private static instance: SshManager | undefined;
+
+    // One persistent shell per host, plus a per-host serial queue so a single in-flight command owns the streams.
+    private readonly shells = new Map<string, HostShell>();
+    private readonly queues = new Map<string, Promise<unknown>>();
 
     private constructor(private readonly extensionUri: vscode.Uri) {
         if (!fs.existsSync(CS_SSH_CONTROL_DIR)) {
@@ -84,119 +106,181 @@ export class SshManager {
         ];
     }
 
-    // batch: background polls fail fast and silent (BatchMode) instead of raising a Duo box they can't answer and churning ports.
-    public runRemoteCommand(hostName: string, command: string, observer?: PromptObserver, opts?: { batch?: boolean }): Promise<{ stdout: string; stderr: string; code: number }> {
-        return new Promise((resolve, reject) => {
-            const batchArgs = opts?.batch ? ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10'] : [];
-            const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
-            const cancelFile = path.join(askpassDir, 'cancel');
-
-            // JS does the askpass IPC; a platform wrapper invokes it via VS Code's electron-as-node.
-            const askpassScript = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js');
-            const isWin = process.platform === 'win32';
-            const askpassWrapper = path.join(this.extensionUri.fsPath, 'scripts', isWin ? 'askpass.cmd' : 'askpass.sh');
-            if (!isWin) {
-                try { fs.chmodSync(askpassWrapper, 0o755); }
-                catch { /* best-effort - vsix should already have +x */ }
+    // Every remote command rides the host's one persistent shell, established on demand and reused until it drops.
+    // batch: a background poll won't open a new connection that would raise a Duo box it can't answer — it rides an
+    // existing shell or fails fast (caller retries). A user-driven (observer) call authenticates interactively.
+    public runRemoteCommand(hostName: string, command: string, observer?: PromptObserver, opts?: { batch?: boolean }): Promise<CommandResult> {
+        return this.enqueue(hostName, async () => {
+            let shell: HostShell;
+            try { shell = await this.ensureShell(hostName, !!opts?.batch, observer); }
+            catch (err) {
+                if (err instanceof PromptCancelledError) { throw err; }
+                return { stdout: '', stderr: errMsg(err), code: 255 };
             }
+            return this.runOnShell(shell, command);
+        });
+    }
 
-            // Detach stdin so SSH is forced to use SSH_ASKPASS
-            const sshProcess = spawn('ssh', [
-                ...this.buildControlMasterArgs(hostName),
-                ...batchArgs,
-                '-o', 'NumberOfPasswordPrompts=3',
-                hostName,
-                command,
-            ], {
-                env: {
-                    ...process.env,
-                    SSH_ASKPASS: askpassWrapper,
-                    SSH_ASKPASS_REQUIRE: 'force',
-                    CS_ASKPASS_DIR: askpassDir,
-                    CS_ASKPASS_JS: askpassScript,
-                    CS_NODE_BIN: process.execPath,
-                    DISPLAY: ':0',
-                },
-                stdio: ['ignore', 'pipe', 'pipe'],
+    public disposeAll(): void {
+        for (const shell of this.shells.values()) {
+            shell.alive = false; try { shell.proc.kill(); }
+            catch { /* already gone */ }
+        }
+        this.shells.clear();
+    }
+
+    public static disposeInstance(): void {
+        SshManager.instance?.disposeAll();
+    }
+
+    // Per-host serial queue: chain each command after the previous so one Pending owns the shell's streams at a time.
+    private enqueue<T>(hostName: string, fn: () => Promise<T>): Promise<T> {
+        const prev = this.queues.get(hostName) ?? Promise.resolve();
+        const next = prev.then(fn, fn);
+        this.queues.set(hostName, next.then(() => { }, () => { }));
+        return next;
+    }
+
+    private async ensureShell(hostName: string, batch: boolean, observer?: PromptObserver): Promise<HostShell> {
+        let shell = this.shells.get(hostName);
+        if (!shell || !shell.alive) {
+            shell = this.spawnShell(hostName, batch, observer);
+            this.shells.set(hostName, shell);
+        }
+        await shell.ready; // throws if this shell died during connect (auth failure / dismiss); caller maps it
+        return shell;
+    }
+
+    private runOnShell(shell: HostShell, command: string): Promise<CommandResult> {
+        return new Promise<CommandResult>((resolve) => {
+            const rid = crypto.randomBytes(8).toString('hex');
+            shell.current = { rid, outBuf: '', errBuf: '', settled: false, resolve };
+            shell.proc.stdin!.write(buildShellCommand(rid, command));
+        });
+    }
+
+    private spawnShell(hostName: string, batch: boolean, observer?: PromptObserver): HostShell {
+        const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        if (!batch) {
+            const isWin = process.platform === 'win32';
+            const wrapper = path.join(this.extensionUri.fsPath, 'scripts', isWin ? 'askpass.cmd' : 'askpass.sh');
+            if (!isWin) {
+                try { fs.chmodSync(wrapper, 0o755); }
+                catch { /* vsix ships +x */ }
+            }
+            Object.assign(env, {
+                SSH_ASKPASS: wrapper,
+                SSH_ASKPASS_REQUIRE: 'force',
+                CS_ASKPASS_DIR: askpassDir,
+                CS_ASKPASS_JS: path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js'),
+                CS_NODE_BIN: process.execPath,
+                DISPLAY: ':0',
             });
+        }
 
-            let stdoutData = '';
-            let stderrData = '';
-            let disposed = false;
-            let dismissed = false;
-            const handledPrompts = new Set<string>();
+        const connectArgs = batch
+            ? ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
+            : ['-o', 'NumberOfPasswordPrompts=3'];
 
-            sshProcess.stdout.on('data', (data: Buffer) => {
-                stdoutData += data.toString();
-            });
+        // `bash -l` gives the same PATH (SLURM binaries) a login shell has; the channel is held open and fed commands.
+        const proc = spawn('ssh', [
+            ...this.buildControlMasterArgs(hostName),
+            ...connectArgs,
+            '-o', 'ServerAliveInterval=15',
+            '-o', 'ServerAliveCountMax=3',
+            hostName,
+            'bash -l',
+        ], { env, stdio: ['pipe', 'pipe', 'pipe'] });
 
-            sshProcess.stderr.on('data', (data: Buffer) => {
-                stderrData += data.toString();
-            });
+        let readyResolve!: () => void;
+        let readyReject!: (e: Error) => void;
+        const shell: HostShell = {
+            proc, askpassDir, alive: true, connecting: true, dismissed: false,
+            ready: new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; }),
+        };
 
-            const pollInterval = setInterval(async () => {
-                if (disposed) {
-                    return;
-                }
+        const settle = (p: Pending): void => {
+            const result = extractCommandResult(p.rid, p.outBuf, p.errBuf);
+            if (result && !p.settled) { p.settled = true; p.resolve(result); }
+        };
 
+        let readyBuf = '';
+        proc.stdout!.on('data', (d: Buffer) => {
+            const s = d.toString();
+            if (shell.connecting) {
+                readyBuf += s; // drain profile/MOTD noise until the shell echoes its readiness marker
+                if (readyBuf.includes(READY_MARKER)) { shell.connecting = false; readyResolve(); }
+                return;
+            }
+            if (shell.current) { shell.current.outBuf += s; settle(shell.current); }
+        });
+        proc.stderr!.on('data', (d: Buffer) => {
+            if (!shell.connecting && shell.current) { shell.current.errBuf += d.toString(); settle(shell.current); }
+        });
+        proc.stdin!.on('error', () => { /* write races a dropped connection; the close handler settles the command */ });
+
+        proc.stdin!.write(`printf '\\n${READY_MARKER}\\n'\n`);
+
+        const poll = batch ? undefined : this.pollAskpass(shell, hostName, observer);
+        const stopPoll = (): void => { if (poll) { clearInterval(poll); } };
+        shell.ready.then(stopPoll, stopPoll); // authentication is one-shot at connect
+
+        const drop = (onConnect: () => Error): void => {
+            shell.alive = false;
+            stopPoll();
+            try { fs.rmSync(askpassDir, { recursive: true, force: true }); }
+            catch { /* best-effort */ }
+            if (this.shells.get(hostName) === shell) { this.shells.delete(hostName); }
+            if (shell.connecting) { shell.connecting = false; readyReject(onConnect()); }
+            if (shell.current && !shell.current.settled) {
+                shell.current.settled = true;
+                shell.current.resolve({ stdout: shell.current.outBuf, stderr: `${shell.current.errBuf}\nssh connection closed`, code: 255 });
+            }
+        };
+        proc.on('close', (code: number | null) => drop(() => shell.dismissed
+            ? new PromptCancelledError('Interrupted by user')
+            : new Error(`SSH connection to ${hostName} closed (exit ${code ?? 'null'})`)));
+        proc.on('error', (err: Error) => drop(() => err));
+
+        return shell;
+    }
+
+    private pollAskpass(shell: HostShell, hostName: string, observer?: PromptObserver): NodeJS.Timeout {
+        const handled = new Set<string>();
+        const cancelFile = path.join(shell.askpassDir, 'cancel');
+        return setInterval(async () => {
+            if (!shell.alive) { return; }
+            let files: string[];
+            try { files = fs.readdirSync(shell.askpassDir); }
+            catch { return; }
+            for (const file of files) {
+                if (!file.startsWith('prompt-') || handled.has(file)) { continue; }
+                handled.add(file);
                 try {
-                    const files = fs.readdirSync(askpassDir);
-                    for (const file of files) {
-                        if (!file.startsWith('prompt-') || handledPrompts.has(file)) {
-                            continue;
-                        }
-
-                        handledPrompts.add(file);
-
-                        const promptFilePath = path.join(askpassDir, file);
-                        const content = fs.readFileSync(promptFilePath, 'utf-8');
-                        const { id, prompt } = JSON.parse(content);
-                        const responseFile = path.join(askpassDir, `response-${id}`);
-
-                        observer?.('opened');
-                        const password = await vscode.window.showInputBox({
-                            title: `SSH Authentication — ${hostName}`,
-                            prompt: prompt.trim(),
-                            password: true,
-                            ignoreFocusOut: true,
-                        });
-
-                        if (password !== undefined) {
-                            fs.writeFileSync(responseFile, password, 'utf-8');
-                            observer?.('answered');
-                        }
-                        else {
-                            // Only callers that opted into prompt handling (passed an observer) treat a dismiss as a
-                            // cancellation; others get the plain non-zero exit from the killed ssh.
-                            dismissed = observer !== undefined;
-                            fs.writeFileSync(cancelFile, '', 'utf-8');
-                            sshProcess.kill();
-                        }
+                    const { id, prompt } = JSON.parse(fs.readFileSync(path.join(shell.askpassDir, file), 'utf-8'));
+                    observer?.('opened');
+                    const password = await vscode.window.showInputBox({
+                        title: `SSH Authentication — ${hostName}`,
+                        prompt: String(prompt).trim(),
+                        password: true,
+                        ignoreFocusOut: true,
+                    });
+                    if (password !== undefined) {
+                        fs.writeFileSync(path.join(shell.askpassDir, `response-${id}`), password, 'utf-8');
+                        observer?.('answered');
+                    }
+                    else {
+                        // Only callers that opted into prompt handling (an observer) treat a dismiss as cancellation;
+                        // others just get the non-zero exit from the killed ssh.
+                        shell.dismissed = observer !== undefined;
+                        fs.writeFileSync(cancelFile, '', 'utf-8');
+                        shell.proc.kill();
                     }
                 }
-                catch {
-                    // Ignore file access errors during polling
-                }
-            }, 200);
-
-            const cleanup = () => {
-                disposed = true;
-                clearInterval(pollInterval);
-                try { fs.rmSync(askpassDir, { recursive: true, force: true }); }
-                catch { /* best-effort temp cleanup */ }
-            };
-
-            sshProcess.on('close', (code: number | null) => {
-                cleanup();
-                if (dismissed) { reject(new PromptCancelledError('Interrupted by user')); }
-                else { resolve({ stdout: stdoutData, stderr: stderrData, code: code ?? 1 }); }
-            });
-
-            sshProcess.on('error', (err: Error) => {
-                cleanup();
-                reject(err);
-            });
-        });
+                catch { /* prompt-file read race — ignore, retry next tick */ }
+            }
+        }, 200);
     }
 
     private ensureSshInclude(targetPath: string): void {

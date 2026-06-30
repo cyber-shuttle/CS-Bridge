@@ -67,5 +67,6 @@ function currentWindowSessionId(): string | undefined {
 }
 
 export function deactivate() {
+    SshManager.disposeInstance();
     Logger.getInstance().dispose();
 }
