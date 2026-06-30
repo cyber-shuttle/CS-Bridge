@@ -84,7 +84,7 @@ export interface GresInfo {
 }
 
 export interface TunnelCredential {
-    provider: 'devtunnel' | 'frp';
+    provider: 'devtunnel';
     authToken: string;
     serverUrl?: string;
 }

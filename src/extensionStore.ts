@@ -7,8 +7,6 @@ import { SlurmSession, persistableConnectionInfo } from './models';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
-const LEGACY_STATUS: Record<string, SlurmSession['status']> = { cancelled: 'stopped', cancelling: 'stopping' };
-
 const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
@@ -20,7 +18,6 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
     try {
         sessions = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
         for (const s of sessions) {
-            s.status = LEGACY_STATUS[s.status as string] ?? s.status;
             // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
             if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
             // A prompt that outlived its window can't be answered anymore; surface it as interrupted (offers Retry).

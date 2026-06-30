@@ -13,7 +13,6 @@ const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
 const CS_SSH_KEYS_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_keys');
 const CS_SSH_CONTROL_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_control');
-const LEGACY_MANAGED_HOSTS_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_hosts');
 
 const sessionKeyPath = (sessionId: string): string => path.join(CS_SSH_KEYS_DIR, `id_cshost-${sessionId}`);
 
@@ -41,7 +40,6 @@ export class SshManager {
             fs.writeFileSync(CS_SSH_CONFIG_PATH, '', { mode: 0o600 });
         }
         SshManager.instance.ensureSshInclude(CS_SSH_CONFIG_PATH);
-        SshManager.instance.removeSshInclude(LEGACY_MANAGED_HOSTS_PATH);
         return SshManager.instance;
     }
 
@@ -169,7 +167,7 @@ export class SshManager {
                         }
                         else {
                             // Only callers that opted into prompt handling (passed an observer) treat a dismiss as a
-                            // cancellation; others keep the legacy non-zero exit from the killed ssh.
+                            // cancellation; others get the plain non-zero exit from the killed ssh.
                             dismissed = observer !== undefined;
                             fs.writeFileSync(cancelFile, '', 'utf-8');
                             sshProcess.kill();
@@ -222,20 +220,6 @@ export class SshManager {
         }
         catch (err) {
             logger.error(`[ssh] Failed to add Include to ~/.ssh/config: ${errMsg(err)}`);
-        }
-    }
-
-    private removeSshInclude(targetPath: string): void {
-        const sshConfigPath = path.join(os.homedir(), '.ssh', 'config');
-        const includeLine = `Include ${targetPath}`;
-        try {
-            if (!fs.existsSync(sshConfigPath)) { return; }
-            const content = fs.readFileSync(sshConfigPath, 'utf-8');
-            if (!content.includes(includeLine)) { return; }
-            fs.writeFileSync(sshConfigPath, content.split('\n').filter(line => line.trim() !== includeLine).join('\n'));
-        }
-        catch (err) {
-            logger.error(`[ssh] Failed to remove Include from ~/.ssh/config: ${errMsg(err)}`);
         }
     }
 }

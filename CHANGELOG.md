@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- The managed `~/.cybershuttle/ssh_hosts` host level — SSH hosts are now read directly from `~/.ssh/config` and the read-only system config (the legacy `Include` is cleaned up automatically).
+- The managed `~/.cybershuttle/ssh_hosts` host level — SSH hosts are now read directly from `~/.ssh/config` and the read-only system config.
 
 ## [0.0.2] - 2026-06-12
 

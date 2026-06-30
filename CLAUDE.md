@@ -136,8 +136,8 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   `fsSupport` cross-process lock; a `fs.watch` on the dir syncs state across windows. `persistableConnectionInfo`
   writes only the reattach refs (`sshTunnelId`/`sshPort`/`region`) — secrets and the ephemeral local port stay
   in-memory. `windowPids` is owned by the atomic `mutateWindowPids`; `liveAndCleanup` prunes dead pids and computes
-  `isCurrent`/`windowAlive`. On load, legacy statuses migrate (`cancelled`→`stopped`, `cancelling`→`stopping`) and
-  `connected`/`connecting` demote to `ready_to_connect` (the relay is gone after a reload; Step 2 re-runs).
+  `isCurrent`/`windowAlive`. On load, `connected`/`connecting` demote to `ready_to_connect` and `awaiting_input` to
+  `interrupted` (the relay/prompt are gone after a reload; Step 2 re-runs).
 
 - **Sidebar vs. remote (cshost) window.** `extension.ts` reads the workspace URI authority; in a
   `ssh-remote+cshost-<id>` window it passes that id as `SessionProvider._myId` (scoped, observe-only — no monitoring)
@@ -173,8 +173,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
 
 ## Unimplemented (do not document as features)
 
-- **FRP tunnel provider** — only `devtunnel` works end-to-end; there is no FRP code (the `'frp'` literal in the
-  `TunnelCredential` type is a vestige).
+- **FRP tunnel provider** — only `devtunnel` works end-to-end; there is no FRP code.
 - **Filesystem sync** (FUSE/mutagen/sshfs), the **Stats** view (skeleton), a **plain-SSH (non-SLURM) launch** path,
   and any admin/telemetry server — no code exists. See README Roadmap.
 
