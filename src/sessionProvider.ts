@@ -324,8 +324,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         catch (error) {
             this.logger.error(`Error establishing relay for session ${session.id}:`, error);
             await disposeTunnelClient(session.id);
-            // Step 1 still up (sshTunnelId persisted) -> relay-only failure, retry from ready_to_connect; else disconnected.
-            this.setStatus(session, session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'disconnected', `Failed to connect tunnel: ${errMsg(error)}`);
+            // Step 1 still up (sshTunnelId persisted) -> relay-only failure, retry from ready_to_connect; else unreachable.
+            this.setStatus(session, session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'unreachable', `Failed to connect tunnel: ${errMsg(error)}`);
             return false;
         }
         finally {

@@ -60,7 +60,7 @@ export function sessionActions(session: ViewSession): SessionAction[] {
             ? { kind: 'current', label: 'Current', icon: 'check' }
             : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' });
     }
-    else if (s === 'ready_to_connect' || s === 'disconnected' || s === 'unreachable') {
+    else if (s === 'ready_to_connect' || s === 'unreachable') {
         // For 'unreachable', Reconnect rebuilds the relay via the tunnel API → back to relay-live, off the login-node path.
         actions.push({ kind: 'connect', label: s === 'ready_to_connect' ? 'Connect' : 'Reconnect', icon: 'arrow-swap' });
     }

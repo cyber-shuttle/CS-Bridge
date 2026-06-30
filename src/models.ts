@@ -14,13 +14,18 @@ export interface SlurmSession extends Session {
 }
 
 // Lifecycle: not_started → submitting → queued → preparing (job + Step-1 sshd/tunnel) →
-// ready_to_connect → connecting → connected; disconnected on a dropped link; stopping → stopped/failed/completed.
-// An SSH auth prompt during launch shows as awaiting_input (reverts to submitting once answered); dismissing it → interrupted.
+// ready_to_connect → connecting → connected; unreachable on a dropped link or cluster outage; stopping → stopped/failed/completed.
+// Wall-time killed → stopped (restartable). An SSH auth prompt during launch shows as awaiting_input
+// (reverts to submitting once answered); dismissing it → interrupted.
 export interface Session {
     id: string;
     name: string;
     cluster: string;
-    status: 'connecting' | 'connected' | 'ready_to_connect' | 'preparing' | 'failed' | 'completed' | 'queued' | 'submitting' | 'stopped' | 'not_started' | 'stopping' | 'disconnected' | 'unreachable' | 'awaiting_input' | 'interrupted';
+    status:
+        | 'not_started' | 'submitting' | 'queued' | 'preparing'
+        | 'ready_to_connect' | 'connecting' | 'connected'
+        | 'stopping' | 'stopped' | 'completed' | 'failed'
+        | 'unreachable' | 'awaiting_input' | 'interrupted';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
