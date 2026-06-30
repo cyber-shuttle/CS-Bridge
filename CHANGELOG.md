@@ -4,6 +4,16 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.4] - 2026-06-30
+
+### Changed
+
+- **One persistent SSH connection per host** — every remote command (SLURM queries, linkspan install, `sbatch`) now rides a single SSH connection that is established on first use and reused until it drops, then lazily re-established. On macOS/Linux a `ControlMaster` socket is still layered in so multiple windows share one authentication.
+
+### Fixed
+
+- **Windows: an auth prompt on every SSH operation against 2FA hosts** — Windows OpenSSH has no `ControlMaster`, so each operation re-authenticated and raised a fresh Duo prompt. The persistent connection now authenticates **once** at connect and is reused for all subsequent operations until it actually drops (#60).
+
 ## [0.0.3] - 2026-06-25
 
 ### Added
