@@ -164,6 +164,9 @@ export async function connectSessionToTunnel(session: SlurmSession): Promise<num
     await disposeTunnelClient(session.id);
     const client = new TunnelRelayTunnelClient(mgmtClient);
     client.acceptLocalConnectionsForForwardedPorts = true;
+    // Surface relay link health: a stalled/reconnecting tunnel is otherwise invisible, and this tells contention from raw relay bandwidth.
+    client.connectionStatusChanged(e => logger.info(`Tunnel ${session.id}: relay ${e.previousStatus} → ${e.status}${e.disconnectError ? ` (${e.disconnectError.message})` : ''}`));
+    client.keepAliveFailed(e => logger.warn(`Tunnel ${session.id}: relay keep-alive missed ${e.count} consecutive probe(s)`));
     activeTunnelClients.set(session.id, client);
 
     let localPort: number;
@@ -171,6 +174,7 @@ export async function connectSessionToTunnel(session: SlurmSession): Promise<num
         await client.connect(tunnel, {
             enableRetry: true,
             enableReconnect: true,
+            keepAliveIntervalInSeconds: 15, // probe the upstream WebSocket so a half-open relay is detected and reconnected fast (default 0 = off)
         });
         // the sshd port is added after the host starts, so refresh before waiting for it
         try { await client.refreshPorts(); }
