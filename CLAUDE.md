@@ -4,9 +4,11 @@ VS Code extension for remote HPC development. From the sidebar you add an SSH ho
 create a **session** describing the resources you want, and start it. CS-Bridge submits an `sbatch` job that runs the
 **linkspan** agent on the allocated compute node, opens a **Microsoft Dev Tunnel** to it, forwards the compute-node
 SSH server to a local port **in-process**, writes a per-session `cshost-<id>` entry to `~/.cybershuttle/ssh_config`,
-and opens a `vscode-remote://ssh-remote+cshost-<id>/…` window. The OS-native `ssh` binary (with a CS-Bridge-managed
-ControlMaster pool) is the actual transport — CS-Bridge does not bundle, depend on, or call into Remote-SSH; it just
-emits the `ssh-remote+` URI for whatever URI handler is installed (typically `ms-vscode-remote.remote-ssh`).
+and opens a `vscode-remote://ssh-remote+cshost-<id>/…` window. The OS-native `ssh` binary is the actual transport —
+CS-Bridge does not bundle, depend on, or call into Remote-SSH; it just emits the `ssh-remote+` URI for whatever URI
+handler is installed (typically `ms-vscode-remote.remote-ssh`). For its *own* remote commands (SLURM queries, linkspan
+install, sbatch) CS-Bridge holds one persistent `ssh` login shell per host in-process and multiplexes every command
+over it (see SSH transport below).
 
 A session's lifecycle reads as: **created → started → connected → stopped → started again → removed.**
 There is no local-filesystem mounting today.
@@ -62,7 +64,8 @@ src/
   models.ts             # SlurmSession + status union, cluster/tunnel types, persistableConnectionInfo()
   logger.ts             # output-channel Logger singleton + errMsg() helper
   modules/                                 # capability layer; (V) = vscode-free & unit-testable, (C) = vscode-coupled
-    sshSupport.ts        # (C) SshManager: OS-ssh ControlMaster pool, askpass IPC, runRemoteCommand, per-session ssh_config + keys, ~/.ssh/config Include patch
+    sshSupport.ts        # (C) SshManager: one persistent OS-ssh login shell per host (askpass IPC, ControlMaster bonus on Unix), runRemoteCommand, per-session ssh_config + keys, ~/.ssh/config Include patch
+    sshShell.ts          # (V) pure shell protocol: buildShellCommand/extractCommandResult (marker-framed stdout/stderr/exit demux) + READY_MARKER
     tunnelSupport.ts     # (C) Dev Tunnels SDK: tunnel CRUD, remote sshd create + port forward, in-process relay client, MS auth
     sessionSupport.ts    # (C) lifecycle composition (prepareLaunch/launchSession/stopSession) + JobStatusMonitor
     slurmSupport.ts      # (V*) SLURM-over-SSH queries: getSlurmJobStatus/Output, getSlurmClusterInfo  (*imports Logger)
@@ -119,10 +122,15 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   applies `computeStatusTransition`. It owns poll-driven transitions; `SessionProvider` owns user-action transitions
   (`submitting`/`connecting`/`connected`/`stopping`) and all dialogs.
 
-- **SSH transport** (`sshSupport.ts`). `SshManager` (singleton) runs every remote command through the OS `ssh` binary
-  multiplexed over a ControlMaster socket (socket name = SHA-256 hash of the host, to stay under the 104-byte Unix
-  socket limit; multiplexing is skipped on Windows). Password/passphrase prompts go through the `SSH_ASKPASS` bridge
-  (`scripts/askpass.*`) which IPCs to `vscode.window.showInputBox`. Per-session it writes a `cshost-<id>` Host block to
+- **SSH transport** (`sshSupport.ts`). `SshManager` (singleton) holds **one persistent `ssh … bash -l` per host**,
+  established on demand and reused for every remote command (commands framed with a random per-call marker so
+  stdout/stderr/exit-code demux from the long-lived streams — pure logic in `sshShell.ts`). A per-host serial queue
+  keeps one command in flight at a time; on drop the next command lazily reconnects. This in-process multiplexing is
+  what makes Win32 work (no ControlMaster there); on Unix a ControlMaster socket (name = SHA-256 of the host, under the
+  104-byte limit) is *also* layered in so multiple windows share one authentication. Background polls run in `batch`
+  mode — they ride an existing shell or fail fast, never opening a connection that would raise a Duo prompt they can't
+  answer. Password/passphrase/2FA prompts go through the `SSH_ASKPASS` bridge (`scripts/askpass.*`) which IPCs to
+  `vscode.window.showInputBox`, once per connection at connect. Per-session it writes a `cshost-<id>` Host block to
   `~/.cybershuttle/ssh_config` (`addSshConfigEntry` / `removeSshConfigEntry`, block built by
   `sshHostsStore.buildSshConfigBlock` with the SSH-resilience options) and a 0600 key under `~/.cybershuttle/ssh_keys/`,
   and prepends an `Include ~/.cybershuttle/ssh_config` line to `~/.ssh/config` (`_ensureSshInclude`) so the aliases resolve.
@@ -166,7 +174,8 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
 
 - **linkspan** — runs on the compute node at `~/.cybershuttle/bin/linkspan`; `slurmLaunch.installLinkspan` deploys it
   via `curl -fsSL …/releases/latest/download/linkspan_Linux_<arch>.tar.gz | tar -xz` when missing/outdated.
-- **OpenSSH** (`ssh`) — system binary; every remote command goes through it (ControlMaster-multiplexed). Not bundled.
+- **OpenSSH** (`ssh`) — system binary; every remote command rides one persistent per-host login shell it spawns
+  (ControlMaster layered on as a cross-window bonus on Unix). Not bundled.
 - **`~/.cybershuttle/`** — `sessions.json`, `ssh_config` (cshost-* aliases, Include'd into `~/.ssh/config`),
   `ssh_keys/` (per-session 0600 keys), `ssh_control/` (hashed ControlMaster sockets); on the remote: `bin/linkspan`
   and `logs/linkspan-session-<jobid>.{out,err}` (tailed during connect to discover the server port).
