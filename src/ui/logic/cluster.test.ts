@@ -20,8 +20,8 @@ test('cpuOptions lists 1..cpuCount', () => {
 });
 
 test('memoryOptions caps GB steps at the partition memory, falls back when unknown', () => {
-    assert.deepEqual(memoryOptions(cpuPart), ['1 GB', '2 GB', '4 GB', '8 GB']); // 8192 MB → 8 GB
-    assert.deepEqual(memoryOptions(gpuPart), ['1 GB', '2 GB', '4 GB', '8 GB', '16 GB', '32 GB', '64 GB', '128 GB']); // 0 → fallback
+    assert.deepEqual(memoryOptions(cpuPart), ['2 GB', '4 GB', '8 GB']); // 8192 MB → 8 GB; 2 GB floor (1 GB OOMs the VS Code server)
+    assert.deepEqual(memoryOptions(gpuPart), ['2 GB', '4 GB', '8 GB', '16 GB', '32 GB', '64 GB', '128 GB']); // 0 → fallback
 });
 
 test('gpuOptions only yields counts/types on the gpu tab', () => {
