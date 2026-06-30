@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SlurmSession, ViewSession } from '@/models';
-import { wallMs, fmtTime, remainingMs, dotColor, sessionActions, statusDescriptor } from './session';
+import { wallMs, fmtTime, remainingMs, elapsedLabel, dotColor, sessionActions, statusDescriptor } from './session';
 
 test('wallMs parses HH:MM:SS to milliseconds', () => {
     assert.equal(wallMs('01:30:00'), 5_400_000);
@@ -13,6 +13,14 @@ test('fmtTime shows h+m above an hour, m+s below', () => {
     assert.equal(fmtTime(5_400_000), '1h 30m');
     assert.equal(fmtTime(45_000), '0m 45s');
     assert.equal(fmtTime(-10), '0m 0s'); // clamps negatives
+});
+
+test('elapsedLabel formats seconds-since, clamping a webview clock momentarily behind the timestamp to zero', () => {
+    assert.equal(elapsedLabel(1_000, 6_000), '5s');
+    assert.equal(elapsedLabel(1_000, 1_000), '0s');
+    assert.equal(elapsedLabel(1_000, 126_000), '2m 5s'); // 125s
+    assert.equal(elapsedLabel(1_000, 61_000), '1m 0s'); // exactly a minute
+    assert.equal(elapsedLabel(5_000, 4_700), '0s'); // now 300ms behind submittedAt → never "-1s"
 });
 
 test('remainingMs counts down from startedAt, else returns the full wall time', () => {

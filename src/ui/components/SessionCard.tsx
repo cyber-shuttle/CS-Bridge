@@ -2,7 +2,7 @@ import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
 import type { CSSProperties } from 'preact';
 import type { ViewSession } from '@/models';
-import { statusDescriptor, remainingMs, fmtTime, wallMs, type SessionAction } from '@/ui/logic/session';
+import { statusDescriptor, remainingMs, fmtTime, wallMs, elapsedLabel, type SessionAction } from '@/ui/logic/session';
 import { Row, Stack, Text, Card, ActionIcon, Button } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 
@@ -67,11 +67,8 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'connecting': return <Row style={statusStyle}>Connecting…</Row>;
         case 'submitting': return <Row style={statusStyle}>Submitting…</Row>;
         case 'awaiting_input': return <Row style={statusStyle}>Action needed — check the input box…</Row>;
-        case 'queued': {
-            const secs = session.submittedAt ? Math.floor((now - session.submittedAt) / 1000) : 0;
-            const elapsed = secs >= 60 ? ` (${Math.floor(secs / 60)}m ${secs % 60}s)` : ` (${secs}s)`;
-            return <Row style={statusStyle}>Queued{session.submittedAt ? elapsed : ''}</Row>;
-        }
+        case 'queued':
+            return <Row style={statusStyle}>Queued{session.submittedAt ? ` (${elapsedLabel(session.submittedAt, now)})` : ''}</Row>;
         case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
         case 'stopped': return <Row style={statusStyle}>{session.errorMessage ? `Stop failed: ${session.errorMessage}` : 'Stopped'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;

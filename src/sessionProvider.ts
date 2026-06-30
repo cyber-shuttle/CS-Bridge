@@ -7,7 +7,7 @@ import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
 import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, JobStatusMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
-import { isTerminal, isCloseable, isStoppable, isReattachable } from './modules/sessionMachine';
+import { isTerminal, isCloseable, isStoppable, isReattachable, isWallTimeExpired } from './modules/sessionMachine';
 
 function openSessionWindow(sessionId: string): void {
     const path = getSession(sessionId)?.workingDirectory ?? '';
@@ -62,7 +62,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         }
         if ((await getMicrosoftAccountInfo()).label === null) { return; } // don't force a sign-in popup at startup
         for (const s of getAllSessions()) {
-            if (isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id)) {
+            // Relaying an expired session would only flash "connecting…" then fail back; leave it for the monitor.
+            if (isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
                 void this.establishRelay(s);
             }
         }
@@ -314,6 +315,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             this.setStatus(session, 'connecting');
             await ensureRemoteSession(session); // idempotent; refreshes tunnel creds for reattach
             const localPort = await connectSessionToTunnel(session);
+            // These awaits can run tens of seconds against a dead node; if the monitor terminalized meanwhile, drop the relay rather than overwrite its verdict.
+            const fresh = getSession(session.id);
+            if (!fresh || isTerminal(fresh.status) || isWallTimeExpired(fresh, Date.now())) {
+                await disposeTunnelClient(session.id);
+                return false;
+            }
             const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
             if (!privateKey) { throw new Error('SSH private key not found for session'); }
             const hostAlias = addSshConfigEntry(session.id, localPort, privateKey);
@@ -341,6 +348,14 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private async connectSessionToTunnel(sessionId: string) {
         const session = this.requireSession(sessionId, 'connect tunnel', true);
         if (!session) { return; }
+        // Stale Connect/Switch on an expired session: stop it (the monitor terminal-guard untracks) instead of a doomed relay.
+        if (isWallTimeExpired(session, Date.now())) {
+            this.setStatus(session, 'stopped', '');
+            await disposeTunnelClient(session.id);
+            vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Restart it to run again.');
+            void this.pushState();
+            return;
+        }
         if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
             this.openWindowIfNone(session);
             void this.pushState();
