@@ -7,7 +7,7 @@ import { getSlurmJobOutput, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive, unreachableStatus } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
-import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials } from './tunnelSupport';
+import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, removeDevTunnel } from './tunnelSupport';
 import { checkLinkspanHealth } from './linkspanSupport';
 
 const logger = Logger.getInstance();
@@ -236,6 +236,9 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     let creds: TunnelCredential;
     try { creds = await getDevTunnelCredentials(); }
     catch (err) { throw new Error(`Failed to get tunnel credentials: ${errMsg(err)}`); }
+
+    // Fresh launch: drop the prior run's tunnel so its ports don't accumulate toward Microsoft's PortsPerTunnel (10) cap.
+    await removeDevTunnel(session);
 
     try { await ensureDevTunnel(session); }
     catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
