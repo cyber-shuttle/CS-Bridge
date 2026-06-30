@@ -25,14 +25,13 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 };
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
-    not_started: { name: 'circle-slash' },
+    not_started: { name: 'circle-outline' },
     submitting: { name: 'loading', spin: true },
     queued: { name: 'loading', spin: true },
     preparing: { name: 'loading', spin: true },
     ready_to_connect: { name: 'plug' },
     connecting: { name: 'loading', spin: true },
     connected: { name: 'vm-active' },
-    disconnected: { name: 'debug-disconnect' },
     unreachable: { name: 'warning' },
     completed: { name: 'pass' },
     failed: { name: 'error' },
@@ -64,7 +63,6 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'ready_to_connect':
         case 'connected': return <Row style={statusStyle}>{fmtTime(remainingMs(session, now))} left</Row>;
         case 'preparing': return <Row style={statusStyle}>Establishing secure tunnel…</Row>;
-        case 'disconnected': return <Row style={statusStyle}>{session.errorMessage ? `Disconnected: ${session.errorMessage}` : 'Disconnected'}</Row>;
         case 'unreachable': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Unreachable: ${session.errorMessage}` : 'Cluster unreachable — retrying…'}</Text></Row>;
         case 'connecting': return <Row style={statusStyle}>Connecting…</Row>;
         case 'submitting': return <Row style={statusStyle}>Submitting…</Row>;

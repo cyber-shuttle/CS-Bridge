@@ -44,7 +44,6 @@ test('sessionActions returns the right buttons per status', () => {
     assert.deepEqual(sessionActions(sess('failed')).map(a => a.kind), ['restart']);
     assert.deepEqual(sessionActions(sess('preparing')).map(a => a.kind), ['stop']);
     assert.deepEqual(sessionActions(sess('ready_to_connect')).map(a => a.kind), ['stop', 'connect']);
-    assert.deepEqual(sessionActions(sess('disconnected')).map(a => a.kind), ['stop', 'connect']);
     assert.deepEqual(sessionActions(sess('unreachable')).map(a => a.kind), ['stop', 'connect']);
     assert.equal(sessionActions(sess('unreachable'))[1].label, 'Reconnect'); // Connect rebuilds the relay → off the login node
     assert.deepEqual(sessionActions(sess('stopped')).map(a => a.kind), ['restart']);

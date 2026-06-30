@@ -34,7 +34,7 @@ test('status-category predicates classify each status correctly', () => {
 });
 
 test('unreachableStatus downgrades only monitorable-offline statuses; never a relay-live one', () => {
-    for (const s of ['submitting', 'queued', 'preparing', 'disconnected', 'unreachable'] as const) {
+    for (const s of ['submitting', 'queued', 'preparing', 'unreachable'] as const) {
         assert.equal(unreachableStatus(s), 'unreachable', `${s} should become unreachable`);
     }
     // Never downgrade a relay-live session for a monitoring-plane blip.
@@ -49,7 +49,6 @@ test('unreachableStatus downgrades only monitorable-offline statuses; never a re
 
 test('isReattachable is non-terminal AND has persisted refs', () => {
     assert.equal(isReattachable('ready_to_connect', true), true);
-    assert.equal(isReattachable('disconnected', true), true);
     assert.equal(isReattachable('unreachable', true), true);
     assert.equal(isReattachable('connected', true), true);
     assert.equal(isReattachable('ready_to_connect', false), false); // no refs → nothing to reattach to
@@ -68,19 +67,21 @@ test('RUNNING promotes a non-connect-phase session to preparing', () => {
     assert.deepEqual(computeStatusTransition('submitting', SlurmJobStatus.RUNNING), { next: 'preparing' });
 });
 
-test('RUNNING does NOT pull a connect-phase / disconnected session back to preparing', () => {
-    for (const s of ['preparing', 'ready_to_connect', 'connected', 'connecting', 'disconnected'] as const) {
+test('RUNNING does NOT pull a connect-phase session back to preparing', () => {
+    for (const s of ['preparing', 'ready_to_connect', 'connected', 'connecting'] as const) {
         assert.deepEqual(computeStatusTransition(s, SlurmJobStatus.RUNNING), {}, `should not transition from ${s}`);
     }
 });
 
 test('terminal SLURM states stop monitoring with the right status', () => {
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.COMPLETED), { next: 'completed', stopMonitoring: true });
+    // Wall-time (TIMEOUT) and cancellation both resolve to 'stopped' — the job is gone but the session is restartable.
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.CANCELLED), { next: 'stopped', stopMonitoring: true });
+    assert.deepEqual(computeStatusTransition('connected', SlurmJobStatus.TIMEOUT), { next: 'stopped', stopMonitoring: true });
 });
 
 test('failure states stop monitoring and carry an error message', () => {
-    for (const s of [SlurmJobStatus.FAILED, SlurmJobStatus.TIMEOUT, SlurmJobStatus.OUT_OF_MEMORY]) {
+    for (const s of [SlurmJobStatus.FAILED, SlurmJobStatus.OUT_OF_MEMORY]) {
         const t = computeStatusTransition('preparing', s);
         assert.equal(t.next, 'failed');
         assert.equal(t.stopMonitoring, true);
