@@ -5,7 +5,7 @@ import { updateSession } from '../extensionStore';
 import { SshManager } from './sshSupport';
 import { getSlurmJobOutput, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
-import { computeStatusTransition, isRelayLive, unreachableStatus } from './sessionMachine';
+import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, removeDevTunnel } from './tunnelSupport';
 import { checkLinkspanHealth } from './linkspanSupport';
@@ -14,6 +14,8 @@ const logger = Logger.getInstance();
 const POLLING_INTERVAL_MS = 5000;
 // Consecutive failed /health pings before we stop trusting the tunnel and cross-check the job over batch sacct.
 const HEALTH_GIVEUP = 6;
+// Lets an authoritative sacct verdict win first when reachable (it can lag ~HEALTH_GIVEUP polls in the relay-live path).
+const WALL_TIME_GRACE_MS = 30_000;
 
 class AsyncLock {
     private acquired = false;
@@ -100,6 +102,23 @@ export class JobStatusMonitor {
                         this.lock.release();
                         if (!stillTracked) {
                             logger.info(`Session ${session.name} is no longer tracked for monitoring. Skipping status update.`);
+                            continue;
+                        }
+
+                        // Without this a terminal-but-still-tracked session resurrects: computeStatusTransition('completed', RUNNING) → 'preparing'.
+                        if (isTerminal(session.status)) {
+                            void disposeTunnelClient(session.id);
+                            this.untrackSession(sessionId);
+                            continue;
+                        }
+
+                        // The job can't outlive its wall time, so stop it even when sacct is unreachable; skip an in-flight stop.
+                        if (session.status !== 'stopping' && isWallTimeExpired(session, Date.now() - WALL_TIME_GRACE_MS)) {
+                            session.status = 'stopped';
+                            session.errorMessage = '';
+                            updateSession(session);
+                            void disposeTunnelClient(session.id);
+                            this.untrackSession(sessionId);
                             continue;
                         }
 

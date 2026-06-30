@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeStatusTransition, isTerminal, isCloseable, isStoppable, isRelayLive, unreachableStatus, isReattachable } from './sessionMachine';
+import { computeStatusTransition, isTerminal, isCloseable, isStoppable, isRelayLive, unreachableStatus, isReattachable, isWallTimeExpired } from './sessionMachine';
 import { SlurmJobStatus } from '../models';
 
 test('status-category predicates classify each status correctly', () => {
@@ -55,6 +55,19 @@ test('isReattachable is non-terminal AND has persisted refs', () => {
     assert.equal(isReattachable('failed', true), false); // terminal
     assert.equal(isReattachable('completed', true), false);
     assert.equal(isReattachable('not_started', true), true); // non-terminal; refs-gate is the real guard
+});
+
+test('isWallTimeExpired: a started session past startedAt+wallTime is expired; otherwise not', () => {
+    // SLURM kills a job at its --time limit, so a passed deadline is authoritative even when sacct is unreachable.
+    const wall = '00:30:00'; // 1_800_000 ms
+    assert.equal(isWallTimeExpired({ wallTime: wall, startedAt: 1_000 }, 1_000 + 1_800_000 + 1), true);
+    assert.equal(isWallTimeExpired({ wallTime: wall, startedAt: 1_000 }, 1_000 + 1_800_000), true); // exactly at the deadline
+    assert.equal(isWallTimeExpired({ wallTime: wall, startedAt: 1_000 }, 1_000 + 1_799_000), false); // a second short
+    // Not yet running (no startedAt anchor): never expired — a pending/queued job has no deadline to enforce.
+    assert.equal(isWallTimeExpired({ wallTime: wall, startedAt: undefined }, 9_999_999_999), false);
+    // No/zero wall time configured: nothing to expire against.
+    assert.equal(isWallTimeExpired({ wallTime: '', startedAt: 1_000 }, 9_999_999_999), false);
+    assert.equal(isWallTimeExpired({ wallTime: '00:00:00', startedAt: 1_000 }, 9_999_999_999), false);
 });
 
 test('unreachable status climbs back to preparing on a successful RUNNING poll', () => {

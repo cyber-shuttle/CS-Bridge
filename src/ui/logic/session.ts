@@ -1,5 +1,7 @@
 import type { SlurmSession, ViewSession } from '@/models';
-import { isTerminal, isCloseable, isStoppable } from '@/modules/sessionMachine';
+import { isTerminal, isCloseable, isStoppable, wallMs } from '@/modules/sessionMachine';
+
+export { wallMs }; // shared with the monitor via the vscode-free sessionMachine
 
 type ActionKind = 'start' | 'restart' | 'stop' | 'switch' | 'connect' | 'current';
 
@@ -15,17 +17,19 @@ interface SessionDescriptor {
     actions: SessionAction[];
 }
 
-export function wallMs(wallTime: string): number {
-    const p = (wallTime || '').split(':').map(Number);
-    return ((p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0)) * 1000;
-}
-
 /** ms → "1h 30m" above an hour, "0m 45s" below. Clamps negatives to zero. */
 export function fmtTime(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+}
+
+/** Elapsed since `since` as "45s" / "2m 5s". Clamps at zero: the webview clock ticks once a second, so it can
+ *  momentarily trail a just-set timestamp — without the clamp that reads as a spurious "-1s". */
+export function elapsedLabel(since: number, now: number): string {
+    const secs = Math.max(0, Math.floor((now - since) / 1000));
+    return secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
 }
 
 /** Milliseconds left until the wall-clock deadline; the full wall time if not yet started. */
