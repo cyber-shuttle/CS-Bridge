@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
 import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
 import { WebviewProvider } from './webviewProvider';
@@ -96,7 +97,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 const host = data.host ?? '';
                 const runtime = this.hostRuntime.get(host);
                 const newSession: SlurmSession = {
-                    id: `session-${now}`,
+                    id: uuidv7(), // time-ordered, so sorting by id is creation order
                     name: `Session ${now}`,
                     cluster: host,
                     status: 'not_started',
@@ -290,7 +291,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 isRemote: this.remoteSessionId !== undefined,
                 sessions: this.scopedSessions()
                     .map(s => ({ ...s, ...liveAndCleanup(s) }))
-                    .sort((a, b) => b.submittedAt - a.submittedAt),
+                    // newest first
+                    .sort((a, b) => b.id.localeCompare(a.id)),
                 draftHost: this.draftHost,
                 editingId: this.editingId,
                 hostRuntime: Object.fromEntries(this.hostRuntime),

@@ -168,6 +168,7 @@
 		"posix-getopt": "^1.2.1",
 		"preact": "^10.29.2",
 		"shell-quote": "^1.8.4",
-		"ssh-config": "^5.1.0"
+		"ssh-config": "^5.1.0",
+		"uuidv7": "^1.2.1"
 	}
 }
