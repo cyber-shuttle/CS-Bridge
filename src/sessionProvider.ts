@@ -315,9 +315,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             this.setStatus(session, 'connecting');
             await ensureRemoteSession(session); // idempotent; refreshes tunnel creds for reattach
             const localPort = await connectSessionToTunnel(session);
-            // These awaits can run tens of seconds against a dead node; if the monitor terminalized meanwhile, drop the relay rather than overwrite its verdict.
-            const fresh = getSession(session.id);
-            if (!fresh || isTerminal(fresh.status) || isWallTimeExpired(fresh, Date.now())) {
+            // These awaits can run tens of seconds against a dead node; if the monitor terminalized meanwhile (session
+            // auto-refreshes in place), drop the relay rather than overwrite its verdict.
+            if (isTerminal(session.status) || isWallTimeExpired(session, Date.now())) {
                 await disposeTunnelClient(session.id);
                 return false;
             }

@@ -3,7 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { Logger } from './logger';
 import { lock, release, isPidAlive } from './modules/fsSupport';
-import { SlurmSession, persistableConnectionInfo } from './models';
+import { SlurmSession } from './models';
+import { mergeFromDisk, upsertRecord } from './modules/sessionStore';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
@@ -45,16 +46,16 @@ function readSessionsFromDisk(): SlurmSession[] {
     catch { return []; }
 }
 
-// Preserves windowPids from disk - mutateWindowPids owns that field via atomic field-level write.
-function saveToFile(): void {
+// Field-scoped read-modify-write under the cross-process lock: the mutator edits the fresh on-disk array, so a
+// write for one session never clobbers a sibling another window changed concurrently.
+function writeSessionsFile(mutate: (disk: SlurmSession[]) => void): void {
     lock(sessionsFilePath);
     try {
-        const onDisk = readSessionsFromDisk();
-        const sanitized = sessions.map(s => ({ ...s, connectionInfo: persistableConnectionInfo(s.connectionInfo), windowPids: onDisk.find(x => x.id === s.id)?.windowPids }));
-        fs.writeFileSync(sessionsFilePath, JSON.stringify(sanitized, null, 2), 'utf-8');
+        const disk = readSessionsFromDisk();
+        mutate(disk);
+        fs.writeFileSync(sessionsFilePath, JSON.stringify(disk, null, 2), 'utf-8');
     }
     catch (err) {
-        // Log only: in-memory state stays consistent and this runs on every transition, so a dialog would be spammy.
         logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
     }
     finally {
@@ -68,23 +69,23 @@ export function getAllSessions(): SlurmSession[] {
 
 export function addSession(session: SlurmSession) {
     sessions.push(session);
-    saveToFile();
+    writeSessionsFile(disk => upsertRecord(disk, session));
 }
 
-export function updateSession(updatedSession: SlurmSession) {
-    const index = sessions.findIndex(s => s.id === updatedSession.id);
-    if (index !== -1) {
-        sessions[index] = updatedSession;
-        saveToFile();
-    }
+export function updateSession(session: SlurmSession) {
+    const index = sessions.findIndex(s => s.id === session.id);
+    if (index === -1) { return; }
+    sessions[index] = session; // keep the array on the caller's current instance (merge-in-place keeps it fresh)
+    writeSessionsFile(disk => upsertRecord(disk, session));
 }
 
 export function removeSession(sessionId: string) {
     const index = sessions.findIndex(s => s.id === sessionId);
-    if (index !== -1) {
-        sessions.splice(index, 1);
-        saveToFile();
-    }
+    if (index !== -1) { sessions.splice(index, 1); }
+    writeSessionsFile((disk) => {
+        const j = disk.findIndex(s => s.id === sessionId);
+        if (j !== -1) { disk.splice(j, 1); }
+    });
 }
 
 export function getSession(sessionId: string): SlurmSession | undefined {
@@ -92,20 +93,13 @@ export function getSession(sessionId: string): SlurmSession | undefined {
 }
 
 export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
-    lock(sessionsFilePath);
-    try {
-        const onDisk = readSessionsFromDisk();
-        const diskIdx = onDisk.findIndex(s => s.id === sessionId);
-        if (diskIdx < 0) { return; }
-        const newPids = transform(onDisk[diskIdx].windowPids ?? []);
-        onDisk[diskIdx].windowPids = newPids;
-        const memSession = sessions.find(s => s.id === sessionId);
-        if (memSession) { memSession.windowPids = newPids; }
-        fs.writeFileSync(sessionsFilePath, JSON.stringify(onDisk, null, 2), 'utf-8');
-    }
-    finally {
-        release(sessionsFilePath);
-    }
+    writeSessionsFile((disk) => {
+        const d = disk.find(s => s.id === sessionId);
+        if (!d) { return; }
+        d.windowPids = transform(d.windowPids ?? []);
+        const mem = sessions.find(s => s.id === sessionId);
+        if (mem) { mem.windowPids = d.windowPids; }
+    });
 }
 
 export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAlive: boolean } {
@@ -115,18 +109,14 @@ export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAli
     return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
 }
 
-// Cross-window sync: reload in-mem state on another window's write; prefer this window's connectionInfo (secrets + live port) over disk refs.
+// Cross-window sync: another window wrote sessions.json. Merge disk state onto our existing instances in place
+// (never swap identity) so references held by the monitor / in-flight connect stay valid and auto-refresh.
 export function watchSessions(callback: () => void): fs.FSWatcher {
     return fs.watch(CS_HOME, (_, filename) => {
         if (filename !== 'sessions.json') { return; }
         lock(sessionsFilePath);
-        try {
-            const oldById = new Map(sessions.map(s => [s.id, s]));
-            sessions = readSessionsFromDisk().map(s => ({ ...s, connectionInfo: oldById.get(s.id)?.connectionInfo ?? s.connectionInfo }));
-        }
-        finally {
-            release(sessionsFilePath);
-        }
+        try { mergeFromDisk(sessions, readSessionsFromDisk()); }
+        finally { release(sessionsFilePath); }
         callback();
     });
 }
