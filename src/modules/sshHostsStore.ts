@@ -10,13 +10,14 @@ export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
     ? path.join(process.env.ALLUSERSPROFILE || process.env.PROGRAMDATA || 'C:\\ProgramData', 'ssh', 'ssh_config')
     : '/etc/ssh/ssh_config';
 
-// SSH client directives that let a session ride out last-mile/relay stalls instead of dropping.
+// SSH client directives that let a session ride out brief relay stalls, but give up within ~45s (15×3) on a
+// dead-ended link so a replacement ssh -D doesn't overlap the old one and re-saturate the relay.
 export const SSH_RESILIENCE_OPTIONS: ReadonlyArray<readonly [string, string]> = [
     ['ServerAliveInterval', '15'],
-    ['ServerAliveCountMax', '20'],
+    ['ServerAliveCountMax', '3'],
     ['TCPKeepAlive', 'yes'],
     ['Compression', 'no'],
-    ['ConnectTimeout', '30'],
+    ['ConnectTimeout', '10'],
     ['IPQoS', 'cs0'],
 ];
 
