@@ -21,6 +21,7 @@ interface Props {
     runtime: HostRuntime | undefined;
     initial?: HostFormInitial;
     saveId?: string; // when set, the form edits this session ("Save") instead of creating one ("Add")
+    validating?: boolean;
 }
 
 const WALL_OPTIONS: [string, string][] = [
@@ -39,7 +40,7 @@ function Select({ label, value, onChange, options, children }: { label: string; 
     );
 }
 
-function HostFormFields({ host, info, initial, saveId }: { host: string; info: SlurmClusterInfo; initial?: HostFormInitial; saveId?: string }) {
+function HostFormFields({ host, info, initial, saveId, validating }: { host: string; info: SlurmClusterInfo; initial?: HostFormInitial; saveId?: string; validating?: boolean }) {
     const tabs: ResourceTab[] = (['cpu', 'gpu'] as ResourceTab[]).filter(t => hasTab(info, t));
     const initialTab = initial?.tab ?? tabs[0] ?? 'cpu';
     const initialParts = partitionsForTab(info, initialTab);
@@ -126,12 +127,14 @@ function HostFormFields({ host, info, initial, saveId }: { host: string; info: S
                     )
                 : null}
             <Select label="Wall Time" value={wall} onChange={setWall} options={WALL_OPTIONS} />
-            <Button onClick={submit}>{saveId ? 'Save' : 'Add'}</Button>
+            <Button onClick={submit} disabled={validating}>
+                {validating ? <Row gap={4}><Spinner size={12} /> Validating…</Row> : (saveId ? 'Save' : 'Add')}
+            </Button>
         </Stack>
     );
 }
 
-export function HostForm({ host, runtime, initial, saveId }: Props) {
+export function HostForm({ host, runtime, initial, saveId, validating }: Props) {
     switch (runtime?.phase) {
         case 'error':
             return (
@@ -141,7 +144,7 @@ export function HostForm({ host, runtime, initial, saveId }: Props) {
                 </Stack>
             );
         case 'ready':
-            return <HostFormFields host={host} info={runtime.info} initial={initial} saveId={saveId} />;
+            return <HostFormFields host={host} info={runtime.info} initial={initial} saveId={saveId} validating={validating} />;
         default: // undefined | loading | awaiting — same spinner; the message says whether it needs you
             return <Row gap={6} pad="8px"><Spinner size={16} /> {runtime?.phase === 'awaiting' ? 'Action needed — check the input box…' : 'Fetching runtime details…'}</Row>;
     }

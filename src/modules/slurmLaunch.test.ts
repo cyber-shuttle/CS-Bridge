@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
+import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
 import { SlurmSession } from '../models';
 
 const noopLog = { info() {}, warn() {}, error() {} };
@@ -50,6 +50,14 @@ test('installLinkspan normalizes aarch64 and throws on a failed install', async 
     await assert.rejects(
         () => installLinkspan(session(), runner([{ match: 'uname', stdout: 'x86_64' }, { match: 'curl', code: 1, stderr: 'net' }]), noopLog),
         /Failed to install Linkspan on cluster cl: net/);
+});
+
+test('validateSlurmConfig resolves on exit 0 and throws the site filter error otherwise', async () => {
+    const s = session({ cpus: 2, memory: '2 GB', wallTime: '00:30:00', queue: 'skx-dev', allocation: 'acct1', gpuClass: '', gpuCount: 0 });
+    await validateSlurmConfig(s, runner([{ match: 'sbatch --test-only', stderr: 'sbatch: Job 1 to start at ...' }]), noopLog);
+    await assert.rejects(
+        () => validateSlurmConfig(s, runner([{ match: 'sbatch --test-only', code: 1, stderr: 'ERROR: Unknown project acct1' }]), noopLog),
+        /Cluster cl rejected the session configuration: ERROR: Unknown project acct1/);
 });
 
 test('submitJobToSlurm sets jobId + queued on success and throws on missing script / bad output', async () => {
