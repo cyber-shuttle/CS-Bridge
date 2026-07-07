@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { uuidv7 } from 'uuidv7';
 import { Logger } from './logger';
 import { lock, release, isPidAlive } from './modules/fsSupport';
 import { SlurmSession } from './models';
@@ -12,18 +13,24 @@ const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsFilePath: string = '';
 
+const isUuid = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
 export function initSessionStore(storagePath: string = CS_HOME): string {
     fs.mkdirSync(storagePath, { recursive: true });
     sessionsFilePath = path.join(storagePath, 'sessions.json');
     lock(sessionsFilePath);
     try {
         sessions = JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8'));
+        let idsMigrated = false;
         for (const s of sessions) {
             // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
             if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
             // A prompt that outlived its window can't be answered anymore; surface it as interrupted (offers Retry).
             if (s.status === 'awaiting_input') { s.status = 'interrupted'; }
+            if (!isUuid(s.id)) { s.id = uuidv7(); idsMigrated = true; }
         }
+        // Persist migrated ids now, in-lock: a changed id would otherwise duplicate on the next id-keyed upsert.
+        if (idsMigrated) { fs.writeFileSync(sessionsFilePath, JSON.stringify(sessions, null, 2), 'utf-8'); }
         logger.info(`Loaded ${sessions.length} session(s) from ${sessionsFilePath}`);
     }
     catch (err) {

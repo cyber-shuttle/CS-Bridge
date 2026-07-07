@@ -291,7 +291,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 isRemote: this.remoteSessionId !== undefined,
                 sessions: this.scopedSessions()
                     .map(s => ({ ...s, ...liveAndCleanup(s) }))
-                    // newest first
+                    // newest first (uuidv7 ids are time-ordered)
                     .sort((a, b) => b.id.localeCompare(a.id)),
                 draftHost: this.draftHost,
                 editingId: this.editingId,
