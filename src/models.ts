@@ -109,7 +109,7 @@ export enum SlurmJobStatus {
     UNKNOWN = 'unknown',
 }
 
-export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean };
+export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean };
 
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.
 export type HostRuntime =

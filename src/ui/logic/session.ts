@@ -3,7 +3,7 @@ import { isTerminal, isCloseable, isStoppable, wallMs } from '@/modules/sessionM
 
 export { wallMs }; // shared with the monitor via the vscode-free sessionMachine
 
-type ActionKind = 'start' | 'restart' | 'stop' | 'switch' | 'connect' | 'current';
+type ActionKind = 'start' | 'restart' | 'stop' | 'switch' | 'connect' | 'current' | 'opening';
 
 export interface SessionAction {
     kind: ActionKind;
@@ -60,9 +60,13 @@ export function sessionActions(session: ViewSession): SessionAction[] {
     const actions: SessionAction[] = [];
     if (isStoppable(s)) { actions.push(STOP); }
     if (s === 'connected') {
-        actions.push(session.isCurrent
-            ? { kind: 'current', label: 'Current', icon: 'check' }
-            : { kind: 'switch', label: session.windowAlive ? 'Switch' : 'Connect', icon: 'arrow-swap' });
+        if (session.isCurrent) { actions.push({ kind: 'current', label: 'Current', icon: 'check' }); }
+        else if (session.windowAlive) { actions.push({ kind: 'switch', label: 'Switch', icon: 'arrow-swap' }); }
+        else if (session.opening) { actions.push({ kind: 'opening', label: 'Opening…', icon: 'loading' }); }
+        else { actions.push({ kind: 'switch', label: 'Connect', icon: 'arrow-swap' }); }
+    }
+    else if (s === 'connecting') {
+        actions.push({ kind: 'opening', label: 'Connecting…', icon: 'loading' });
     }
     else if (s === 'ready_to_connect' || s === 'unreachable') {
         // For 'unreachable', Reconnect rebuilds the relay via the tunnel API → back to relay-live, off the login-node path.

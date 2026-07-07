@@ -29,7 +29,7 @@ test('remainingMs counts down from startedAt, else returns the full wall time', 
     assert.equal(remainingMs({ wallTime: '01:00:00', startedAt: undefined }, 999_999), 3_600_000);
 });
 
-function sess(status: SlurmSession['status'], extra: Partial<SlurmSession & { isCurrent: boolean; windowAlive: boolean }> = {}) {
+function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) {
     return { status, ...extra } as ViewSession;
 }
 
@@ -68,6 +68,10 @@ test('connected session: Current when this window, else Switch/Connect by window
     assert.equal(switchBtn.label, 'Switch');
     const connectBtn = sessionActions(sess('connected', { isCurrent: false, windowAlive: false }))[1];
     assert.equal(connectBtn.label, 'Connect');
+    const openingBtn = sessionActions(sess('connected', { isCurrent: false, windowAlive: false, opening: true }))[1];
+    assert.deepEqual([openingBtn.kind, openingBtn.label], ['opening', 'Opening…']);
+    const connectingBtn = sessionActions(sess('connecting'))[1];
+    assert.deepEqual([connectingBtn.kind, connectingBtn.label], ['opening', 'Connecting…']);
 });
 
 test('statusDescriptor reports closeability', () => {
