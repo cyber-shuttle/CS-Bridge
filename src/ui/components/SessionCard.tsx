@@ -3,7 +3,7 @@ import { useContext } from 'preact/hooks';
 import type { CSSProperties } from 'preact';
 import type { ViewSession } from '@/models';
 import { statusDescriptor, remainingMs, fmtTime, wallMs, elapsedLabel, type SessionAction } from '@/ui/logic/session';
-import { Row, Stack, Text, Card, ActionIcon, Button } from '@/ui/components/base';
+import { Row, Stack, Text, Card, ActionIcon, Button, Spinner } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 
 interface Props {
@@ -22,6 +22,7 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
     switch: 'connectTunnel',
     connect: 'connectTunnel',
     current: null,
+    opening: null,
 };
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
@@ -120,9 +121,9 @@ export function SessionCard({ session, readonly }: Props) {
                     {!readonly && actions.length ? (
                         // zoom shrinks the label and the vscode-button's fixed-size codicon together.
                         <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0, zoom: 0.85 }}>
-                            {actions.map(a => (
-                                <Button key={a.kind} icon={a.icon} disabled={a.kind === 'current' || undefined} onClick={() => act(a)}>{a.label}</Button>
-                            ))}
+                            {actions.map(a => a.kind === 'opening'
+                                ? <Button key={a.kind} disabled><Row gap={4}><Spinner size={11} /> {a.label}</Row></Button>
+                                : <Button key={a.kind} icon={a.icon} disabled={a.kind === 'current' || undefined} onClick={() => act(a)}>{a.label}</Button>)}
                         </Row>
                     ) : null}
                 </Row>

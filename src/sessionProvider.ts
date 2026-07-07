@@ -11,10 +11,11 @@ import { stopSession, JobStatusMonitor, launchSession, prepareLaunch } from './m
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { isTerminal, isCloseable, isStoppable, isReattachable, isWallTimeExpired } from './modules/sessionMachine';
 
-function openSessionWindow(sessionId: string): void {
+// forceNew=false relies on VS Code deduping by workspace identity: it focuses the window already holding this URI.
+function openSessionWindow(sessionId: string, forceNew: boolean): void {
     const path = getSession(sessionId)?.workingDirectory ?? '';
     const uri = vscode.Uri.parse(`vscode-remote://ssh-remote+cshost-${sessionId}${path}/`);
-    vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+    vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: forceNew });
 }
 
 export class SessionProvider extends WebviewProvider implements vscode.Disposable {
@@ -27,6 +28,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private previewSession: SlurmSession | null = null;
     private readonly shared: vscode.Disposable[] = [];
     private readonly connecting = new Set<string>();
+    private readonly opening = new Set<string>();
     private readonly monitor = new JobStatusMonitor();
     private sharedReady = false;
 
@@ -318,7 +320,11 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             const state: SessionsState = {
                 isRemote: this.remoteSessionId !== undefined,
                 sessions: this.scopedSessions()
-                    .map(s => ({ ...s, ...liveAndCleanup(s) }))
+                    .map((s) => {
+                        const live = liveAndCleanup(s);
+                        if (live.windowAlive) { this.opening.delete(s.id); }
+                        return { ...s, ...live, opening: this.opening.has(s.id) };
+                    })
                     // newest first (uuidv7 ids are time-ordered)
                     .sort((a, b) => b.id.localeCompare(a.id)),
                 draftHost: this.draftHost,
@@ -375,9 +381,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         }
     }
 
-    // Open a fresh cshost window only when none is live; a surviving one reconnects through the rewritten ssh_config.
-    private openWindowIfNone(session: SlurmSession): void {
-        if (!liveAndCleanup(session).windowAlive) { openSessionWindow(session.id); }
+    // 'opening' holds the card's spinner until the new window's extension registers a windowPid (60s fallback).
+    private openOrFocusWindow(session: SlurmSession): void {
+        if (liveAndCleanup(session).windowAlive) { return openSessionWindow(session.id, false); }
+        this.opening.add(session.id);
+        setTimeout(() => { if (this.opening.delete(session.id)) { void this.pushState(); } }, 60_000);
+        openSessionWindow(session.id, true);
     }
 
     private async connectSessionToTunnel(sessionId: string) {
@@ -392,11 +401,11 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             return;
         }
         if (session.status === 'connected' && session.connectionInfo?.sshTunnelForwardPort) {
-            this.openWindowIfNone(session);
+            this.openOrFocusWindow(session);
             void this.pushState();
             return;
         }
-        if (await this.establishRelay(session)) { this.openWindowIfNone(session); }
+        if (await this.establishRelay(session)) { this.openOrFocusWindow(session); }
         void this.pushState();
     }
 
