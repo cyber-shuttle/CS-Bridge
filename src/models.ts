@@ -125,6 +125,8 @@ export interface SessionsState {
     editingId: string | null;
     hostRuntime: Record<string, HostRuntime>;
     previewSession: SlurmSession | null;
+    validating: boolean;
+    alert: { title: string; message: string } | null;
 }
 
 export interface HostsState {

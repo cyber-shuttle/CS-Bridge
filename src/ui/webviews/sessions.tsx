@@ -7,9 +7,9 @@ import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { parseGpuClass } from '@/ui/logic/cluster';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
-function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId }: {
+function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId, validating }: {
     icon: string; muted?: boolean; host: string; runtime: HostRuntime | undefined;
-    onDismiss: () => void; initial?: HostFormInitial; saveId?: string;
+    onDismiss: () => void; initial?: HostFormInitial; saveId?: string; validating?: boolean;
 }) {
     return (
         <Card>
@@ -18,7 +18,7 @@ function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId }: 
                 <Text weight={600}>{host}</Text>
                 <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
             </Row>
-            <HostForm host={host} runtime={runtime} initial={initial} saveId={saveId} />
+            <HostForm host={host} runtime={runtime} initial={initial} saveId={saveId} validating={validating} />
         </Card>
     );
 }
@@ -55,6 +55,23 @@ function ScriptPreviewOverlay({ state }: { state: SessionsState }) {
     );
 }
 
+function AlertOverlay({ alert }: { alert: NonNullable<SessionsState['alert']> }) {
+    return (
+        <Row style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.4)', zIndex: 20, justifyContent: 'center' }}>
+            <Stack gap={8} pad="12px" style={{ flex: 1, margin: '12px', maxHeight: '85%', background: 'var(--vscode-editorWidget-background)', border: '1px solid var(--vscode-editorWidget-border)', borderRadius: '4px' }}>
+                <Row gap={6}>
+                    <Icon name="error" style={{ color: 'var(--vscode-errorForeground)' }} />
+                    <Text weight={600}>{alert.title}</Text>
+                </Row>
+                <Text block style={{ overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'var(--vscode-editor-font-family)', fontSize: '12px', background: 'var(--vscode-textCodeBlock-background)', padding: '8px', borderRadius: '4px' }}>{alert.message}</Text>
+                <Row gap={8} justify="flex-end">
+                    <Button onClick={() => post({ command: 'dismissAlert' })}>Dismiss</Button>
+                </Row>
+            </Stack>
+        </Row>
+    );
+}
+
 function SessionsView({ state }: { state: SessionsState }) {
     if (state.isRemote) {
         const session = state.sessions[0];
@@ -68,14 +85,15 @@ function SessionsView({ state }: { state: SessionsState }) {
     }
     return (
         <>
-            {state.draftHost ? <ConfigCard key={state.draftHost} icon="circle-outline" muted host={state.draftHost} runtime={state.hostRuntime[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} /> : null}
+            {state.draftHost ? <ConfigCard key={state.draftHost} icon="circle-outline" muted host={state.draftHost} runtime={state.hostRuntime[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} validating={state.validating} /> : null}
             {state.sessions.map(s => s.id === state.editingId
-                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} runtime={state.hostRuntime[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} />
+                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} runtime={state.hostRuntime[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} validating={state.validating} />
                 : <SessionCard key={s.id} session={s} />)}
             {!state.sessions.length && !state.draftHost
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
                 : null}
             <ScriptPreviewOverlay state={state} />
+            {state.alert ? <AlertOverlay alert={state.alert} /> : null}
         </>
     );
 }

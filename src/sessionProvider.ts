@@ -8,6 +8,7 @@ import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
 import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, JobStatusMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
+import { validateSlurmConfig } from './modules/slurmLaunch';
 import { isTerminal, isCloseable, isStoppable, isReattachable, isWallTimeExpired } from './modules/sessionMachine';
 
 function openSessionWindow(sessionId: string): void {
@@ -92,6 +93,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 this.previewSession = null;
                 void this.pushState();
                 break;
+            case 'dismissAlert':
+                this.alert = null;
+                void this.pushState();
+                break;
             case 'addSession': {
                 const now = Date.now();
                 const host = data.host ?? '';
@@ -108,9 +113,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     workingDirectory: runtime?.phase === 'ready' ? runtime.info.homeDir : undefined,
                     ...this.paramsFromData(data),
                 };
-                addSession(newSession);
-                this.draftHost = null;
-                void this.pushState();
+                void this.validateThenPersist(newSession, () => {
+                    addSession(newSession);
+                    this.draftHost = null;
+                });
                 break;
             }
             case 'editSession': {
@@ -131,11 +137,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             case 'saveSession': {
                 const s = this.requireSession(id, 'save', true);
                 if (!s) { break; }
-                Object.assign(s, this.paramsFromData(data));
-                s.batchScript = undefined; // params changed; the script is regenerated at launch
-                updateSession(s);
-                this.editingId = null;
-                void this.pushState();
+                // copy: a rejected edit must not touch the stored session
+                const updated = { ...s, ...this.paramsFromData(data), batchScript: undefined };
+                void this.validateThenPersist(updated, () => {
+                    updateSession(updated);
+                    this.editingId = null;
+                });
                 break;
             }
             case 'prepareLaunchSession':
@@ -237,6 +244,27 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         this.fetchClusterInfo(host);
     }
 
+    private validating = false;
+    private alert: SessionsState['alert'] = null;
+
+    private async validateThenPersist(session: SlurmSession, persist: () => void): Promise<void> {
+        if (this.validating) { return; }
+        this.validating = true;
+        void this.pushState();
+        try {
+            await validateSlurmConfig(session, SshManager.getInstance(), this.logger);
+            persist();
+        }
+        catch (err) {
+            this.logger.error('Session validation failed:', err);
+            this.alert = { title: 'Session validation failed', message: errMsg(err) };
+        }
+        finally {
+            this.validating = false;
+            void this.pushState();
+        }
+    }
+
     private paramsFromData(data: WebviewMessage): Pick<SlurmSession, 'queue' | 'wallTime' | 'gpuCount' | 'gpuClass' | 'cpus' | 'memory' | 'allocation'> {
         return {
             queue: data.queue || '',
@@ -297,6 +325,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 editingId: this.editingId,
                 hostRuntime: Object.fromEntries(this.hostRuntime),
                 previewSession: this.previewSession,
+                validating: this.validating,
+                alert: this.alert,
             };
             view.webview.postMessage({ command: 'state', state });
             this.autoCloseIfTerminal();

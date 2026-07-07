@@ -1,4 +1,5 @@
 import { SlurmSession } from '../models';
+import { buildSlurmScript } from './slurmParse';
 
 // RemoteRunner/LogSink are injected (SshManager and Logger satisfy them structurally) so the steps below
 // are unit-testable with fakes, free of SSH and vscode.
@@ -66,6 +67,14 @@ export async function installLinkspan(session: SlurmSession, run: RemoteRunner, 
     ensureSuccess(installResult, `Failed to install Linkspan on cluster ${session.cluster}`);
     log.info(`Linkspan installed successfully on cluster ${session.cluster}`);
     log.info('Installation output:', installResult.stdout);
+}
+
+// --test-only runs the site submit filter without queueing; the body never runs, so a blank credential is fine.
+export async function validateSlurmConfig(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
+    const scriptB64 = Buffer.from(buildSlurmScript(session, { provider: 'devtunnel', authToken: '' })).toString('base64');
+    const result = await run.runRemoteCommand(session.cluster, `echo '${scriptB64}' | base64 -d | sbatch --test-only`);
+    ensureSuccess(result, `Cluster ${session.cluster} rejected the session configuration`);
+    log.info(`Cluster ${session.cluster} validated the session configuration: ${(result.stderr || result.stdout).trim()}`);
 }
 
 export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
