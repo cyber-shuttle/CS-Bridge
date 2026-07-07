@@ -14,12 +14,15 @@ export async function checkLinkspanHealth(session: SlurmSession) {
         signal: AbortSignal.timeout(2000),
     });
 
-    if (resp.ok) {
-        logger.info(`Health check for session ${session.name} succeeded.`);
+    // The Dev Tunnels edge answers 200 with an HTML page once the host is gone, so require linkspan's {"status":"ok"} body.
+    const body = await resp.text();
+    let status: unknown;
+    try { status = (JSON.parse(body) as { status?: unknown }).status; }
+    catch { /* not JSON: the edge's interstitial page */ }
+
+    if (!resp.ok || status !== 'ok') {
+        logger.error(`Health check for session ${session.name} failed. API response: ${resp.status} ${resp.statusText} - ${body.slice(0, 200)}`);
+        throw new Error(`Health check failed with status ${resp.status}: ${body.slice(0, 200)}`);
     }
-    else {
-        const errorText = await resp.text();
-        logger.error(`Health check for session ${session.name} failed. API response: ${resp.status} ${resp.statusText} - ${errorText}`);
-        throw new Error(`Health check failed with status ${resp.status}: ${errorText}`);
-    }
+    logger.info(`Health check for session ${session.name} succeeded.`);
 }

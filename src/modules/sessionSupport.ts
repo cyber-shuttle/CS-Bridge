@@ -64,7 +64,7 @@ export class JobStatusMonitor {
         }
         catch (err) {
             // A dev-tunnel/linkspan API blip while bringing Step 1 up is transient, not job death — hold 'preparing' and retry.
-            logger.warn(`Could not prepare session ${session.name} for connect (will retry):`, err);
+            logger.warn(`Could not prepare session ${session.name} for connect (will retry): ${errMsg(err)}`);
             session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
             updateSession(session);
         }
@@ -132,7 +132,7 @@ export class JobStatusMonitor {
                                     if (!isRelayLive(session.status)) { return; } // left a live state (e.g. Stop) mid-ping
                                     // A /health blip is not job death: keep the relay (it self-heals via enableReconnect), count, cross-check below.
                                     this.healthFailedCounts.set(session.id, (this.healthFailedCounts.get(session.id) ?? 0) + 1);
-                                    logger.warn(`Health check failed for session ${session.name} (relay kept):`, err);
+                                    logger.warn(`Health check failed for session ${session.name} (relay kept): ${errMsg(err)}`);
                                     session.errorMessage = `Health check failed: ${errMsg(err)}`;
                                     updateSession(session);
                                 });
@@ -155,7 +155,7 @@ export class JobStatusMonitor {
                                 }
                             }
                             catch (err) {
-                                logger.warn(`Liveness cross-check unreachable for session ${session.name} (keeping relay):`, err);
+                                logger.warn(`Liveness cross-check unreachable for session ${session.name} (keeping relay): ${errMsg(err)}`);
                             }
                             continue;
                         }
@@ -183,7 +183,7 @@ export class JobStatusMonitor {
                                 }
                             }).catch((err) => {
                                 // .err not written yet, or login node briefly unreachable — not death; keep 'preparing' and retry.
-                                logger.warn(`Job output not yet available for session ${session.name} (will retry):`, err);
+                                logger.warn(`Job output not yet available for session ${session.name} (will retry): ${errMsg(err)}`);
                             });
 
                             if (session.status === 'preparing' && session.tunnelId
