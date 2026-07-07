@@ -7,6 +7,7 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
 
     const sbatchLines = [
         `#SBATCH --job-name=linkspan-session`,
+        `#SBATCH --nodes=1`,
         `#SBATCH --ntasks=1`,
         `#SBATCH --cpus-per-task=${session.cpus}`,
         `#SBATCH --mem=${memSlurm}`,

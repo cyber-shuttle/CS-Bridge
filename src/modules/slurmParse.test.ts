@@ -50,6 +50,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     } as SlurmSession;
     const cred = { provider: 'devtunnel', authToken: 'tok' } as TunnelCredential;
     const script = buildSlurmScript(session, cred);
+    assert.match(script, /^#SBATCH --nodes=1$/m);
     assert.match(script, /^#SBATCH --cpus-per-task=4$/m);
     assert.match(script, /^#SBATCH --mem=8GB$/m);
     assert.match(script, /^#SBATCH --partition=gpu$/m);
