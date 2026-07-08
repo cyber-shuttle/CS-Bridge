@@ -18,7 +18,7 @@ export class RemoteSessionController implements vscode.Disposable {
         this.item = vscode.window.createStatusBarItem('csbridge.walltime', vscode.StatusBarAlignment.Left, 1000);
         this.item.command = 'csbridge.sessionsView.focus';
         this.render();
-        this.item.show();
+        if (!this.torndown) { this.item.show(); }
 
         this.ticker = setInterval(() => this.render(), 1000);
         // Keeps the in-memory record fresh (merge happens in the watch callback) and catches terminal transitions.
@@ -51,6 +51,7 @@ export class RemoteSessionController implements vscode.Disposable {
     private async teardown(): Promise<void> {
         if (this.torndown) { return; }
         this.torndown = true;
+        clearInterval(this.ticker);
         this.item.hide();
         await enqueuePendingSummary(this.context, this.sessionId);
         // remote.close reuses this window with remoteAuthority:null → local reload. If unavailable, fall back to closing.

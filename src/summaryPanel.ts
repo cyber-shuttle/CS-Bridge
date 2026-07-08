@@ -30,9 +30,9 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
         'csbridge.summary', `Session Summary — ${session.name}`,
         vscode.ViewColumn.One, { enableScripts: true },
     );
-    panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
     const sub = panel.webview.onDidReceiveMessage((m: { command?: string }) => {
         if (m?.command === 'ready') { void panel.webview.postMessage({ command: 'state', state: session }); }
     });
+    panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
     panel.onDidDispose(() => sub.dispose());
 }
