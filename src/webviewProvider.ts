@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { Logger, errMsg } from './logger';
 import { WebviewMessage } from './models';
 
-type ViewKind = 'sessions' | 'hosts' | 'stats';
+type ViewKind = 'sessions' | 'hosts' | 'stats' | 'summary';
 
 // Base for the sidebar webview views: renders the view's bundle and routes messages to/from the webview.
 // Subclasses set viewKind and override the hooks below.
@@ -41,7 +41,7 @@ export abstract class WebviewProvider implements vscode.WebviewViewProvider {
 }
 
 // CSP-gated HTML shell that loads the view's esbuild bundle (out/<view>.js) + codicons.
-function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri, view: ViewKind): string {
+export function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri, view: ViewKind): string {
     const nonce = getNonce();
     const codiconCss = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', 'codicons', 'codicon.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', `${view}.js`));
