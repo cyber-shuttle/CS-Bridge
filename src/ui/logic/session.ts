@@ -38,6 +38,14 @@ export function remainingMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt'
     return session.startedAt ? session.startedAt + total - now : total;
 }
 
+/** Wall-clock run-time used: elapsed since start, capped at the wall-time limit (uncapped when the limit is 0/unlimited); 0 before the job starts. */
+export function elapsedRunMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt'>, now: number): number {
+    if (!session.startedAt) { return 0; }
+    const total = wallMs(session.wallTime);
+    const raw = now - session.startedAt;
+    return Math.max(0, total > 0 ? Math.min(raw, total) : raw);
+}
+
 const FAILED: SlurmSession['status'][] = ['failed', 'stopped'];
 const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting', 'awaiting_input', 'unreachable'];
 const LIVE: SlurmSession['status'][] = ['preparing', 'connected'];
