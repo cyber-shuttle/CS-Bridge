@@ -54,7 +54,8 @@ export async function activate(context: vscode.ExtensionContext) {
     if (id) {
         // Remote (cshost) window: own the wall-time status bar + graceful end for this session.
         context.subscriptions.push(new RemoteSessionController(context, id));
-    } else {
+    }
+    else {
         // Local window: if a just-ended remote window queued a summary, open it now.
         void consumePendingSummary(context, context.extensionUri);
     }

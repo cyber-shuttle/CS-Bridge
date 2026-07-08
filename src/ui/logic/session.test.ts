@@ -30,11 +30,11 @@ test('remainingMs counts down from startedAt, else returns the full wall time', 
 });
 
 test('elapsedRunMs is elapsed-since-start, capped at the wall limit, 0 before start', () => {
-    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 1_000 }, 601_000), 600_000);        // mid-run: 10 min in
-    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 1_000 }, 99_999_999), 3_600_000);   // past deadline → capped at the 1h limit
-    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: undefined }, 601_000), 0);           // not started yet
-    assert.equal(elapsedRunMs({ wallTime: '', startedAt: 1_000 }, 601_000), 600_000);                 // no limit → uncapped
-    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 5_000 }, 4_000), 0);                 // clamps a clock momentarily behind startedAt
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 1_000 }, 601_000), 600_000); // mid-run: 10 min in
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 1_000 }, 99_999_999), 3_600_000); // past deadline → capped at the 1h limit
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: undefined }, 601_000), 0); // not started yet
+    assert.equal(elapsedRunMs({ wallTime: '', startedAt: 1_000 }, 601_000), 600_000); // no limit → uncapped
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 5_000 }, 4_000), 0); // clamps a clock momentarily behind startedAt
 });
 
 function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) {
