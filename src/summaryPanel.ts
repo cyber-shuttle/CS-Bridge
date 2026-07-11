@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { getSession } from './extensionStore';
+import { getSessionRuns, onDidChangeRuns } from './sessionRunSupport';
 import { renderHtml } from './webviewProvider';
-import { SlurmSession } from './models';
+import { SlurmSession, SummaryState } from './models';
 
 const PENDING_KEY = 'csbridge.pendingSummaries';
 // ponytail: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.
@@ -24,15 +25,19 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
     if (session) { openSummaryPanel(extensionUri, session); }
 }
 
-// Opens the summary as an editor tab. The webview posts `ready` on mount (useWebviewState); we reply with the record it renders.
+const runMetricsFor = (session: SlurmSession) =>
+    getSessionRuns().find(r => r.cluster === session.cluster && r.jobId === session.jobId)?.metrics;
+
+// Opens the summary as an editor tab. Reply with the session + its utilization on `ready`, and re-post on run-history
+// changes so metrics that land just after open fill the card without a reopen.
 export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession): void {
     const panel = vscode.window.createWebviewPanel(
         'csbridge.summary', `Session ${session.name} summary: `,
         vscode.ViewColumn.One, { enableScripts: true },
     );
-    const sub = panel.webview.onDidReceiveMessage((m: { command?: string }) => {
-        if (m?.command === 'ready') { void panel.webview.postMessage({ command: 'state', state: session }); }
-    });
+    const post = () => { const state: SummaryState = { session, metrics: runMetricsFor(session) }; void panel.webview.postMessage({ command: 'state', state }); };
+    const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });
+    const histSub = onDidChangeRuns(() => post());
     panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
-    panel.onDidDispose(() => sub.dispose());
+    panel.onDidDispose(() => { msgSub.dispose(); histSub.dispose(); });
 }

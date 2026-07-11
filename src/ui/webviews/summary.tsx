@@ -2,8 +2,9 @@ import { render } from 'preact';
 import { useWebviewState } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Card, Icon } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
+import { RunMetricsView } from '@/ui/components/RunMetricsView';
 import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
-import type { SlurmSession } from '@/models';
+import type { SlurmSession, SummaryState } from '@/models';
 
 const STATUS_LABEL: Partial<Record<SlurmSession['status'], string>> = {
     stopped: 'Stopped', completed: 'Completed', failed: 'Failed',
@@ -28,7 +29,8 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 function Root() {
-    const s = useWebviewState<SlurmSession>();
+    const state = useWebviewState<SummaryState>();
+    const s = state?.session;
     if (!s) { return <Stack pad="12px"><Text muted>Loading summary…</Text></Stack>; }
 
     const gpus = s.gpuCount > 0 ? `${s.gpuCount} × ${s.gpuClass}` : 'None';
@@ -61,11 +63,11 @@ function Root() {
             </Card>
 
             <Card>
-                <Row gap={6}>
+                <Row gap={6} style={{ marginBottom: '4px' }}>
                     <Icon name="graph" />
                     <Text weight={600}>Utilization &amp; efficiency</Text>
                 </Row>
-                <Text muted>Detailed CPU/GPU utilization and efficiency over time will appear here once the metrics agent is available.</Text>
+                <RunMetricsView metrics={state?.metrics} />
             </Card>
         </Stack>
     );

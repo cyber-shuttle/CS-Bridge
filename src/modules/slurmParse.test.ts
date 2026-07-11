@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePartitionLine, buildSlurmScript, parseSacctStatus } from './slurmParse';
+import { parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil } from './slurmParse';
 import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
 
 test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
@@ -67,6 +67,36 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
     } as SlurmSession;
     const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
     assert.doesNotMatch(script, /--gres=/);
+});
+
+test('parseSacctUtil reads allocation fields, ignoring the empty usage on an -X-style row', () => {
+    // The exact -X row shape: MaxRSS and TRESUsageInTot are blank (step-level fields).
+    const out = '20041571|2|2G|3146|1573||billing=2000,cpu=2,mem=2G,node=1|';
+    assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2G', elapsedSec: 1573 });
+});
+
+test('parseSacctUtil derives CPU and memory efficiency from the batch step usage', () => {
+    const out = [
+        '20041571|2|2G|3146|1573||billing=2000,cpu=2,mem=2G,node=1|',
+        '20041571.batch|2|2G|3146|1573|1048576K||cpu=00:26:00,mem=1048576K',
+    ].join('\n');
+    const m = parseSacctUtil(out);
+    assert.equal(m.cores, 2);
+    assert.equal(m.elapsedSec, 1573);
+    assert.equal(m.maxRss, '1.0 GB'); // 1048576K = 1 GiB
+    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 1 GiB used / 2 GiB requested
+    assert.equal(Math.round(m.cpuEfficiencyPct!), 50); // 1560s used / 3146s allocated = 49.6%
+});
+
+test('parseSacctUtil handles per-CPU ReqMem suffix and a day-spanning CPU time', () => {
+    const out = '55|4|1Gc|345600|86400||cpu=4,mem=4G,node=1|\n55.batch|4|1Gc|345600|86400|2147483648||cpu=1-00:00:00,mem=2147483648';
+    const m = parseSacctUtil(out);
+    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 2 GiB used / (1 GiB × 4 cores) = 50%
+    assert.equal(Math.round(m.cpuEfficiencyPct!), 25); // 86400s used / 345600s allocated = 25%
+});
+
+test('parseSacctUtil returns an empty object for no output', () => {
+    assert.deepEqual(parseSacctUtil(''), {});
 });
 
 test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launching linkspan', () => {

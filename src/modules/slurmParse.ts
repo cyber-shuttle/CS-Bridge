@@ -1,4 +1,4 @@
-import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
+import { GresInfo, RunMetrics, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
 
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
@@ -71,6 +71,71 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     else if (state.includes('RUNNING')) { status = SlurmJobStatus.RUNNING; }
 
     return { status, elapsedSec };
+}
+
+const MEM_UNIT: Record<string, number> = { K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4, P: 1024 ** 5 };
+
+// SLURM memory token → bytes: "1234K" / "2.5G" / "512M" / "1048576" (bare = bytes). Empty/unparseable → undefined.
+function parseMemBytes(s: string | undefined): number | undefined {
+    const m = s?.trim().match(/^([\d.]+)\s*([KMGTP])?i?B?$/i);
+    if (!m || !Number.isFinite(Number(m[1]))) { return undefined; }
+    return Number(m[1]) * (m[2] ? MEM_UNIT[m[2].toUpperCase()] : 1);
+}
+
+// ReqMem total in bytes. Historic SLURM suffixes: 'c' = per-CPU (× cores), 'n' = per-node (assume one node).
+function parseReqMemBytes(reqMem: string | undefined, cores: number | undefined): number | undefined {
+    if (!reqMem) { return undefined; }
+    const base = parseMemBytes(reqMem.replace(/[cn]$/i, ''));
+    return base === undefined ? undefined : (/c$/i.test(reqMem) ? base * (cores ?? 1) : base);
+}
+
+// "[DD-]HH:MM:SS" / "MM:SS" / plain seconds → seconds.
+function parseCpuTime(s: string): number {
+    const [maybeDays, rest] = s.includes('-') ? s.split('-') : ['0', s];
+    const parts = rest.split(':').map(Number);
+    if (parts.some(n => !Number.isFinite(n))) { return 0; }
+    return Number(maybeDays) * 86400 + parts.reduce((sec, p) => sec * 60 + p, 0);
+}
+
+// Used CPU-seconds from a TRESUsageInTot string like "cpu=00:26:00,mem=1234K,…". undefined when no cpu= is present.
+function tresCpuSeconds(tres: string | undefined): number | undefined {
+    const m = tres?.match(/cpu=([^,]+)/);
+    return m ? parseCpuTime(m[1]) : undefined;
+}
+
+function humanBytes(bytes: number): string {
+    for (const [unit, size] of [['GB', MEM_UNIT.G], ['MB', MEM_UNIT.M], ['KB', MEM_UNIT.K]] as const) {
+        if (bytes >= size) { return `${(bytes / size).toFixed(1)} ${unit}`; }
+    }
+    return `${bytes} B`;
+}
+
+// Parse `sacct -P -n` rows (JobID|AllocCPUs|ReqMem|CPUTimeRAW|ElapsedRaw|MaxRSS|AllocTRES|TRESUsageInTot). Usage
+// (MaxRSS, used CPU) is on the step rows, blank on a -X row, so efficiency is derived only when it's present.
+export function parseSacctUtil(output: string): RunMetrics {
+    const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
+    if (rows.length === 0) { return {}; }
+    const alloc = rows.find(r => !r[0].includes('.')) ?? rows[0]; // main allocation record, not ".batch"/".extern"
+
+    const m: RunMetrics = {};
+    const cores = Number(alloc[1]);
+    if (Number.isFinite(cores) && cores > 0) { m.cores = cores; }
+    if (alloc[2]) { m.reqMem = alloc[2]; }
+    if (alloc[4] && Number.isFinite(Number(alloc[4]))) { m.elapsedSec = Number(alloc[4]); }
+
+    const rssValues = rows.map(r => parseMemBytes(r[5])).filter((n): n is number => n !== undefined);
+    const cpuValues = rows.map(r => tresCpuSeconds(r[7])).filter((n): n is number => n !== undefined);
+    const maxRssBytes = rssValues.length ? Math.max(...rssValues) : undefined;
+    const usedCpuSec = cpuValues.length ? Math.max(...cpuValues) : undefined;
+    const cpuTimeRaw = Number(alloc[3]);
+
+    if (maxRssBytes !== undefined) { m.maxRss = humanBytes(maxRssBytes); }
+    if (usedCpuSec !== undefined && Number.isFinite(cpuTimeRaw) && cpuTimeRaw > 0) {
+        m.cpuEfficiencyPct = usedCpuSec / cpuTimeRaw * 100;
+    }
+    const reqBytes = parseReqMemBytes(alloc[2], m.cores);
+    if (maxRssBytes !== undefined && reqBytes) { m.memEfficiencyPct = maxRssBytes / reqBytes * 100; }
+    return m;
 }
 
 // One `sinfo -h -o "%P|%c|%m|%G"` line: name|cpuCount|memory|gres

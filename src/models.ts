@@ -111,6 +111,38 @@ export enum SlurmJobStatus {
 
 export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean };
 
+// Resource utilization for one run, parsed from `sacct`. All optional: a job with no step-level accounting yields
+// allocation + elapsed but no efficiency percentages.
+export interface RunMetrics {
+    cores?: number;
+    reqMem?: string;
+    elapsedSec?: number;
+    maxRss?: string; // peak RSS, human-normalized (e.g. "1.2 GB")
+    cpuEfficiencyPct?: number; // used / allocated CPU-seconds
+    memEfficiencyPct?: number; // MaxRSS / ReqMem
+}
+
+// One finished run; outlives the session record so the history survives session removal.
+export interface SessionRunRecord {
+    sessionId: string;
+    sessionName: string;
+    cluster: string;
+    jobId: string;
+    submittedAt: number;
+    endedAt: number;
+    finalStatus: Session['status'];
+    metrics?: RunMetrics;
+}
+
+export interface StatsState {
+    runs: SessionRunRecord[];
+}
+
+export interface SummaryState {
+    session: SlurmSession;
+    metrics?: RunMetrics;
+}
+
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.
 export type HostRuntime =
     | { phase: 'loading' }
