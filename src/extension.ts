@@ -6,6 +6,8 @@ import { SessionProvider } from './sessionProvider';
 import { SshHostProvider } from './sshHostProvider';
 import { StatsProvider } from './statsProvider';
 import { SshManager } from './modules/sshSupport';
+import { RemoteSessionController } from './remoteSessionController';
+import { consumePendingSummary } from './summaryPanel';
 
 export async function activate(context: vscode.ExtensionContext) {
     const logger = Logger.getInstance();
@@ -48,6 +50,15 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     void sessionProvider.reattachLiveSessions();
+
+    if (id) {
+        // Remote (cshost) window: own the wall-time status bar + graceful end for this session.
+        context.subscriptions.push(new RemoteSessionController(context, id));
+    }
+    else {
+        // Local window: if a just-ended remote window queued a summary, open it now.
+        void consumePendingSummary(context, context.extensionUri);
+    }
 
     // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.
     const marker = vscode.Uri.joinPath(context.globalStorageUri, 'opened.marker');

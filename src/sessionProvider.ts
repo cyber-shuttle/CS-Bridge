@@ -302,15 +302,6 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         return this.remoteSessionId ? getAllSessions().filter(s => s.id === this.remoteSessionId) : getAllSessions();
     }
 
-    // closeWindow (not process.kill) so we don't tear down the SSH extension host mid-stop.
-    private autoCloseIfTerminal(): void {
-        if (!this.remoteSessionId) { return; }
-        const s = getSession(this.remoteSessionId);
-        if (s && isTerminal(s.status)) {
-            vscode.commands.executeCommand('workbench.action.closeWindow');
-        }
-    }
-
     protected async pushState(): Promise<void> {
         const view = this.view;
         if (!view) { return; }
@@ -335,7 +326,6 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 alert: this.alert,
             };
             view.webview.postMessage({ command: 'state', state });
-            this.autoCloseIfTerminal();
         }
         catch (error) {
             this.logger.error('Failed to push webview state:', error);

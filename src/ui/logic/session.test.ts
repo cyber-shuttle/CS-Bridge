@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SlurmSession, ViewSession } from '@/models';
-import { wallMs, fmtTime, remainingMs, elapsedLabel, dotColor, sessionActions, statusDescriptor } from './session';
+import { wallMs, fmtTime, remainingMs, elapsedRunMs, elapsedLabel, dotColor, sessionActions, statusDescriptor } from './session';
 
 test('wallMs parses HH:MM:SS to milliseconds', () => {
     assert.equal(wallMs('01:30:00'), 5_400_000);
@@ -27,6 +27,14 @@ test('remainingMs counts down from startedAt, else returns the full wall time', 
     assert.equal(remainingMs({ wallTime: '01:00:00', startedAt: 1_000 }, 1_000), 3_600_000);
     assert.equal(remainingMs({ wallTime: '01:00:00', startedAt: 1_000 }, 601_000), 3_000_000);
     assert.equal(remainingMs({ wallTime: '01:00:00', startedAt: undefined }, 999_999), 3_600_000);
+});
+
+test('elapsedRunMs is elapsed-since-start, capped at the wall limit, 0 before start', () => {
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 1_000 }, 601_000), 600_000); // mid-run: 10 min in
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 1_000 }, 99_999_999), 3_600_000); // past deadline → capped at the 1h limit
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: undefined }, 601_000), 0); // not started yet
+    assert.equal(elapsedRunMs({ wallTime: '', startedAt: 1_000 }, 601_000), 600_000); // no limit → uncapped
+    assert.equal(elapsedRunMs({ wallTime: '01:00:00', startedAt: 5_000 }, 4_000), 0); // clamps a clock momentarily behind startedAt
 });
 
 function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) {
