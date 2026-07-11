@@ -24,7 +24,6 @@ export class SessionMonitor {
     private tickers = new Map<string, ReturnType<typeof setInterval>>();
     private ticking = new Set<string>(); // per-session reentrancy guard: a slow tick must not overlap its next fire
     private healthFailedCounts = new Map<string, number>();
-    private remotePrepareInFlight = new Set<string>();
 
     // Every monitor line is "Session <name>: <msg>" — one format, one place.
     private log(session: SlurmSession, msg: string): void { logger.info(`Session ${session.name}: ${msg}`); }
@@ -61,15 +60,21 @@ export class SessionMonitor {
         }
     }
 
-    // Step 1: drive a running session to ready_to_connect (run-once guarded against the 5s poll).
+    // Shared running-session poll policy: probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall
+    // back to an authoritative sacct cross-check for job death. The probe differs by phase (bring-up vs relay ping).
+    private async pingOrCrossCheck(session: SlurmSession, probe: () => Promise<void>): Promise<void> {
+        if (this.healthFails(session.id) < HEALTH_GIVEUP) { await probe(); }
+        else { await this.crossCheckSlurmForDeath(session); }
+    }
+
+    // Step 1: drive a running session to ready_to_connect. Awaited under tick()'s reentrancy guard, so it can't overlap
+    // its own next fire — no separate in-flight guard needed. The caller has already checked status === 'preparing'.
     private async prepareRemote(session: SlurmSession): Promise<void> {
-        if (this.remotePrepareInFlight.has(session.id) || session.status !== 'preparing') { return; }
-        this.remotePrepareInFlight.add(session.id);
         try {
             await ensureDevTunnel(session); // re-mint tunnel id + Connect token (also valid after a reload dropped them)
             await checkLinkspanHealth(session); // poll the tunnel: throws until linkspan is up and answering /health
             await ensureRemoteSession(session); // linkspan is up — start the sshd and forward it (all over the tunnel)
-            if (session.status === 'preparing') {
+            if (session.status === 'preparing') { // may have left 'preparing' during the awaits (e.g. user hit Stop)
                 this.healthFailedCounts.delete(session.id); // Step 1 up — clear the prepare-failure tally
                 session.status = 'ready_to_connect';
                 session.errorMessage = ''; // clear any transient-retry warning now that Step 1 is up
@@ -84,9 +89,6 @@ export class SessionMonitor {
             this.warn(session, `linkspan unreachable (will retry): ${errMsg(err)}`);
             session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
             updateSession(session);
-        }
-        finally {
-            this.remotePrepareInFlight.delete(session.id);
         }
     }
 
@@ -117,16 +119,11 @@ export class SessionMonitor {
                 return;
             }
 
-            // Job is running but Step 1 isn't up yet: drive the bring-up over the tunnel (health-ping via prepareRemote),
-            // not Slurm. Cross-check sacct for job death only after HEALTH_GIVEUP prepare failures — mirrors the relay-live
-            // path below so a running session never SSH-polls the login node.
+            // Job is running but Step 1 isn't up yet: drive the bring-up over the tunnel (prepareRemote), not Slurm,
+            // cross-checking sacct for job death only after HEALTH_GIVEUP prepare failures — so a running session never
+            // SSH-polls the login node. prepareRemote advances to ready_to_connect once linkspan answers.
             if (session.status === 'preparing' && session.tunnelId && (session.connectionInfo?.apiPort ?? 0) > 0) {
-                if (this.healthFails(session.id) < HEALTH_GIVEUP) {
-                    void this.prepareRemote(session); // run-once guarded; advances to ready_to_connect when linkspan answers
-                }
-                else {
-                    await this.crossCheckSlurmForDeath(session); // Step 1 stuck after many tries — is the job still alive?
-                }
+                await this.pingOrCrossCheck(session, () => this.prepareRemote(session));
                 return;
             }
 
@@ -140,9 +137,9 @@ export class SessionMonitor {
                     if (session.errorMessage) { session.errorMessage = ''; updateSession(session); } // clear a stale health-blip
                     return;
                 }
-                if (this.healthFails(session.id) < HEALTH_GIVEUP) {
-                    // Awaited (not fire-and-forget) so the tick's reentrancy guard serializes pings — a slow one under
-                    // load can't stack behind the next 5s fire. The sshd list doubles as the ping and reports its state.
+                // The sshd list doubles as the ping and reports its state. Awaited (via pingOrCrossCheck, under the tick
+                // reentrancy guard) so a slow ping under load can't stack behind the next 5s fire.
+                await this.pingOrCrossCheck(session, async () => {
                     try {
                         const ssh = await getSshServerStatus(session);
                         this.healthFailedCounts.delete(session.id);
@@ -150,15 +147,13 @@ export class SessionMonitor {
                     }
                     catch (err) {
                         if (isRelayLive(session.status)) { // may have left a live state (e.g. Stop) mid-ping
-                            // A blip is not job death: count and cross-check below, but don't flag the card — the relay
-                            // path is flaky and self-recovers, so only an authoritative death (via crossCheck) should show.
+                            // A blip is not job death: count and cross-check, but don't flag the card — the relay path is
+                            // flaky and self-recovers, so only an authoritative death (via crossCheck) should show.
                             const attempt = this.bumpHealthFails(session.id);
                             this.warn(session, `healthcheck (tunnel): failed (attempt ${attempt}/${HEALTH_GIVEUP}): ${errMsg(err)}`);
                         }
                     }
-                    return;
-                }
-                await this.crossCheckSlurmForDeath(session); // tunnel ping gave up — is the job still alive?
+                });
                 return;
             }
 
@@ -210,7 +205,6 @@ export class SessionMonitor {
         this.sessions.delete(sessionId);
         this.ticking.delete(sessionId);
         this.healthFailedCounts.delete(sessionId);
-        this.remotePrepareInFlight.delete(sessionId);
         logger.info(`Session ${name}: monitoring stopped.`);
     }
 

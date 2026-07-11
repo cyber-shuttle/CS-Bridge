@@ -29,30 +29,44 @@ function buildTunnelManagementClient(): TunnelManagementHttpClient {
     );
 }
 
-export const devtunnelApiUrl = (ci: SessionConnectionInfo | undefined, path: string): string =>
+const devtunnelApiUrl = (ci: SessionConnectionInfo | undefined, path: string): string =>
     `https://${ci?.apiTunnelId}-${ci?.apiPort}.${ci?.region}.devtunnels.ms/api/v1${path}`;
 
-export const devtunnelAuthHeader = (ci: SessionConnectionInfo | undefined): string =>
+const devtunnelAuthHeader = (ci: SessionConnectionInfo | undefined): string =>
     `tunnel ${ci?.apiTunnelAccessToken}`;
+
+const devtunnelHeaders = (ci: SessionConnectionInfo | undefined) =>
+    ({ 'X-Tunnel-Authorization': devtunnelAuthHeader(ci), 'Content-Type': 'application/json' });
 
 // linkspan HTTP over the tunnel shares one cross-region relay + a 2-CPU linkspan with live SSH traffic and every
 // window's polls, so a healthy round-trip can take several seconds under load. Kept below the 5s poll interval.
 const LINKSPAN_HTTP_TIMEOUT_MS = 4500;
 
-// GET a linkspan endpoint over the tunnel, returning the raw body so callers can tell linkspan's JSON from the Dev
-// Tunnels edge's HTML interstitial (served once the host is gone).
-export async function devtunnelApiGet(ci: SessionConnectionInfo | undefined, path: string): Promise<{ ok: boolean; status: number; body: string }> {
+async function devtunnelApiGet(ci: SessionConnectionInfo | undefined, path: string): Promise<{ ok: boolean; status: number; body: string }> {
     const resp = await fetch(devtunnelApiUrl(ci, path), {
         method: 'GET',
-        headers: { 'X-Tunnel-Authorization': devtunnelAuthHeader(ci), 'Content-Type': 'application/json' },
+        headers: devtunnelHeaders(ci),
         signal: AbortSignal.timeout(LINKSPAN_HTTP_TIMEOUT_MS),
     });
     return { ok: resp.ok, status: resp.status, body: await resp.text() };
 }
 
+// GET a linkspan endpoint and require a valid JSON body — the Dev Tunnels edge answers 200 with an HTML interstitial
+// once the host is gone, so a parseable, shape-checked body (not resp.ok) is the real liveness signal.
+export async function requireLinkspanJson(session: SlurmSession, path: string, valid: (json: unknown) => boolean): Promise<unknown> {
+    const { ok, status, body } = await devtunnelApiGet(session.connectionInfo, path);
+    let json: unknown;
+    try { json = JSON.parse(body); }
+    catch { /* not JSON: the edge's interstitial page */ }
+    if (!ok || !valid(json)) {
+        throw new Error(`Session ${session.name}: linkspan unhealthy (status=${status}): ${body.slice(0, 200)}`);
+    }
+    return json;
+}
+
 // linkspan's sshd supervisor state (GET /vscode/sessions → SessionStatus[]). linkspan binds each sshd on ":<port>"
 // and ids it "s-<port>", so both fields encode the port, and the port is stable across supervisor restarts.
-export interface LinkspanSshStatus {
+interface LinkspanSshStatus {
     id: string;
     state: string; // "running" while the listener is up; "restarting"/"failed" otherwise
     active: boolean; // true only while accepting connections
@@ -63,17 +77,10 @@ export interface LinkspanSshStatus {
 
 // A JSON array is also our liveness signal (the edge serves HTML once the host is gone), so this doubles as the relay-live ping.
 export async function getSshServerStatus(session: SlurmSession): Promise<LinkspanSshStatus[]> {
-    const { ok, status, body } = await devtunnelApiGet(session.connectionInfo, '/vscode/sessions');
-    let parsed: unknown;
-    try { parsed = JSON.parse(body); }
-    catch { /* not JSON: the edge's interstitial page */ }
-    if (!ok || !Array.isArray(parsed)) {
-        throw new Error(`Session ${session.name}: linkspan unhealthy (status=${status}): ${body.slice(0, 200)}`);
-    }
-    return parsed as LinkspanSshStatus[];
+    return await requireLinkspanJson(session, '/vscode/sessions', Array.isArray) as LinkspanSshStatus[];
 }
 
-export const sshdPort = (s: LinkspanSshStatus): number =>
+const sshdPort = (s: LinkspanSshStatus): number =>
     Number(s.addr?.split(':').pop()) || Number(s.id.replace(/^s-/, '')) || 0;
 
 // One-line render of the sshd supervisor state for the health log.
