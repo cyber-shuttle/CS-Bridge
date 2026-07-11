@@ -30,7 +30,7 @@ function buildTunnelManagementClient(): TunnelManagementHttpClient {
     );
 }
 
-// --- linkspan calls over the devtunnel edge --- (linkspanSupport declares the endpoints; this is how we reach them)
+// --- linkspan calls over the devtunnel edge (linkspanSupport declares the endpoints) ---
 
 const devtunnelApiUrl = (ci: SessionConnectionInfo | undefined, path: string): string =>
     `https://${ci?.apiTunnelId}-${ci?.apiPort}.${ci?.region}.devtunnels.ms/api/v1${path}`;

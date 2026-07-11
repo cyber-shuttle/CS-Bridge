@@ -1,6 +1,5 @@
-// linkspan's HTTP API surface: endpoint paths, payload shapes, response validators, and pure helpers — and nothing
-// about transport. The caller reaches these over whatever the session's tunnel exposes (see tunnelSupport's devtunnel
-// client); this module only declares the API so linkspan calls have one source of truth.
+// linkspan's HTTP API surface — endpoint paths, payload shapes, the health validator, and pure helpers, with no
+// transport. Callers reach these over the session's tunnel (see tunnelSupport); this module just declares the API.
 
 export const LINKSPAN_HEALTH = '/health';
 export const LINKSPAN_SSH_SERVERS = '/vscode/sessions';
