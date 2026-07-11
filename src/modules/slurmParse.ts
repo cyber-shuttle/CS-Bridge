@@ -35,7 +35,8 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         ``,
         `# --- Run linkspan (pre-deployed via scp) ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
-        `"$LINKSPAN_BIN" --port 0 --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
+        // Bind the port csbridge pinned at launch so it knows the tunnel URL up front (no log/port discovery).
+        `"$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
     ];
 
     return scriptLines.join('\n');
@@ -61,7 +62,7 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     const elapsedSec = /^\d+$/.test(elapsedRaw.trim()) ? parseInt(elapsedRaw.trim(), 10) : 0;
 
     let status = SlurmJobStatus.UNKNOWN;
-    if (state.includes('PENDING')) { status = SlurmJobStatus.PENDING; }
+    if (state.includes('PENDING')) { status = SlurmJobStatus.QUEUED; } // sacct's wire token is PENDING; we call it QUEUED
     else if (state.includes('CANCELLED')) { status = SlurmJobStatus.CANCELLED; }
     else if (state.includes('FAILED')) { status = SlurmJobStatus.FAILED; }
     else if (state.includes('TIMEOUT')) { status = SlurmJobStatus.TIMEOUT; }

@@ -72,7 +72,7 @@ test('isWallTimeExpired: a started session past startedAt+wallTime is expired; o
 
 test('unreachable status climbs back to preparing on a successful RUNNING poll', () => {
     assert.deepEqual(computeStatusTransition('unreachable', SlurmJobStatus.RUNNING), { next: 'preparing' });
-    assert.deepEqual(computeStatusTransition('unreachable', SlurmJobStatus.PENDING), { next: 'queued' });
+    assert.deepEqual(computeStatusTransition('unreachable', SlurmJobStatus.QUEUED), { next: 'queued' });
 });
 
 test('RUNNING promotes a non-connect-phase session to preparing', () => {
@@ -102,8 +102,8 @@ test('failure states stop monitoring and carry an error message', () => {
     }
 });
 
-test('PENDING maps to queued without stopping monitoring', () => {
-    assert.deepEqual(computeStatusTransition('submitting', SlurmJobStatus.PENDING), { next: 'queued' });
+test('QUEUED maps to queued without stopping monitoring', () => {
+    assert.deepEqual(computeStatusTransition('submitting', SlurmJobStatus.QUEUED), { next: 'queued' });
 });
 
 test('UNKNOWN holds (never terminalizes) — a transient/unrecognized sacct state is not job death', () => {

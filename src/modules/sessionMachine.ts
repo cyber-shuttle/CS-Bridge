@@ -50,7 +50,7 @@ export function computeStatusTransition(current: Status, slurm: SlurmJobStatus):
         case SlurmJobStatus.FAILED:
         case SlurmJobStatus.OUT_OF_MEMORY:
             return { next: 'failed', stopMonitoring: true, error: `Job ended with status: ${slurm}` };
-        case SlurmJobStatus.PENDING:
+        case SlurmJobStatus.QUEUED:
             return { next: 'queued' };
         case SlurmJobStatus.TIMEOUT:
         case SlurmJobStatus.CANCELLED:
