@@ -78,7 +78,7 @@ export async function validateSlurmConfig(session: SlurmSession, run: RemoteRunn
 }
 
 export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
-    if (!session.batchScript) { throw new Error(`Batch script is missing for session ${session.name}`); }
+    if (!session.batchScript) { throw new Error(`Session ${session.name}: missing batch script`); }
 
     const scriptB64 = Buffer.from(session.batchScript).toString('base64');
     const submitCommand = `mkdir -p ~/.cybershuttle/logs && echo '${scriptB64}' | base64 -d | sbatch`;

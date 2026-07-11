@@ -10,7 +10,7 @@ test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => 
     assert.deepEqual(parseSacctStatus('TIMEOUT|0:0|None|3600'), { status: SlurmJobStatus.TIMEOUT, elapsedSec: 3600 });
     assert.equal(parseSacctStatus('OUT_OF_MEMORY|0:0|None|5').status, SlurmJobStatus.OUT_OF_MEMORY);
     assert.equal(parseSacctStatus('COMPLETED|0:0|None|5').status, SlurmJobStatus.COMPLETED);
-    assert.equal(parseSacctStatus('PENDING|0:0|Priority|0').status, SlurmJobStatus.PENDING);
+    assert.equal(parseSacctStatus('PENDING|0:0|Priority|0').status, SlurmJobStatus.QUEUED);
 });
 
 test('parseSacctStatus returns UNKNOWN for an unrecognized state and 0 elapsed for non-numeric', () => {
@@ -47,6 +47,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     const session = {
         cpus: 4, memory: '8 GB', wallTime: '02:00:00', queue: 'gpu', allocation: 'acct1',
         gpuClass: 'gpu:a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
+        connectionInfo: { apiPort: 25000, sshPort: 0, sshTunnelId: '', region: '' },
     } as SlurmSession;
     const cred = { provider: 'devtunnel', authToken: 'tok' } as TunnelCredential;
     const script = buildSlurmScript(session, cred);
@@ -55,7 +56,8 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     assert.match(script, /^#SBATCH --mem=8GB$/m);
     assert.match(script, /^#SBATCH --partition=gpu$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
-    assert.match(script, /--tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
+    // linkspan binds the port csbridge pinned at launch, so csbridge knows the tunnel URL without discovery.
+    assert.match(script, /--port 25000 --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
 });
 
 test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {

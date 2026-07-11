@@ -67,7 +67,7 @@ test('submitJobToSlurm sets jobId + queued on success and throws on missing scri
     assert.equal(s.status, 'queued');
     assert.ok((s.submittedAt ?? 0) > 0);
 
-    await assert.rejects(() => submitJobToSlurm(session(), runner([]), noopLog), /Batch script is missing/);
+    await assert.rejects(() => submitJobToSlurm(session(), runner([]), noopLog), /missing batch script/);
     await assert.rejects(
         () => submitJobToSlurm(session({ batchScript: 'x' }), runner([{ match: 'sbatch', stdout: 'no id here' }]), noopLog),
         /Failed to parse job ID/);

@@ -99,7 +99,7 @@ export interface AccountInfo {
 }
 
 export enum SlurmJobStatus {
-    PENDING = 'pending',
+    QUEUED = 'queued',
     RUNNING = 'running',
     COMPLETED = 'completed',
     FAILED = 'failed',
