@@ -1,28 +1,20 @@
 import { Logger } from '../logger';
 import { SlurmSession } from '../models';
-import { devtunnelApiUrl, devtunnelAuthHeader } from './tunnelSupport';
+import { devtunnelApiGet } from './tunnelSupport';
 
 const logger = Logger.getInstance();
 
 export async function checkLinkspanHealth(session: SlurmSession) {
-    const resp = await fetch(devtunnelApiUrl(session.connectionInfo, '/health'), {
-        method: 'GET',
-        headers: {
-            'X-Tunnel-Authorization': devtunnelAuthHeader(session.connectionInfo),
-            'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(2000),
-    });
+    const { ok, status: httpStatus, body } = await devtunnelApiGet(session.connectionInfo, '/health');
 
     // The Dev Tunnels edge answers 200 with an HTML page once the host is gone, so require linkspan's {"status":"ok"} body.
-    const body = await resp.text();
     let status: unknown;
     try { status = (JSON.parse(body) as { status?: unknown }).status; }
     catch { /* not JSON: the edge's interstitial page */ }
 
-    if (!resp.ok || status !== 'ok') {
-        logger.error(`Health check for session ${session.name} failed. API response: ${resp.status} ${resp.statusText} - ${body.slice(0, 200)}`);
-        throw new Error(`Health check failed with status ${resp.status}: ${body.slice(0, 200)}`);
+    // Caller logs the failure in context (preparing-poll vs relay-live ping); don't double-log here.
+    if (!ok || status !== 'ok') {
+        throw new Error(`Session ${session.name}: linkspan unhealthy (status=${httpStatus}): ${body.slice(0, 200)}`);
     }
-    logger.info(`Health check for session ${session.name} succeeded.`);
+    logger.info(`Session ${session.name}: linkspan healthy`);
 }

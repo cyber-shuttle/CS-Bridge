@@ -27,7 +27,7 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
 // Opens the summary as an editor tab. The webview posts `ready` on mount (useWebviewState); we reply with the record it renders.
 export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession): void {
     const panel = vscode.window.createWebviewPanel(
-        'csbridge.summary', `Session Summary — ${session.name}`,
+        'csbridge.summary', `Session ${session.name} summary: `,
         vscode.ViewColumn.One, { enableScripts: true },
     );
     const sub = panel.webview.onDidReceiveMessage((m: { command?: string }) => {
