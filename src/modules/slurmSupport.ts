@@ -3,18 +3,6 @@ import { Logger, errMsg } from '../logger';
 import { SshManager } from './sshSupport';
 import { parsePartitionLine, parseSacctStatus } from './slurmParse';
 
-export async function getSlurmJobOutput(slurmSession: SlurmSession): Promise<string> {
-    const sshManager = SshManager.getInstance();
-
-    const command = `cat ~/.cybershuttle/logs/linkspan-session-${slurmSession.jobId}.err`;
-    const commandResult = await sshManager.runRemoteCommand(slurmSession.cluster, command, undefined, { batch: true });
-    if (commandResult.code !== 0) {
-        throw new Error(`Failed to get job output. SSH command error: ${commandResult.stderr}`);
-    }
-
-    return commandResult.stdout.trim();
-}
-
 export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ status: SlurmJobStatus; elapsedSec: number }> {
     const command = `sacct -j ${slurmSession.jobId} -n -o State%20,ExitCode,Reason%40,ElapsedRaw --parsable2 2>/dev/null | head -1`;
     const commandResult = await SshManager.getInstance().runRemoteCommand(slurmSession.cluster, command, undefined, { batch: true });

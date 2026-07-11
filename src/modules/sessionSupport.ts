@@ -3,11 +3,11 @@ import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
 import { updateSession } from '../extensionStore';
 import { SshManager } from './sshSupport';
-import { getSlurmJobOutput, getSlurmJobStatus } from './slurmSupport';
+import { getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
-import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus } from './sessionMachine';
+import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus, StatusTransition } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
-import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, removeDevTunnel } from './tunnelSupport';
+import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getSshServerStatus, isTunnelClientConnected, removeDevTunnel, summarizeSshStatus } from './tunnelSupport';
 import { checkLinkspanHealth } from './linkspanSupport';
 
 const logger = Logger.getInstance();
@@ -17,237 +17,200 @@ const HEALTH_GIVEUP = 6;
 // Lets an authoritative sacct verdict win first when reachable (it can lag ~HEALTH_GIVEUP polls in the relay-live path).
 const WALL_TIME_GRACE_MS = 30_000;
 
-class AsyncLock {
-    private acquired = false;
-    private waitQueue: (() => void)[] = [];
+// One independent poll loop per active session, created on startMonitoring and torn down on stop. No shared lock:
+// each loop only mutates its own session and updateSession is synchronous, so per-session ticks never race.
+export class SessionMonitor {
+    private sessions = new Map<string, SlurmSession>();
+    private tickers = new Map<string, ReturnType<typeof setInterval>>();
+    private ticking = new Set<string>(); // per-session reentrancy guard: a slow tick must not overlap its next fire
+    private healthFailedCounts = new Map<string, number>();
 
-    async acquire(): Promise<void> {
-        if (!this.acquired) {
-            this.acquired = true;
-            return;
-        }
-        return new Promise<void>(resolve => this.waitQueue.push(resolve));
+    // Every monitor line is "Session <name>: <msg>" — one format, one place.
+    private log(session: SlurmSession, msg: string): void { logger.info(`Session ${session.name}: ${msg}`); }
+    private warn(session: SlurmSession, msg: string): void { logger.warn(`Session ${session.name}: ${msg}`); }
+
+    private healthFails(id: string): number { return this.healthFailedCounts.get(id) ?? 0; }
+    private bumpHealthFails(id: string): number { const n = this.healthFails(id) + 1; this.healthFailedCounts.set(id, n); return n; }
+
+    // Free the local relay and end this session's poll loop.
+    private endSession(sessionId: string): void {
+        void disposeTunnelClient(sessionId);
+        this.stopMonitoring(sessionId);
     }
 
-    release(): void {
-        const next = this.waitQueue.shift();
-        if (next) {
-            next();
+    // Apply a poll transition: persist a status change, tear down on an authoritative terminal verdict.
+    private applyTransition(session: SlurmSession, t: StatusTransition): void {
+        if (t.next) {
+            session.status = t.next;
+            if (t.error) { session.errorMessage = t.error; }
+            updateSession(session);
         }
-        else {
-            this.acquired = false;
-        }
-    }
-}
-
-export class JobStatusMonitor {
-    private monitoringSessions: Map<string, SlurmSession> = new Map();
-    private healthFailedCounts: Map<string, number> = new Map();
-    private lock = new AsyncLock();
-    private remotePrepareInFlight = new Set<string>();
-
-    constructor() {
-        this.monitorSessions();
+        if (t.stopMonitoring) { this.endSession(session.id); }
     }
 
-    // Step 1: drive a running session to ready_to_connect (run-once guarded against the 5s poll).
-    private async prepareRemote(session: SlurmSession): Promise<void> {
-        if (this.remotePrepareInFlight.has(session.id) || session.status !== 'preparing') { return; }
-        this.remotePrepareInFlight.add(session.id);
+    // Tunnel health gave up — only an authoritative sacct terminal state may tear the session down; else it's alive, resume pinging.
+    private async crossCheckSlurmForDeath(session: SlurmSession): Promise<void> {
         try {
-            await ensureRemoteSession(session);
-            if (session.status === 'preparing') {
+            const t = computeStatusTransition(session.status, (await getSlurmJobStatus(session)).status);
+            if (t.stopMonitoring) { this.applyTransition(session, t); }
+            else { this.healthFailedCounts.delete(session.id); }
+        }
+        catch (err) {
+            this.warn(session, `healthcheck (slurm): unreachable (will retry): ${errMsg(err)}`);
+        }
+    }
+
+    // Shared running-session poll policy: probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall
+    // back to an authoritative sacct cross-check for job death. The probe differs by phase (bring-up vs relay ping).
+    private async pingOrCrossCheck(session: SlurmSession, probe: () => Promise<void>): Promise<void> {
+        if (this.healthFails(session.id) < HEALTH_GIVEUP) { await probe(); }
+        else { await this.crossCheckSlurmForDeath(session); }
+    }
+
+    // Step 1: drive a running session to ready_to_connect. Awaited under tick()'s reentrancy guard, so it can't overlap
+    // its own next fire — no separate in-flight guard needed. The caller has already checked status === 'preparing'.
+    private async prepareRemote(session: SlurmSession): Promise<void> {
+        try {
+            await ensureDevTunnel(session); // re-mint tunnel id + Connect token (also valid after a reload dropped them)
+            await checkLinkspanHealth(session); // poll the tunnel: throws until linkspan is up and answering /health
+            await ensureRemoteSession(session); // linkspan is up — start the sshd and forward it (all over the tunnel)
+            if (session.status === 'preparing') { // may have left 'preparing' during the awaits (e.g. user hit Stop)
+                this.healthFailedCounts.delete(session.id); // Step 1 up — clear the prepare-failure tally
                 session.status = 'ready_to_connect';
-                logger.info(`Session ${session.name} is ready to connect (remote sshd + tunnel live).`);
+                session.errorMessage = ''; // clear any transient-retry warning now that Step 1 is up
+                this.log(session, 'linkspan is ready to connect.');
                 updateSession(session);
             }
         }
         catch (err) {
-            // A dev-tunnel/linkspan API blip while bringing Step 1 up is transient, not job death — hold 'preparing' and retry.
-            logger.warn(`Could not prepare session ${session.name} for connect (will retry): ${errMsg(err)}`);
+            // linkspan not up yet (health still failing) or a tunnel API blip — transient, not job death; hold 'preparing' and retry.
+            // Count it so the monitor cross-checks sacct for job death after HEALTH_GIVEUP tries.
+            this.bumpHealthFails(session.id);
+            this.warn(session, `linkspan unreachable (will retry): ${errMsg(err)}`);
             session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
             updateSession(session);
         }
-        finally {
-            this.remotePrepareInFlight.delete(session.id);
-        }
     }
 
-    private newConnectionInfo() {
-        return {
-            sshPort: 0,
-            apiTunnelId: '',
-            apiTunnelAccessToken: '',
-            apiPort: 0,
-            region: '',
-            sshPassword: '',
-            sshPrivateKey: '',
-            sshTunnelId: '',
-            sshTunnelForwardPort: 0,
-        };
-    }
+    // One independent poll for a single session. Reentrancy-guarded so a slow tick never overlaps its own next fire.
+    private async tick(sessionId: string): Promise<void> {
+        const session = this.sessions.get(sessionId);
+        if (!session || this.ticking.has(sessionId)) { return; }
+        this.ticking.add(sessionId);
+        try {
+            // Without this a terminal-but-still-tracked session resurrects: computeStatusTransition('completed', RUNNING) → 'preparing'.
+            if (isTerminal(session.status)) {
+                this.endSession(sessionId);
+                return;
+            }
 
-    private async monitorSessions() {
-        while (true) {
-            await this.lock.acquire();
-            const sessionsToCheck = [...this.monitoringSessions.entries()]; // snapshot, so the lock isn't held across async polling
-            this.lock.release();
+            // SLURM kills the job at its wall time. Stop the moment we pass it AND the link is already gone (relay
+            // dropped, or never connected) — that's the job dying on schedule, no reason to grind through health-ping
+            // retries first. Only hold the grace while the relay still looks connected: our clock may be ahead of the
+            // cluster's, or SLURM's KillWait may be running the job a little past --time, and we don't want to tear down
+            // a session that still works. Skip an in-flight stop.
+            const now = Date.now();
+            if (session.status !== 'stopping' && isWallTimeExpired(session, now)
+                && (!isTunnelClientConnected(session.id) || isWallTimeExpired(session, now - WALL_TIME_GRACE_MS))) {
+                session.status = 'stopped';
+                session.errorMessage = '';
+                updateSession(session);
+                this.endSession(sessionId);
+                return;
+            }
 
-            if (sessionsToCheck.length > 0) { logger.info(`Polling job status for ${sessionsToCheck.length} sessions...`); }
-            for (const [sessionId, session] of sessionsToCheck) {
-                if (session.jobId) {
-                    try {
-                        await this.lock.acquire();
-                        const stillTracked = this.monitoringSessions.has(sessionId);
-                        this.lock.release();
-                        if (!stillTracked) {
-                            logger.info(`Session ${session.name} is no longer tracked for monitoring. Skipping status update.`);
-                            continue;
-                        }
+            // Job is running but Step 1 isn't up yet: drive the bring-up over the tunnel (prepareRemote), not Slurm,
+            // cross-checking sacct for job death only after HEALTH_GIVEUP prepare failures — so a running session never
+            // SSH-polls the login node. prepareRemote advances to ready_to_connect once linkspan answers.
+            if (session.status === 'preparing' && session.tunnelId && (session.connectionInfo?.apiPort ?? 0) > 0) {
+                await this.pingOrCrossCheck(session, () => this.prepareRemote(session));
+                return;
+            }
 
-                        // Without this a terminal-but-still-tracked session resurrects: computeStatusTransition('completed', RUNNING) → 'preparing'.
-                        if (isTerminal(session.status)) {
-                            void disposeTunnelClient(session.id);
-                            this.untrackSession(sessionId);
-                            continue;
-                        }
-
-                        // The job can't outlive its wall time, so stop it even when sacct is unreachable; skip an in-flight stop.
-                        if (session.status !== 'stopping' && isWallTimeExpired(session, Date.now() - WALL_TIME_GRACE_MS)) {
-                            session.status = 'stopped';
-                            session.errorMessage = '';
-                            updateSession(session);
-                            void disposeTunnelClient(session.id);
-                            this.untrackSession(sessionId);
-                            continue;
-                        }
-
-                        if (session.connectionInfo?.apiTunnelId && isRelayLive(session.status)) {
-                            const healthFails = this.healthFailedCounts.get(session.id) ?? 0;
-                            if (healthFails < HEALTH_GIVEUP) {
-                                logger.info(`Session ${session.name} is in status ${session.status}, health-pinging the tunnel instead of polling Slurm.`);
-                                checkLinkspanHealth(session).then(() => {
-                                    this.healthFailedCounts.delete(session.id);
-                                }).catch((err) => {
-                                    if (!isRelayLive(session.status)) { return; } // left a live state (e.g. Stop) mid-ping
-                                    // A /health blip is not job death: keep the relay (it self-heals via enableReconnect), count, cross-check below.
-                                    this.healthFailedCounts.set(session.id, (this.healthFailedCounts.get(session.id) ?? 0) + 1);
-                                    logger.warn(`Health check failed for session ${session.name} (relay kept): ${errMsg(err)}`);
-                                    session.errorMessage = `Health check failed: ${errMsg(err)}`;
-                                    updateSession(session);
-                                });
-                                continue;
-                            }
-
-                            // /health gave up — only an authoritative sacct terminal state may now tear the relay down.
-                            try {
-                                const { status: slurmStatus } = await getSlurmJobStatus(session);
-                                const t = computeStatusTransition(session.status, slurmStatus);
-                                if (t.stopMonitoring) {
-                                    session.status = t.next!;
-                                    if (t.error) { session.errorMessage = t.error; }
-                                    updateSession(session);
-                                    void disposeTunnelClient(session.id);
-                                    this.untrackSession(sessionId);
-                                }
-                                else {
-                                    this.healthFailedCounts.delete(session.id); // alive — resume health-pinging
-                                }
-                            }
-                            catch (err) {
-                                logger.warn(`Liveness cross-check unreachable for session ${session.name} (keeping relay): ${errMsg(err)}`);
-                            }
-                            continue;
-                        }
-
-                        const { status: slurmStatus, elapsedSec } = await getSlurmJobStatus(session);
-                        logger.info(`Polled Slurm job status for session ${session.name}: ${slurmStatus}`);
-
-                        // Anchor the wall-time countdown to SLURM's reported elapsed run-time, not the poll time.
-                        if (slurmStatus === SlurmJobStatus.RUNNING && !session.startedAt) {
-                            session.startedAt = Date.now() - elapsedSec * 1000;
-                            updateSession(session);
-                        }
-
-                        if (slurmStatus === SlurmJobStatus.RUNNING && session.status === 'preparing') {
-                            getSlurmJobOutput(session).then((output) => {
-                                // id/region/token already came from ensureDevTunnel; only the server port is scraped here.
-                                const ci = session.connectionInfo ?? (session.connectionInfo = this.newConnectionInfo());
-                                for (const line of output.split('\n')) {
-                                    if (line.includes('listening on')) {
-                                        ci.apiPort = parseInt(line.split('listening on')[1].trim().split(':')[1]);
-                                        updateSession(session);
-                                        logger.info(`Session ${session.name}: linkspan server port = ${ci.apiPort}`);
-                                        break;
-                                    }
-                                }
-                            }).catch((err) => {
-                                // .err not written yet, or login node briefly unreachable — not death; keep 'preparing' and retry.
-                                logger.warn(`Job output not yet available for session ${session.name} (will retry): ${errMsg(err)}`);
-                            });
-
-                            if (session.status === 'preparing' && session.tunnelId
-                                && (session.connectionInfo?.apiPort ?? 0) > 0) {
-                                void this.prepareRemote(session);
-                            }
-                        }
-                        else {
-                            if (slurmStatus === SlurmJobStatus.UNKNOWN) { logger.warn(`Received unknown Slurm job status for session ${session.name}`); }
-                            const t = computeStatusTransition(session.status, slurmStatus);
-                            if (t.next) {
-                                session.status = t.next;
-                                if (t.error) { session.errorMessage = t.error; }
-                                updateSession(session);
-                            }
-                            if (t.stopMonitoring) {
-                                void disposeTunnelClient(session.id); // free any relay on authoritative job death
-                                this.untrackSession(sessionId);
-                            }
-                        }
-                    }
-                    catch (error) {
-                        // Login node unreachable (dead ControlMaster, Duo-needed under BatchMode) — not death; stay recoverable.
-                        logger.warn(`Cluster unreachable while polling session ${session.name} (will retry): ${errMsg(error)}`);
-                        const next = unreachableStatus(session.status);
-                        if (next && session.status !== next) {
-                            session.status = next;
-                            session.errorMessage = `Cluster unreachable: ${errMsg(error)}`;
-                            updateSession(session);
-                        }
-                    }
+            if (session.connectionInfo?.apiTunnelId && isRelayLive(session.status)) {
+                // A live relay client's keepAlive already watches the link — the authoritative liveness signal. Polling
+                // the same tunnel the SSH traffic rides just competes with it (the "aborted due to timeout" WARNs), so
+                // when our relay is connected, trust it and skip the ping. Only ping when no relay is up (waiting to
+                // connect, reconnecting, or another window owns it).
+                if (isTunnelClientConnected(session.id)) {
+                    this.healthFailedCounts.delete(session.id);
+                    if (session.errorMessage) { session.errorMessage = ''; updateSession(session); } // clear a stale health-blip
+                    return;
                 }
+                // The sshd list doubles as the ping and reports its state. Awaited (via pingOrCrossCheck, under the tick
+                // reentrancy guard) so a slow ping under load can't stack behind the next 5s fire.
+                await this.pingOrCrossCheck(session, async () => {
+                    try {
+                        const ssh = await getSshServerStatus(session);
+                        this.healthFailedCounts.delete(session.id);
+                        this.log(session, `healthcheck (tunnel): ${session.status} — sshd: ${summarizeSshStatus(ssh)}`);
+                    }
+                    catch (err) {
+                        if (isRelayLive(session.status)) { // may have left a live state (e.g. Stop) mid-ping
+                            // A blip is not job death: count and cross-check, but don't flag the card — the relay path is
+                            // flaky and self-recovers, so only an authoritative death (via crossCheck) should show.
+                            const attempt = this.bumpHealthFails(session.id);
+                            this.warn(session, `healthcheck (tunnel): failed (attempt ${attempt}/${HEALTH_GIVEUP}): ${errMsg(err)}`);
+                        }
+                    }
+                });
+                return;
             }
-            await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS));
+
+            const { status: slurmStatus, elapsedSec } = await getSlurmJobStatus(session);
+            this.log(session, `healthcheck (slurm): status=${slurmStatus}`);
+
+            // Anchor the wall-time countdown to SLURM's reported elapsed run-time, not the poll time.
+            if (slurmStatus === SlurmJobStatus.RUNNING && !session.startedAt) {
+                session.startedAt = Date.now() - elapsedSec * 1000;
+                updateSession(session);
+            }
+
+            // Pre-running states (submitting/queued/unreachable): sacct drives the transition. RUNNING promotes to
+            // 'preparing', after which the tunnel-side branch above takes over — no more login-node polls.
+            if (slurmStatus === SlurmJobStatus.UNKNOWN) { this.warn(session, `job status=${slurmStatus}`); }
+            this.applyTransition(session, computeStatusTransition(session.status, slurmStatus));
+        }
+        catch (error) {
+            // Login node unreachable (dead ControlMaster, Duo-needed under BatchMode) — not death; stay recoverable.
+            this.warn(session, `cluster unreachable (will retry): ${errMsg(error)}`);
+            const next = unreachableStatus(session.status);
+            if (next && session.status !== next) {
+                session.status = next;
+                session.errorMessage = `Cluster unreachable: ${errMsg(error)}`;
+                updateSession(session);
+            }
+        }
+        finally {
+            this.ticking.delete(sessionId);
         }
     }
 
-    private untrackSession(sessionId: string) {
-        this.monitoringSessions.delete(sessionId);
+    // Begin an independent poll loop for one active session (no-op if already running or not yet launched). The first
+    // poll fires now so status isn't stale for a full interval; the rest run on the interval.
+    public startMonitoring(session: SlurmSession): void {
+        if (!session.jobId || this.tickers.has(session.id)) { return; }
+        this.sessions.set(session.id, session);
+        this.tickers.set(session.id, setInterval(() => void this.tick(session.id), POLLING_INTERVAL_MS));
+        this.log(session, `monitoring started (JobId=${session.jobId})`);
+        void this.tick(session.id);
+    }
+
+    // Stop and forget one session's loop.
+    public stopMonitoring(sessionId: string): void {
+        const name = this.sessions.get(sessionId)?.name ?? sessionId;
+        const ticker = this.tickers.get(sessionId);
+        if (ticker) { clearInterval(ticker); }
+        this.tickers.delete(sessionId);
+        this.sessions.delete(sessionId);
+        this.ticking.delete(sessionId);
         this.healthFailedCounts.delete(sessionId);
-        logger.info(`Stopped monitoring Slurm job status for session ID ${sessionId}`);
+        logger.info(`Session ${name}: monitoring stopped.`);
     }
 
-    public async stopMonitoring(sessionId: string) {
-        await this.lock.acquire();
-        try {
-            this.untrackSession(sessionId);
-        }
-        finally {
-            this.lock.release();
-        }
-    }
-
-    public async startMonitoring(session: SlurmSession) {
-        await this.lock.acquire();
-        try {
-            if (session.jobId && !this.monitoringSessions.has(session.id)) {
-                this.monitoringSessions.set(session.id, session);
-                logger.info(`Started monitoring Slurm job status for session ${session.name} (Job ID: ${session.jobId})`);
-            }
-        }
-        finally {
-            this.lock.release();
-        }
+    // Tear down every loop (window close).
+    public dispose(): void {
+        for (const id of [...this.tickers.keys()]) { this.stopMonitoring(id); }
     }
 }
 
@@ -256,11 +219,19 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     try { creds = await getDevTunnelCredentials(); }
     catch (err) { throw new Error(`Failed to get tunnel credentials: ${errMsg(err)}`); }
 
+    // Fresh launch: drop the prior run's connection info (dead sshd port/keys, old apiPort/tunnel refs) BEFORE re-minting,
+    // so ensureDevTunnel builds clean state and the apiPort pinned below survives to the monitor. Must precede ensureDevTunnel.
+    session.connectionInfo = undefined;
+
     // Fresh launch: drop the prior run's tunnel so its ports don't accumulate toward Microsoft's PortsPerTunnel (10) cap.
     await removeDevTunnel(session);
 
     try { await ensureDevTunnel(session); }
     catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
+
+    // Pin linkspan's API port so csbridge knows the tunnel URL without scraping the log or enumerating ports.
+    // ponytail: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
+    session.connectionInfo!.apiPort = 20000 + Math.floor(Math.random() * 12000);
 
     try { session.batchScript = buildSlurmScript(session, creds); }
     catch (err) { throw new Error(`Failed to generate Slurm script: ${errMsg(err)}`); }
@@ -269,8 +240,8 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function launchSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>, observer: PromptObserver): Promise<void> {
-    logger.info(`Initiating launch for session: ${session.name}`);
+export async function launchSession(session: SlurmSession, monitor: SessionMonitor, progress: vscode.Progress<{ message?: string }>, observer: PromptObserver): Promise<void> {
+    logger.info(`Session ${session.name}: initiating launch`);
     const run: RemoteRunner = { runRemoteCommand: (host, command) => SshManager.getInstance().runRemoteCommand(host, command, observer) };
 
     progress.report({ message: 'Checking Slurm availability on cluster' });
@@ -288,30 +259,30 @@ export async function launchSession(session: SlurmSession, monitor: JobStatusMon
     monitor.startMonitoring(session);
 }
 
-export async function stopSession(session: SlurmSession, monitor: JobStatusMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
-    logger.info(`Stopping session: ${session.name}`);
+export async function stopSession(session: SlurmSession, monitor: SessionMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
+    logger.info(`Session ${session.name}: stopping`);
     progress.report({ message: 'Stopping session...' });
 
     let stopError: Error | undefined;
     try {
         if (session.jobId) {
             const stopCommand = `scancel ${session.jobId}`;
-            logger.info(`Sending stop command for session ${session.name}: ${stopCommand}`);
+            logger.info(`Session ${session.name}: sending stop command: ${stopCommand}`);
             const stopResult = await SshManager.getInstance().runRemoteCommand(session.cluster, stopCommand);
             if (stopResult.code !== 0) {
-                throw new Error(`Failed to send stop command for session ${session.name}: ${stopResult.stderr}`);
+                throw new Error(`Session ${session.name}: failed to send stop command: ${stopResult.stderr}`);
             }
-            logger.info(`Stop command sent successfully for session ${session.name}`);
+            logger.info(`Session ${session.name}: stop command sent successfully`);
         }
         else {
-            logger.warn(`Session ${session.name} has no job ID; marking stopped without scancel.`);
+            logger.warn(`Session ${session.name}: has no job ID; marking stopped without scancel.`);
         }
         session.status = 'stopped';
         updateSession(session);
     }
     catch (error) {
         stopError = error instanceof Error ? error : new Error(String(error));
-        logger.error(`Error while stopping session ${session.name}:`, error);
+        logger.error(`Session ${session.name}: Error while stopping:`, error);
         session.status = 'failed';
         session.errorMessage = stopError.message;
         updateSession(session);
@@ -323,7 +294,7 @@ export async function stopSession(session: SlurmSession, monitor: JobStatusMonit
             await disconnectSessionFromTunnel(session);
         }
         catch (err) {
-            logger.error(`Failed to disconnect session ${session.name} from tunnel: ${err}`);
+            logger.error(`Session ${session.name}: Failed to disconnect from tunnel: ${err}`);
         }
     }
     else {

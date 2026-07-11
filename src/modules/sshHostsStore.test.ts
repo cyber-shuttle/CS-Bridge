@@ -6,8 +6,15 @@ import {
     removeHostFromConfigText,
     mergeHostsByPriority,
     buildSshConfigBlock,
+    csHostAlias,
     SSH_RESILIENCE_OPTIONS,
 } from './sshHostsStore';
+
+test('csHostAlias is <cluster>-<last 6 of the session name>, tolerating a spaced legacy name', () => {
+    assert.equal(csHostAlias('delta', '1782444493119'), 'delta-493119');
+    assert.equal(csHostAlias('delta', 'Session 1782444493119'), 'delta-493119'); // trailing digits win
+    assert.equal(csHostAlias('delta', 'abc'), 'delta-abc'); // shorter than 6: whole name
+});
 
 test('parseHostsFromConfigText reads Host/HostName/User and skips wildcards', () => {
     const text = 'Host work\n  HostName work.example.com\n  User alice\n\nHost *\n  ServerAliveInterval 60\n';

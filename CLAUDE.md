@@ -57,7 +57,7 @@ README/LICENSE/CHANGELOG, and `package.json` — no `src/` or `node_modules/` (s
 src/
   extension.ts          # activate(): init SshManager + store, construct the 3 providers, register views + commands
   webviewProvider.ts    # abstract WebviewProvider base: webview wiring + nonce-CSP HTML shell (renderHtml) for all views
-  sessionProvider.ts    # Sessions view: message dispatch, view state, owns the JobStatusMonitor + user dialogs
+  sessionProvider.ts    # Sessions view: message dispatch, view state, owns the SessionMonitor + user dialogs
   sshHostProvider.ts    # SSH Hosts view: add/refresh/remove hosts; "Connect" hands off via csbridge.newSessionOnHost
   statsProvider.ts      # Stats view: skeleton ("Coming Soon")
   extensionStore.ts     # sessions.json persistence + file lock + cross-window fs.watch + windowPids + liveAndCleanup
@@ -67,7 +67,7 @@ src/
     sshSupport.ts        # (C) SshManager: one persistent OS-ssh login shell per host (askpass IPC, ControlMaster bonus on Unix), runRemoteCommand, per-session ssh_config + keys, ~/.ssh/config Include patch
     sshShell.ts          # (V) pure shell protocol: buildShellCommand/extractCommandResult (marker-framed stdout/stderr/exit demux) + READY_MARKER
     tunnelSupport.ts     # (C) Dev Tunnels SDK: tunnel CRUD, remote sshd create + port forward, in-process relay client, MS auth
-    sessionSupport.ts    # (C) lifecycle composition (prepareLaunch/launchSession/stopSession) + JobStatusMonitor
+    sessionSupport.ts    # (C) lifecycle composition (prepareLaunch/launchSession/stopSession) + SessionMonitor
     slurmSupport.ts      # (V*) SLURM-over-SSH queries: getSlurmJobStatus/Output, getSlurmClusterInfo  (*imports Logger)
     slurmLaunch.ts       # (V) launch steps over an injected RemoteRunner + LogSink (slurm check / linkspan install / sbatch submit)
     slurmParse.ts        # (V) pure SLURM text: buildSlurmScript, parseSacctStatus, parsePartitionLine
@@ -112,14 +112,19 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
 
 - **Two-step connect.** *Step 1 (remote)*: bring up the compute-node sshd and expose it on the Dev Tunnel —
   `ensureRemoteSession` → `createSshServer` (POST to the linkspan API) + `forwardSshPortOnTunnel`; driven once per
-  session by `JobStatusMonitor.prepareRemote` (→ `ready_to_connect`). *Step 2 (local)*:
+  session by `SessionMonitor.prepareRemote` (→ `ready_to_connect`). *Step 2 (local)*:
   `SessionProvider._connectSessionToTunnel` → `connectSessionToTunnel` opens an in-process `TunnelRelayTunnelClient`,
   writes the `cshost-<id>` ssh_config entry, and opens the `vscode-remote://ssh-remote+cshost-<id>/…` window (→ `connected`).
   On a Step-2 failure it falls back to `ready_to_connect` (Step 1 still live) or `disconnected`.
 
-- **JobStatusMonitor** (`sessionSupport.ts`) is provider-owned (one per window, `new JobStatusMonitor()`), polling every
-  5s. For relay-live sessions it pings `checkLinkspanHealth` instead of SLURM; otherwise it `getSlurmJobStatus` and
-  applies `computeStatusTransition`. It owns poll-driven transitions; `SessionProvider` owns user-action transitions
+- **SessionMonitor** (`sessionSupport.ts`) is provider-owned (one per window, `new SessionMonitor()`). It runs **one
+  independent `setInterval` poll loop per active session** — `startMonitoring(session)` spins one up (with an immediate
+  first poll), `stopMonitoring(id)` / `dispose()` tear them down; there is no central loop over all sessions. Each
+  loop is lock-free (a per-session reentrancy guard replaces the old shared `AsyncLock`, safe because every tick mutates
+  only its own session and `updateSession` is synchronous). Per tick, `tick()` picks the poll source by status: for
+  running phases (`preparing` + relay-live) it pings the tunnel (`checkLinkspanHealth` / `prepareRemote`), falling back
+  to a `getSlurmJobStatus` sacct cross-check only after `HEALTH_GIVEUP` failures; for pre-running states it polls sacct
+  and applies `computeStatusTransition`. It owns poll-driven transitions; `SessionProvider` owns user-action transitions
   (`submitting`/`connecting`/`connected`/`stopping`) and all dialogs.
 
 - **SSH transport** (`sshSupport.ts`). `SshManager` (singleton) holds **one persistent `ssh … bash -l` per host**,

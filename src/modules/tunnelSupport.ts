@@ -8,9 +8,11 @@ import {
 } from '@microsoft/dev-tunnels-management';
 import {
     TunnelRelayTunnelClient,
+    ConnectionStatus,
 } from '@microsoft/dev-tunnels-connections';
 import { TunnelAccessScopes } from '@microsoft/dev-tunnels-contracts';
-import { removeSshConfigEntry, writeSessionPrivateKey } from './sshSupport';
+import { getSessionPrivateKey, removeSshConfigEntry, writeSessionPrivateKey } from './sshSupport';
+import { csHostAlias } from './sshHostsStore';
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
 const DEV_TUNNELS_SCOPE = `${DEV_TUNNELS_APP_ID}/.default`;
@@ -27,11 +29,68 @@ function buildTunnelManagementClient(): TunnelManagementHttpClient {
     );
 }
 
-export const devtunnelApiUrl = (ci: SessionConnectionInfo | undefined, path: string): string =>
+const devtunnelApiUrl = (ci: SessionConnectionInfo | undefined, path: string): string =>
     `https://${ci?.apiTunnelId}-${ci?.apiPort}.${ci?.region}.devtunnels.ms/api/v1${path}`;
 
-export const devtunnelAuthHeader = (ci: SessionConnectionInfo | undefined): string =>
+const devtunnelAuthHeader = (ci: SessionConnectionInfo | undefined): string =>
     `tunnel ${ci?.apiTunnelAccessToken}`;
+
+const devtunnelHeaders = (ci: SessionConnectionInfo | undefined) =>
+    ({ 'X-Tunnel-Authorization': devtunnelAuthHeader(ci), 'Content-Type': 'application/json' });
+
+// linkspan HTTP over the tunnel shares one cross-region relay + a 2-CPU linkspan with live SSH traffic and every
+// window's polls, so a healthy round-trip can take several seconds under load. Kept below the 5s poll interval.
+const LINKSPAN_HTTP_TIMEOUT_MS = 4500;
+
+async function devtunnelApiGet(ci: SessionConnectionInfo | undefined, path: string): Promise<{ ok: boolean; status: number; body: string }> {
+    const resp = await fetch(devtunnelApiUrl(ci, path), {
+        method: 'GET',
+        headers: devtunnelHeaders(ci),
+        signal: AbortSignal.timeout(LINKSPAN_HTTP_TIMEOUT_MS),
+    });
+    return { ok: resp.ok, status: resp.status, body: await resp.text() };
+}
+
+// GET a linkspan endpoint and require a valid JSON body — the Dev Tunnels edge answers 200 with an HTML interstitial
+// once the host is gone, so a parseable, shape-checked body (not resp.ok) is the real liveness signal.
+export async function requireLinkspanJson(session: SlurmSession, path: string, valid: (json: unknown) => boolean): Promise<unknown> {
+    const { ok, status, body } = await devtunnelApiGet(session.connectionInfo, path);
+    let json: unknown;
+    try { json = JSON.parse(body); }
+    catch { /* not JSON: the edge's interstitial page */ }
+    if (!ok || !valid(json)) {
+        throw new Error(`Session ${session.name}: linkspan unhealthy (status=${status}): ${body.slice(0, 200)}`);
+    }
+    return json;
+}
+
+// linkspan's sshd supervisor state (GET /vscode/sessions → SessionStatus[]). linkspan binds each sshd on ":<port>"
+// and ids it "s-<port>", so both fields encode the port, and the port is stable across supervisor restarts.
+interface LinkspanSshStatus {
+    id: string;
+    state: string; // "running" while the listener is up; "restarting"/"failed" otherwise
+    active: boolean; // true only while accepting connections
+    addr?: string; // ":<port>" the sshd is bound to
+    restarts: number;
+    last_error?: string;
+}
+
+// A JSON array is also our liveness signal (the edge serves HTML once the host is gone), so this doubles as the relay-live ping.
+export async function getSshServerStatus(session: SlurmSession): Promise<LinkspanSshStatus[]> {
+    return await requireLinkspanJson(session, '/vscode/sessions', Array.isArray) as LinkspanSshStatus[];
+}
+
+const sshdPort = (s: LinkspanSshStatus): number =>
+    Number(s.addr?.split(':').pop()) || Number(s.id.replace(/^s-/, '')) || 0;
+
+// One-line render of the sshd supervisor state for the health log.
+export function summarizeSshStatus(list: LinkspanSshStatus[]): string {
+    if (!list.length) { return 'no sshd'; }
+    return list.map(s =>
+        `${s.state}${s.active ? '' : '/inactive'}${s.addr ? ` @${s.addr}` : ''}`
+        + `${s.restarts ? ` restarts=${s.restarts}` : ''}${s.last_error ? ` err="${s.last_error}"` : ''}`,
+    ).join(', ');
+}
 
 type LiveConnectionInfo = SessionConnectionInfo & { apiTunnelId: string; apiPort: number; apiTunnelAccessToken: string };
 
@@ -120,20 +179,44 @@ async function forwardSshPortOnTunnel(session: SlurmSession): Promise<void> {
     logger.info(`SSH port ${ci.sshPort} forwarded on tunnel ${ci.apiTunnelId} for session ${session.id}.`);
 }
 
-// Step 1: remote sshd up + its port exposed on a Dev Tunnel. Idempotent.
+// Step 1: an sshd forwarded on the session's current API tunnel. linkspan is the source of truth for the sshd, so we
+// reconcile to what it reports rather than trusting local port/forward state — self-healing a stale port after a
+// linkspan restart, or a forward stranded on a re-minted tunnel. Idempotent.
 export async function ensureRemoteSession(session: SlurmSession): Promise<void> {
-    // First, so reattach re-mints apiTunnelId+token over the MS API (no login-node SSH) before the early-return.
-    await ensureDevTunnel(session);
-    if (session.connectionInfo?.sshTunnelId) { return; }
-    // Reuse an sshd a prior attempt created; linkspan's create isn't idempotent and would leak one.
-    if (!session.connectionInfo?.sshPort) {
+    await ensureDevTunnel(session); // re-mints apiTunnelId (+ token) over the MS API before we forward against it
+    const ci = session.connectionInfo!; // ensureDevTunnel guarantees connectionInfo
+
+    // Reuse the sshd linkspan reports (its port is stable across restarts) as long as we still hold its key; else create
+    // a fresh one — only create returns the key we SSH with. A "failed" sshd has given up, so it doesn't count as reusable.
+    // Best-effort: if the probe stalls (flaky relay) but we're already forwarded on the current tunnel with a known port,
+    // proceed with that rather than failing the whole connect — the reconcile is an optimization, not a gate.
+    let sshd: LinkspanSshStatus | undefined;
+    try { sshd = (await getSshServerStatus(session)).find(s => s.state !== 'failed'); }
+    catch (err) {
+        if (ci.sshTunnelId === ci.apiTunnelId && ci.sshPort) { return; }
+        throw err;
+    }
+    const port = sshd ? sshdPort(sshd) : 0;
+    if (port && (ci.sshPrivateKey ?? getSessionPrivateKey(session.id))) {
+        ci.sshPort = port;
+    }
+    else {
         await createSshServer(session);
     }
+
+    // forwardSshPortOnTunnel is idempotent on linkspan (already-forwarded port → no-op) and stamps sshTunnelId =
+    // apiTunnelId, so this just ensures the current port rides the current tunnel.
     await forwardSshPortOnTunnel(session);
 }
 
 export function hasActiveTunnelClient(sessionId: string): boolean {
     return activeTunnelClients.has(sessionId);
+}
+
+// True while this window's relay client holds a live connection — its keepAlive already watches the link, so this is
+// the authoritative liveness signal for a connected session and lets the monitor skip HTTP-pinging the same tunnel.
+export function isTunnelClientConnected(sessionId: string): boolean {
+    return activeTunnelClients.get(sessionId)?.connectionStatus === ConnectionStatus.Connected;
 }
 
 export async function connectSessionToTunnel(session: SlurmSession): Promise<number> {
@@ -212,7 +295,7 @@ export async function disposeAllTunnelClients(): Promise<void> {
 
 export async function disconnectSessionFromTunnel(session: SlurmSession): Promise<void> {
     await disposeTunnelClient(session.id);
-    removeSshConfigEntry(session.id, `cshost-${session.id}`);
+    removeSshConfigEntry(session.id, csHostAlias(session.cluster, session.name));
     session.connectionInfo = undefined;
     updateSession(session);
     logger.info(`Session ${session.id} disconnected from tunnel.`);

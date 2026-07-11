@@ -1,4 +1,4 @@
-import { SshHost, PromptObserver, PromptCancelledError } from '../models';
+import { SshHost, SlurmSession, PromptObserver, PromptCancelledError } from '../models';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release } from './fsSupport';
 import { buildShellCommand, extractCommandResult, READY_MARKER } from './sshShell';
-import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock } from './sshHostsStore';
+import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock, csHostAlias } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -308,14 +308,14 @@ export class SshManager {
     }
 }
 
-export function addSshConfigEntry(sessionId: string, localPort: number, privateKey: string): string {
-    const hostAlias = `cshost-${sessionId}`;
-    removeSshConfigEntry(sessionId, hostAlias);
-    writeSessionPrivateKey(sessionId, privateKey);
+export function addSshConfigEntry(session: SlurmSession, localPort: number, privateKey: string): string {
+    const hostAlias = csHostAlias(session.cluster, session.name);
+    removeSshConfigEntry(session.id, hostAlias);
+    writeSessionPrivateKey(session.id, privateKey);
 
     const hostname = '127.0.0.1';
     const user = 'cs-ssh-user'; // any non-empty value works; the custom SSH server ignores the username
-    const configBlock = buildSshConfigBlock(sessionId, hostAlias, hostname, localPort, user, sessionKeyPath(sessionId));
+    const configBlock = buildSshConfigBlock(session.id, hostAlias, hostname, localPort, user, sessionKeyPath(session.id));
 
     // Locked: startup reattach can rewrite this concurrently, so the append must not interleave.
     lock(CS_SSH_CONFIG_PATH);
@@ -323,7 +323,7 @@ export function addSshConfigEntry(sessionId: string, localPort: number, privateK
         fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
     }
     catch (err) {
-        logger.error(`Failed to write SSH config for session ${sessionId}:`, err);
+        logger.error(`Failed to write SSH config for session ${session.id}:`, err);
     }
     finally {
         release(CS_SSH_CONFIG_PATH);
@@ -357,8 +357,10 @@ export function removeSshConfigEntry(sessionId: string, hostAlias: string): void
     lock(CS_SSH_CONFIG_PATH);
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
+        // Escape the alias (a cluster name may contain '.') so it can't over-match; the id marker is a regex-safe uuid.
+        const aliasRe = hostAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const re = new RegExp(
-            `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${hostAlias}\\n(?:    [^\\n]+\\n)*`,
+            `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${aliasRe}\\n(?:    [^\\n]+\\n)*`,
             'gm',
         );
         const cleaned = content.replace(re, '');
