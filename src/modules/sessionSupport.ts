@@ -7,8 +7,8 @@ import { getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus, StatusTransition } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
-import { checkLinkspanHealth, disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, getSshServerStatus, isTunnelClientConnected, removeDevTunnel } from './tunnelSupport';
-import { summarizeSshStatus } from './linkspanSupport';
+import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, isTunnelClientConnected, linkspanEndpoint, removeDevTunnel } from './tunnelSupport';
+import { getHealth, getSshServers, summarizeSshStatus } from './linkspanSupport';
 
 const logger = Logger.getInstance();
 const POLLING_INTERVAL_MS = 5000;
@@ -72,7 +72,8 @@ export class SessionMonitor {
     private async prepareRemote(session: SlurmSession): Promise<void> {
         try {
             await ensureDevTunnel(session); // re-mint tunnel id + Connect token (also valid after a reload dropped them)
-            await checkLinkspanHealth(session); // poll the tunnel: throws until linkspan is up and answering /health
+            const { baseUrl, headers } = linkspanEndpoint(session);
+            await getHealth(baseUrl, headers); // poll the tunnel: throws until linkspan is up and answering /health
             await ensureRemoteSession(session); // linkspan is up — start the sshd and forward it (all over the tunnel)
             if (session.status === 'preparing') { // may have left 'preparing' during the awaits (e.g. user hit Stop)
                 this.healthFailedCounts.delete(session.id); // Step 1 up — clear the prepare-failure tally
@@ -141,7 +142,8 @@ export class SessionMonitor {
                 // reentrancy guard) so a slow ping under load can't stack behind the next 5s fire.
                 await this.pingOrCrossCheck(session, async () => {
                     try {
-                        const ssh = await getSshServerStatus(session);
+                        const { baseUrl, headers } = linkspanEndpoint(session);
+                        const ssh = await getSshServers(baseUrl, headers);
                         this.healthFailedCounts.delete(session.id);
                         this.log(session, `healthcheck (tunnel): ${session.status} — sshd: ${summarizeSshStatus(ssh)}`);
                     }
