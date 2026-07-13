@@ -125,7 +125,6 @@ export interface SessionRunRecord {
     sessionName: string;
     cluster: string;
     jobId: string;
-    submittedAt: number;
     endedAt: number;
     finalStatus: Session['status'];
     metrics?: RunMetrics;

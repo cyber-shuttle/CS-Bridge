@@ -74,9 +74,8 @@ export class RemoteSessionController implements vscode.Disposable {
 
         this.torndown = true; // claim now so the 1s render tick can't race the reload
         this.stopItem.text = '$(loading~spin) Stopping…';
-        // Hand the stop to the local window: mark 'stopping' and reload now, so the summary comes up immediately in its
-        // stopping state. reattachLiveSessions there runs the scancel + metrics record — off this window's critical path,
-        // which is moot anyway since remote.close is about to tear this window down.
+        // Mark 'stopping' and reload to local now, so the summary opens immediately; the reloaded window finishes the
+        // stop (scancel + metrics) via finishInterruptedStop. remote.close tears this window down regardless.
         session.status = 'stopping';
         session.errorMessage = '';
         updateSession(session);

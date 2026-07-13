@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useWebviewState } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Card, Icon, Spinner } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
-import { RunMetricsView } from '@/ui/components/RunMetricsView';
+import { RunMetricsView, MetricRow as Field } from '@/ui/components/RunMetricsView';
 import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
 import type { SlurmSession, SummaryState } from '@/models';
 
@@ -17,15 +17,6 @@ function finalStateLabel(s: SlurmSession): string {
     if (isTerminal(s.status)) { return STATUS_LABEL[s.status] ?? s.status; }
     if (isWallTimeExpired(s, Date.now())) { return 'Wall-time reached'; }
     return 'Ended';
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-    return (
-        <Row justify="space-between" gap={12}>
-            <Text muted>{label}</Text>
-            <Text>{value}</Text>
-        </Row>
-    );
 }
 
 function Root() {

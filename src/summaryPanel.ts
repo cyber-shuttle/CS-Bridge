@@ -16,7 +16,6 @@ export async function enqueuePendingSummary(context: vscode.ExtensionContext, id
     await context.globalState.update(PENDING_KEY, queue.slice(-MAX_PENDING));
 }
 
-// On a local window's activation: if a summary is queued, shift one and open its tab. No-op otherwise.
 export async function consumePendingSummary(context: vscode.ExtensionContext, extensionUri: vscode.Uri): Promise<SlurmSession | undefined> {
     const queue = context.globalState.get<string[]>(PENDING_KEY, []);
     if (queue.length === 0) { return undefined; }
@@ -27,7 +26,6 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
     return session;
 }
 
-// Opens the summary as an editor tab
 export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, metricsOverride?: RunMetrics): void {
     const panel = vscode.window.createWebviewPanel(
         'csbridge.summary', `Session ${session.name} summary: `,

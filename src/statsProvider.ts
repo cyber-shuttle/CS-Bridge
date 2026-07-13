@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { WebviewProvider } from './webviewProvider';
 import { StatsState, WebviewMessage } from './models';
-import { getSessionRuns, onDidChangeRuns } from './sessionRunSupport';
+import { getSessionRuns, watchRuns } from './sessionRunSupport';
 import { getSession } from './extensionStore';
 import { openSummaryPanel } from './summaryPanel';
 
@@ -12,7 +12,7 @@ export class StatsProvider extends WebviewProvider {
 
     constructor(extensionUri: vscode.Uri) {
         super(extensionUri);
-        onDidChangeRuns(() => void this.pushState());
+        watchRuns(() => void this.pushState());
     }
 
     protected handleMessage(data: WebviewMessage): void {

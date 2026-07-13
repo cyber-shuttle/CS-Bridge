@@ -6,7 +6,6 @@ import { EfficiencyChip } from '@/ui/components/RunMetricsView';
 import { groupRunsBySession, type SessionRunGroup } from '@/ui/logic/metrics';
 import type { StatsState, SessionRunRecord } from '@/models';
 
-// One finished run: its end time is the row title; clicking opens the session summary; utilization pins to the right.
 function RunItem({ run }: { run: SessionRunRecord }) {
     const when = new Date(run.endedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     return (
@@ -29,7 +28,6 @@ function RunItem({ run }: { run: SessionRunRecord }) {
     );
 }
 
-// A session groups its runs under a collapsible header (session name * cluster * run count).
 function SessionGroup({ group }: { group: SessionRunGroup }) {
     const [open, setOpen] = useState(true);
     const runLabel = `${group.runs.length} run${group.runs.length === 1 ? '' : 's'}`;

@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as vscode from 'vscode';
 import { Logger } from './logger';
 import { lock, release } from './modules/fsSupport';
 import { CS_HOME } from './extensionStore';
@@ -14,15 +13,12 @@ const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
 // No -X: usage (MaxRSS, TRESUsageInTot) lives on the .batch step rows, which parseSacctUtil turns into efficiency.
 const SACCT = 'sacct -P -n --format=JobID,AllocCPUs,ReqMem,CPUTimeRAW,ElapsedRaw,MaxRSS,AllocTRES,TRESUsageInTot -j';
-const RUNS_PER_SESSION = 10; // history keeps this many most-recent runs of each session
-const MAX_RUNS = 200; // global backstop across all sessions
+const RUNS_PER_SESSION = 10;
+const MAX_RUNS = 200;
 // slurmdbd flushes step-level accounting (MaxRSS/usage) a beat after the job ends, so re-query until it lands before
 // freezing the record — otherwise a run recorded the instant it's stopped is stuck with allocation-only, no efficiency.
 const METRIC_RETRIES = 2;
 const METRIC_RETRY_MS = 3000;
-
-const changed = new vscode.EventEmitter<void>();
-export const onDidChangeRuns = changed.event; // fires after a run is stored, so the Stats view / open summary refresh
 
 function readRuns(): SessionRunRecord[] {
     try {
@@ -32,14 +28,12 @@ function readRuns(): SessionRunRecord[] {
     catch { return []; }
 }
 
-// Pull: newest-first history for the Stats view.
 export function getSessionRuns(): SessionRunRecord[] {
     return readRuns().sort((a, b) => b.endedAt - a.endedAt);
 }
 
-// Cross-window notification: fires when runs.json changes in ANY window (fs.watch catches other processes' writes the
-// in-process onDidChangeRuns can't — e.g. the sidebar monitor recording the run). Lenient match because a tmp+rename
-// write can surface as 'runs.json' or a null filename; extra fires just re-read the file and are harmless.
+// Fires when runs.json changes in any window. Lenient match: a tmp+rename write can surface as 'runs.json' or a null
+// filename, so accept either.
 export function watchRuns(callback: () => void): fs.FSWatcher {
     return fs.watch(CS_HOME, (_, filename) => { if (!filename || filename === 'runs.json') { callback(); } });
 }
@@ -50,20 +44,17 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
     if (readRuns().some(r => isSameRun(r, session))) { return; } // already recorded by another end path — skip the sacct fetch
     const metrics = await fetchMetrics(session);
-    let stored = false;
     lock(RUNS_FILE);
     try {
         const runs = readRuns();
         if (!runs.some(r => isSameRun(r, session))) {
-            runs.push({ sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, submittedAt: session.submittedAt, endedAt: Date.now(), finalStatus: session.status, metrics });
+            runs.push({ sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, metrics });
             fs.writeFileSync(`${RUNS_FILE}.tmp`, JSON.stringify(capRuns(runs), null, 2), 'utf-8');
             fs.renameSync(`${RUNS_FILE}.tmp`, RUNS_FILE);
-            stored = true;
         }
     }
     catch (err) { logger.error('Failed to record run', err); }
     finally { release(RUNS_FILE); }
-    if (stored) { changed.fire(); }
 }
 
 // Keep each session's RUNS_PER_SESSION most-recent runs, then a global MAX_RUNS backstop — both newest-first by endedAt.
@@ -79,7 +70,6 @@ function capRuns(runs: SessionRunRecord[]): SessionRunRecord[] {
         .sort((a, b) => b.endedAt - a.endedAt).slice(0, MAX_RUNS);
 }
 
-// sacct right after a job ends often has the allocation row but not yet the step usage; retry until MaxRSS lands.
 async function fetchMetrics(session: SlurmSession): Promise<RunMetrics | undefined> {
     for (let attempt = 0; ; attempt++) {
         const m = await sacctMetrics(session);

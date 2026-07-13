@@ -1,11 +1,11 @@
 import { Row, Stack, Text } from '@/ui/components/base';
-import { efficiencySeverity, severityColor, fmtPct } from '@/ui/logic/metrics';
+import { efficiencySeverity, SEVERITY_COLOR, fmtPct } from '@/ui/logic/metrics';
 import { fmtTime } from '@/ui/logic/session';
 import type { RunMetrics } from '@/models';
 
-// Efficiency pill colored by waste severity — shared by the Stats rows and the summary.
+// Efficiency pill, shared by the Stats rows and the summary.
 export function EfficiencyChip({ label, pct }: { label: string; pct?: number }) {
-    const color = severityColor(efficiencySeverity(pct));
+    const color = SEVERITY_COLOR[efficiencySeverity(pct)];
     return (
         <Row gap={4} style={{ padding: '1px 7px', borderRadius: '10px', border: `1px solid ${color}` }}>
             <Text size={11} muted>{label}</Text>
@@ -14,7 +14,7 @@ export function EfficiencyChip({ label, pct }: { label: string; pct?: number }) 
     );
 }
 
-function MetricRow({ label, value }: { label: string; value: string }) {
+export function MetricRow({ label, value }: { label: string; value: string }) {
     return (
         <Row justify="space-between" gap={12}>
             <Text muted>{label}</Text>

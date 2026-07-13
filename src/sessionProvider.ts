@@ -436,8 +436,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         this.finishInterruptedStop(session);
     }
 
-    // The actual stop: scancel → record metrics → mark stopped, with a progress toast. Shared by the sidebar Stop and by
-    // the summary consumer finishing a session a remote window left 'stopping' when it reloaded to local.
+    // The actual stop, via stopSession. Shared by the sidebar Stop and by the summary consumer finishing a session a
+    // remote window left 'stopping' on reload.
     public finishInterruptedStop(session: SlurmSession): void {
         // No success toast: a clean stop is silent (the summary/card reflects it); only a failure surfaces via runSessionTask.
         this.runSessionTask(session, `Stopping Session ${session.name}...`, 'stop',
