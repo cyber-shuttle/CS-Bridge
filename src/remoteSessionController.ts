@@ -3,9 +3,6 @@ import { getSession, updateSession, watchSessions } from './extensionStore';
 import { isTerminal, isWallTimeExpired } from './modules/sessionMachine';
 import { remainingMs, fmtTime, wallMs } from './ui/logic/session';
 import { enqueuePendingSummary } from './summaryPanel';
-import { recordSessionRun } from './sessionRunSupport';
-import { SshManager } from './modules/sshSupport';
-import { Logger } from './logger';
 
 const WARN_THRESHOLD_MS = 10 * 60_000; // color the status bar under 10 minutes left
 
@@ -66,7 +63,7 @@ export class RemoteSessionController implements vscode.Disposable {
         await this.endToLocal();
     }
 
-    // User hit Stop: scancel the job, record the run, then end to local with the summary.
+    // User hit Stop: mark the session stopping and reload to local, which finishes the stop + shows the summary.
     private async stopAndSummarize(): Promise<void> {
         if (this.torndown) { return; }
         const session = getSession(this.sessionId);
@@ -75,20 +72,14 @@ export class RemoteSessionController implements vscode.Disposable {
             'Stop session?', { modal: true, detail: 'This stops the running job and returns this window to local.' }, 'Stop');
         if (choice !== 'Stop' || this.torndown) { return; } // may have torn down (wall-time/terminal) during the dialog
 
-        this.torndown = true; // claim now so the 1s render tick can't race the scancel + summary
+        this.torndown = true; // claim now so the 1s render tick can't race the reload
         this.stopItem.text = '$(loading~spin) Stopping…';
-        try {
-            if (session.jobId) { await SshManager.getInstance().runRemoteCommand(session.cluster, `scancel ${session.jobId}`); }
-            session.status = 'stopped';
-            session.errorMessage = '';
-            updateSession(session);
-        }
-        catch (err) {
-            Logger.getInstance().error(`Failed to scancel session ${this.sessionId}:`, err);
-            void vscode.window.showWarningMessage('Could not confirm the job stopped — check the cluster. Returning to a local window.');
-        }
-        try { await recordSessionRun(session); }
-        catch { /* best-effort: still end to local */ }
+        // Hand the stop to the local window: mark 'stopping' and reload now, so the summary comes up immediately in its
+        // stopping state. reattachLiveSessions there runs the scancel + metrics record — off this window's critical path,
+        // which is moot anyway since remote.close is about to tear this window down.
+        session.status = 'stopping';
+        session.errorMessage = '';
+        updateSession(session);
         await this.endToLocal();
     }
 

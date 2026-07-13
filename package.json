@@ -50,15 +50,15 @@
 				},
 				{
 					"type": "webview",
-					"id": "csbridge.hostsView",
-					"name": "SSH Hosts",
+					"id": "csbridge.statsView",
+					"name": "Stats",
 					"icon": "resources/csbridge.svg",
 					"when": "!csbridge.remote"
 				},
 				{
 					"type": "webview",
-					"id": "csbridge.statsView",
-					"name": "Stats",
+					"id": "csbridge.hostsView",
+					"name": "SSH Hosts",
 					"icon": "resources/csbridge.svg",
 					"when": "!csbridge.remote"
 				}
@@ -88,6 +88,12 @@
 				"title": "Refresh SSH Hosts",
 				"category": "CS Bridge",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "csbridge.refreshStats",
+				"title": "Refresh Utilization History",
+				"category": "CS Bridge",
+				"icon": "$(refresh)"
 			}
 		],
 		"menus": {
@@ -106,6 +112,11 @@
 					"command": "csbridge.refreshHosts",
 					"group": "navigation@0",
 					"when": "view == csbridge.hostsView"
+				},
+				{
+					"command": "csbridge.refreshStats",
+					"group": "navigation@0",
+					"when": "view == csbridge.statsView"
 				},
 				{
 					"command": "csbridge.addHost",
@@ -128,6 +139,10 @@
 				},
 				{
 					"command": "csbridge.refreshHosts",
+					"when": "false"
+				},
+				{
+					"command": "csbridge.refreshStats",
 					"when": "false"
 				}
 			]

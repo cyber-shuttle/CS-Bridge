@@ -138,6 +138,7 @@ export interface StatsState {
 export interface SummaryState {
     session: SlurmSession;
     metrics?: RunMetrics;
+    metricsPending?: boolean; // terminal but the run isn't recorded yet — the webview spins instead of showing "no metrics"
 }
 
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.
@@ -174,4 +175,5 @@ export interface WebviewMessage {
     cpus?: string;
     memory?: string;
     allocation?: string;
+    jobId?: string;
 }

@@ -14,8 +14,8 @@ const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
 // No -X: usage (MaxRSS, TRESUsageInTot) lives on the .batch step rows, which parseSacctUtil turns into efficiency.
 const SACCT = 'sacct -P -n --format=JobID,AllocCPUs,ReqMem,CPUTimeRAW,ElapsedRaw,MaxRSS,AllocTRES,TRESUsageInTot -j';
-const RUNS_PER_SESSION = 10;   // history keeps this many most-recent runs of each session
-const MAX_RUNS = 200;          // global backstop across all sessions
+const RUNS_PER_SESSION = 10; // history keeps this many most-recent runs of each session
+const MAX_RUNS = 200; // global backstop across all sessions
 // slurmdbd flushes step-level accounting (MaxRSS/usage) a beat after the job ends, so re-query until it lands before
 // freezing the record — otherwise a run recorded the instant it's stopped is stuck with allocation-only, no efficiency.
 const METRIC_RETRIES = 2;
@@ -35,6 +35,13 @@ function readRuns(): SessionRunRecord[] {
 // Pull: newest-first history for the Stats view.
 export function getSessionRuns(): SessionRunRecord[] {
     return readRuns().sort((a, b) => b.endedAt - a.endedAt);
+}
+
+// Cross-window notification: fires when runs.json changes in ANY window (fs.watch catches other processes' writes the
+// in-process onDidChangeRuns can't — e.g. the sidebar monitor recording the run). Lenient match because a tmp+rename
+// write can surface as 'runs.json' or a null filename; extra fires just re-read the file and are harmless.
+export function watchRuns(callback: () => void): fs.FSWatcher {
+    return fs.watch(CS_HOME, (_, filename) => { if (!filename || filename === 'runs.json') { callback(); } });
 }
 
 const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.cluster && r.jobId === s.jobId;
@@ -64,7 +71,8 @@ function capRuns(runs: SessionRunRecord[]): SessionRunRecord[] {
     const bySession = new Map<string, SessionRunRecord[]>();
     for (const r of runs) {
         const group = bySession.get(r.sessionId);
-        if (group) { group.push(r); } else { bySession.set(r.sessionId, [r]); }
+        if (group) { group.push(r); }
+        else { bySession.set(r.sessionId, [r]); }
     }
     return [...bySession.values()]
         .flatMap(g => g.sort((a, b) => b.endedAt - a.endedAt).slice(0, RUNS_PER_SESSION))

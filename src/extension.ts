@@ -47,6 +47,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sshHostProvider.addSshHost()),
         vscode.commands.registerCommand('csbridge.refreshHosts', () => sshHostProvider.refreshSshHosts()),
+        vscode.commands.registerCommand('csbridge.refreshStats', () => statsProvider.refresh()),
         vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
     );
 
@@ -57,8 +58,11 @@ export async function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(new RemoteSessionController(context, id));
     }
     else {
-        // Local window: if a just-ended remote window queued a summary, open it now.
-        void consumePendingSummary(context, context.extensionUri);
+        // Local window: open a queued summary. If it was a user Stop (session left 'stopping'), finish the stop here —
+        // the scancel + metrics run in this window, after the summary card is up, never from the remote window.
+        void consumePendingSummary(context, context.extensionUri).then((session) => {
+            if (session?.status === 'stopping') { sessionProvider.finishInterruptedStop(session); }
+        });
     }
 
     // on first-time install, show a toast with an "Open" action to reveal the sidebar panel.

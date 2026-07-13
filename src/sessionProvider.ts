@@ -22,6 +22,8 @@ function openSessionWindow(sessionId: string, forceNew: boolean): void {
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: forceNew });
 }
 
+const STOP_CLEANUP_HINT = 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.';
+
 export class SessionProvider extends WebviewProvider implements vscode.Disposable {
     public static readonly viewType = 'csbridge.sessionsView';
     protected readonly viewKind = 'sessions' as const;
@@ -66,12 +68,14 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     public async reattachLiveSessions(): Promise<void> {
         if (this.remoteSessionId) { return; }
         for (const s of getAllSessions()) {
-            if (s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
+            // Leave a 'stopping' session alone: a remote-window Stop handed it off and its summary consumer finishes it
+            // (scancel + metrics) after the card opens. Monitoring or reconnecting it here would fight that stop.
+            if (s.status !== 'stopping' && s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
         }
         if ((await getMicrosoftAccountInfo()).label === null) { return; } // don't force a sign-in popup at startup
         for (const s of getAllSessions()) {
-            // Relaying an expired session would only flash "connecting…" then fail back; leave it for the monitor.
-            if (isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
+            // Relaying an expired (or stopping) session would only flash "connecting…" then fail back; leave it be.
+            if (s.status !== 'stopping' && isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
                 void this.establishRelay(s);
             }
         }
@@ -429,9 +433,15 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
 
         this.setStatus(session, 'stopping', '');
         void this.pushState();
-        const hint = 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.';
+        this.finishInterruptedStop(session);
+    }
+
+    // The actual stop: scancel → record metrics → mark stopped, with a progress toast. Shared by the sidebar Stop and by
+    // the summary consumer finishing a session a remote window left 'stopping' when it reloaded to local.
+    public finishInterruptedStop(session: SlurmSession): void {
+        // No success toast: a clean stop is silent (the summary/card reflects it); only a failure surfaces via runSessionTask.
         this.runSessionTask(session, `Stopping Session ${session.name}...`, 'stop',
-            p => stopSession(session, this.monitor, p), hint, `Session stopped. ${hint}`);
+            p => stopSession(session, this.monitor, p), STOP_CLEANUP_HINT);
     }
 
     private launchSession(sessionId: string) {

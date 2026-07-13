@@ -1,6 +1,6 @@
 import { render } from 'preact';
 import { useWebviewState } from '@/ui/platform/vscode';
-import { Stack, Row, Text, Card, Icon } from '@/ui/components/base';
+import { Stack, Row, Text, Card, Icon, Spinner } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
 import { RunMetricsView } from '@/ui/components/RunMetricsView';
 import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
@@ -32,13 +32,19 @@ function Root() {
     const state = useWebviewState<SummaryState>();
     const s = state?.session;
     if (!s) { return <Stack pad="12px"><Text muted>Loading summary…</Text></Stack>; }
+    const loadingMsg = s.status === 'stopping' ? 'Closing session and preparing summary…'
+        : state?.metricsPending ? 'Fetching utilization metrics…'
+            : null;
+    if (loadingMsg) {
+        return <Stack gap={12} pad="48px" style={{ alignItems: 'center' }}><Spinner size={28} /><Text muted>{loadingMsg}</Text></Stack>;
+    }
 
     const gpus = s.gpuCount > 0 ? `${s.gpuCount} × ${s.gpuClass}` : 'None';
     const usedMs = elapsedRunMs(s, Date.now());
     const limitMs = wallMs(s.wallTime);
 
     return (
-        <Stack gap={10} pad="14px 16px" style={{ maxWidth: '640px' }}>
+        <Stack gap={10} pad="14px 16px" style={{ maxWidth: '640px', margin: '0 auto' }}>
             <Row gap={8} wrap>
                 <Icon name="server-environment" />
                 <Text size={16} weight={600}>{s.name}</Text>
