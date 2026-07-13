@@ -28,8 +28,7 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
 const runMetricsFor = (session: SlurmSession) =>
     getSessionRuns().find(r => r.cluster === session.cluster && r.jobId === session.jobId)?.metrics;
 
-// Opens the summary as an editor tab. Reply with the session + its utilization on `ready`, and re-post on run-history
-// changes so metrics that land just after open fill the card without a reopen.
+// Opens the summary as an editor tab
 export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession): void {
     const panel = vscode.window.createWebviewPanel(
         'csbridge.summary', `Session ${session.name} summary: `,

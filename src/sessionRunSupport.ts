@@ -8,8 +8,7 @@ import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
 import { RunMetrics, SessionRunRecord, SlurmSession } from './models';
 
-// Finished runs + their sacct utilization, in a plain JSON file (~/.cybershuttle/runs.json) — push (recordSessionRun)
-// and pull (getSessionRuns), guarded by the same cross-process lock as sessions.json.
+// Status of finished runs, in a JSON file (~/.cybershuttle/runs.json)
 
 const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
@@ -33,8 +32,6 @@ export function getSessionRuns(): SessionRunRecord[] {
     return readRuns().sort((a, b) => b.endedAt - a.endedAt);
 }
 
-// Push: fetch this run's sacct utilization and append it under the cross-process lock, deduped by cluster:jobId and
-// capped to the most recent MAX_RUNS. Idempotent, so the monitor's re-entry guard and the stop path can both call it.
 export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
     const metrics = await fetchMetrics(session);
@@ -44,8 +41,6 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
         const runs = readRuns();
         if (!runs.some(r => r.cluster === session.cluster && r.jobId === session.jobId)) {
             runs.push({ sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, submittedAt: session.submittedAt, endedAt: Date.now(), finalStatus: session.status, metrics });
-            // Write atomically (temp + rename) so a crash mid-write can't corrupt the file, and unlocked readers in
-            // other windows see either the old or the new file whole, never a truncated one.
             fs.writeFileSync(`${RUNS_FILE}.tmp`, JSON.stringify(runs.slice(-MAX_RUNS), null, 2), 'utf-8');
             fs.renameSync(`${RUNS_FILE}.tmp`, RUNS_FILE);
             stored = true;

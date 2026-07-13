@@ -70,7 +70,6 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
 });
 
 test('parseSacctUtil reads allocation fields, ignoring the empty usage on an -X-style row', () => {
-    // The exact -X row shape: MaxRSS and TRESUsageInTot are blank (step-level fields).
     const out = '20041571|2|2G|3146|1573||billing=2000,cpu=2,mem=2G,node=1|';
     assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2G', elapsedSec: 1573 });
 });
@@ -91,7 +90,7 @@ test('parseSacctUtil derives CPU and memory efficiency from the batch step usage
 test('parseSacctUtil handles per-CPU ReqMem suffix and a day-spanning CPU time', () => {
     const out = '55|4|1Gc|345600|86400||cpu=4,mem=4G,node=1|\n55.batch|4|1Gc|345600|86400|2147483648||cpu=1-00:00:00,mem=2147483648';
     const m = parseSacctUtil(out);
-    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 2 GiB used / (1 GiB × 4 cores) = 50%
+    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 2 GiB used / (1 GiB x 4 cores) = 50%
     assert.equal(Math.round(m.cpuEfficiencyPct!), 25); // 86400s used / 345600s allocated = 25%
 });
 
