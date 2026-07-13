@@ -14,7 +14,12 @@ const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
 // No -X: usage (MaxRSS, TRESUsageInTot) lives on the .batch step rows, which parseSacctUtil turns into efficiency.
 const SACCT = 'sacct -P -n --format=JobID,AllocCPUs,ReqMem,CPUTimeRAW,ElapsedRaw,MaxRSS,AllocTRES,TRESUsageInTot -j';
-const MAX_RUNS = 200;
+const RUNS_PER_SESSION = 10;   // history keeps this many most-recent runs of each session
+const MAX_RUNS = 200;          // global backstop across all sessions
+// slurmdbd flushes step-level accounting (MaxRSS/usage) a beat after the job ends, so re-query until it lands before
+// freezing the record — otherwise a run recorded the instant it's stopped is stuck with allocation-only, no efficiency.
+const METRIC_RETRIES = 2;
+const METRIC_RETRY_MS = 3000;
 
 const changed = new vscode.EventEmitter<void>();
 export const onDidChangeRuns = changed.event; // fires after a run is stored, so the Stats view / open summary refresh
@@ -32,16 +37,19 @@ export function getSessionRuns(): SessionRunRecord[] {
     return readRuns().sort((a, b) => b.endedAt - a.endedAt);
 }
 
+const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.cluster && r.jobId === s.jobId;
+
 export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
+    if (readRuns().some(r => isSameRun(r, session))) { return; } // already recorded by another end path — skip the sacct fetch
     const metrics = await fetchMetrics(session);
     let stored = false;
     lock(RUNS_FILE);
     try {
         const runs = readRuns();
-        if (!runs.some(r => r.cluster === session.cluster && r.jobId === session.jobId)) {
+        if (!runs.some(r => isSameRun(r, session))) {
             runs.push({ sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, submittedAt: session.submittedAt, endedAt: Date.now(), finalStatus: session.status, metrics });
-            fs.writeFileSync(`${RUNS_FILE}.tmp`, JSON.stringify(runs.slice(-MAX_RUNS), null, 2), 'utf-8');
+            fs.writeFileSync(`${RUNS_FILE}.tmp`, JSON.stringify(capRuns(runs), null, 2), 'utf-8');
             fs.renameSync(`${RUNS_FILE}.tmp`, RUNS_FILE);
             stored = true;
         }
@@ -51,7 +59,28 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (stored) { changed.fire(); }
 }
 
+// Keep each session's RUNS_PER_SESSION most-recent runs, then a global MAX_RUNS backstop — both newest-first by endedAt.
+function capRuns(runs: SessionRunRecord[]): SessionRunRecord[] {
+    const bySession = new Map<string, SessionRunRecord[]>();
+    for (const r of runs) {
+        const group = bySession.get(r.sessionId);
+        if (group) { group.push(r); } else { bySession.set(r.sessionId, [r]); }
+    }
+    return [...bySession.values()]
+        .flatMap(g => g.sort((a, b) => b.endedAt - a.endedAt).slice(0, RUNS_PER_SESSION))
+        .sort((a, b) => b.endedAt - a.endedAt).slice(0, MAX_RUNS);
+}
+
+// sacct right after a job ends often has the allocation row but not yet the step usage; retry until MaxRSS lands.
 async function fetchMetrics(session: SlurmSession): Promise<RunMetrics | undefined> {
+    for (let attempt = 0; ; attempt++) {
+        const m = await sacctMetrics(session);
+        if ((m && m.maxRss !== undefined) || attempt >= METRIC_RETRIES) { return m; }
+        await new Promise(res => setTimeout(res, METRIC_RETRY_MS));
+    }
+}
+
+async function sacctMetrics(session: SlurmSession): Promise<RunMetrics | undefined> {
     try {
         const r = await SshManager.getInstance().runRemoteCommand(session.cluster, `${SACCT} ${session.jobId} 2>/dev/null`, undefined, { batch: true });
         const m = r.code === 0 ? parseSacctUtil(r.stdout) : undefined;
