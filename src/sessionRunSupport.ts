@@ -1,7 +1,6 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from './logger';
-import { lock, release, readJsonArray } from './modules/fsSupport';
+import { readJsonArray, updateJsonArray, watchDirFile } from './modules/fsSupport';
 import { CS_HOME } from './extensionStore';
 import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
@@ -24,11 +23,7 @@ export function getSessionRuns(): SessionRunRecord[] {
     return readRuns().sort((a, b) => b.endedAt - a.endedAt);
 }
 
-// Fires when runs.json changes in any window. Lenient match: a tmp+rename write can surface as 'runs.json' or a null
-// filename, so accept either.
-export function watchRuns(callback: () => void): fs.FSWatcher {
-    return fs.watch(CS_HOME, (_, filename) => { if (!filename || filename === 'runs.json') { callback(); } });
-}
+export const watchRuns = (callback: () => void) => watchDirFile(CS_HOME, 'runs.json', callback);
 
 const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.cluster && r.jobId === s.jobId;
 
@@ -37,17 +32,10 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
     const alreadyRecorded = readRuns().some(r => isSameRun(r, session));
     if (alreadyRecorded) { return; }
     const metrics = await fetchMetrics(session);
-    lock(RUNS_FILE);
-    try {
-        const runs = readRuns();
-        if (!runs.some(r => isSameRun(r, session))) {
-            runs.push({ sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, metrics });
-            fs.writeFileSync(`${RUNS_FILE}.tmp`, JSON.stringify(capRuns(runs), null, 2), 'utf-8');
-            fs.renameSync(`${RUNS_FILE}.tmp`, RUNS_FILE);
-        }
-    }
-    catch (err) { logger.error('Failed to record run', err); }
-    finally { release(RUNS_FILE); }
+    const record: SessionRunRecord = { sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, metrics };
+    updateJsonArray<SessionRunRecord>(RUNS_FILE,
+        runs => runs.some(r => isSameRun(r, session)) ? null : capRuns([...runs, record]),
+        err => logger.error('Failed to record run', err));
 }
 
 function capRuns(runs: SessionRunRecord[]): SessionRunRecord[] {
