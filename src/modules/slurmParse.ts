@@ -73,45 +73,37 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     return { status, elapsedSec };
 }
 
-const MEM_UNIT: Record<string, number> = { K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4, P: 1024 ** 5 };
-
-// SLURM memory token → bytes: "1234K" / "2.5G" / "512M" / "1048576" (bare = bytes). Empty/unparseable → undefined.
-function parseMemBytes(s: string | undefined): number | undefined {
-    const m = s?.trim().match(/^([\d.]+)\s*([KMGTP])?i?B?$/i);
-    if (!m || !Number.isFinite(Number(m[1]))) { return undefined; }
-    return Number(m[1]) * (m[2] ? MEM_UNIT[m[2].toUpperCase()] : 1);
+// With `--units=K`, sacct emits every memory field (MaxRSS, ReqMem) in KiB, so a value is just its leading number —
+// parseFloat drops the trailing 'K' and any legacy per-CPU/node 'c'/'n'. Blank/unparseable → undefined.
+function parseKib(s: string | undefined): number | undefined {
+    const n = parseFloat((s ?? '').trim());
+    return Number.isFinite(n) ? n : undefined;
 }
 
-// ReqMem total in bytes. Historic SLURM suffixes: 'c' = per-CPU (× cores), 'n' = per-node (assume one node).
-function parseReqMemBytes(reqMem: string | undefined, cores: number | undefined): number | undefined {
-    if (!reqMem) { return undefined; }
-    const base = parseMemBytes(reqMem.replace(/[cn]$/i, ''));
-    return base === undefined ? undefined : (/c$/i.test(reqMem) ? base * (cores ?? 1) : base);
-}
-
-// "[DD-]HH:MM:SS" / "MM:SS" / plain seconds → seconds.
-function parseCpuTime(s: string): number {
-    const [maybeDays, rest] = s.includes('-') ? s.split('-') : ['0', s];
+// SLURM "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
+function hmsSeconds(s: string | undefined): number | undefined {
+    const t = s?.trim();
+    if (!t) { return undefined; }
+    const [days, rest] = t.includes('-') ? t.split('-') : ['0', t];
     const parts = rest.split(':').map(Number);
-    if (parts.some(n => !Number.isFinite(n))) { return 0; }
-    return Number(maybeDays) * 86400 + parts.reduce((sec, p) => sec * 60 + p, 0);
+    if (parts.length < 2 || parts.some(n => !Number.isFinite(n))) { return undefined; }
+    return Number(days) * 86400 + parts.reduce((sec, p) => sec * 60 + p, 0);
 }
 
-// Used CPU-seconds from a TRESUsageInTot string like "cpu=00:26:00,mem=1234K,…". undefined when no cpu= is present.
-function tresCpuSeconds(tres: string | undefined): number | undefined {
-    const m = tres?.match(/cpu=([^,]+)/);
-    return m ? parseCpuTime(m[1]) : undefined;
+function humanKib(kib: number): string {
+    if (kib >= 1024 ** 2) { return `${(kib / 1024 ** 2).toFixed(1)} GB`; }
+    if (kib >= 1024) { return `${(kib / 1024).toFixed(1)} MB`; }
+    return `${Math.round(kib)} KB`;
 }
 
-function humanBytes(bytes: number): string {
-    for (const [unit, size] of [['GB', MEM_UNIT.G], ['MB', MEM_UNIT.M], ['KB', MEM_UNIT.K]] as const) {
-        if (bytes >= size) { return `${(bytes / size).toFixed(1)} ${unit}`; }
-    }
-    return `${bytes} B`;
-}
+const maxOf = (xs: (number | undefined)[]): number | undefined => {
+    const defined = xs.filter((n): n is number => n !== undefined);
+    return defined.length ? Math.max(...defined) : undefined;
+};
 
-// Parse `sacct -P -n` rows (JobID|AllocCPUs|ReqMem|CPUTimeRAW|ElapsedRaw|MaxRSS|AllocTRES|TRESUsageInTot). Usage
-// (MaxRSS, used CPU) is on the step rows, blank on a -X row, so efficiency is derived only when it's present.
+// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU). Allocation fields
+// are on the main record; usage (MaxRSS, TotalCPU) is on the .batch step, blank on the main row, so efficiency is
+// derived only when present.
 export function parseSacctUtil(output: string): RunMetrics {
     const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
     if (rows.length === 0) { return {}; }
@@ -120,21 +112,19 @@ export function parseSacctUtil(output: string): RunMetrics {
     const m: RunMetrics = {};
     const cores = Number(alloc[1]);
     if (Number.isFinite(cores) && cores > 0) { m.cores = cores; }
-    if (alloc[2]) { m.reqMem = alloc[2]; }
-    if (alloc[4] && Number.isFinite(Number(alloc[4]))) { m.elapsedSec = Number(alloc[4]); }
+    const reqMemKib = parseKib(alloc[2]);
+    if (alloc[3] && Number.isFinite(Number(alloc[3]))) { m.elapsedSec = Number(alloc[3]); }
+    const allocCpuSec = Number(alloc[4]); // CPUTimeRAW = elapsed × cpus
 
-    const rssValues = rows.map(r => parseMemBytes(r[5])).filter((n): n is number => n !== undefined);
-    const cpuValues = rows.map(r => tresCpuSeconds(r[7])).filter((n): n is number => n !== undefined);
-    const maxRssBytes = rssValues.length ? Math.max(...rssValues) : undefined;
-    const usedCpuSec = cpuValues.length ? Math.max(...cpuValues) : undefined;
-    const cpuTimeRaw = Number(alloc[3]);
+    const maxRssKib = maxOf(rows.map(r => parseKib(r[5])));
+    const usedCpuSec = maxOf(rows.map(r => hmsSeconds(r[6])));
 
-    if (maxRssBytes !== undefined) { m.maxRss = humanBytes(maxRssBytes); }
-    if (usedCpuSec !== undefined && Number.isFinite(cpuTimeRaw) && cpuTimeRaw > 0) {
-        m.cpuEfficiencyPct = usedCpuSec / cpuTimeRaw * 100;
+    if (reqMemKib !== undefined) { m.reqMem = humanKib(reqMemKib); }
+    if (maxRssKib !== undefined) { m.maxRss = humanKib(maxRssKib); }
+    if (usedCpuSec !== undefined && Number.isFinite(allocCpuSec) && allocCpuSec > 0) {
+        m.cpuEfficiencyPct = usedCpuSec / allocCpuSec * 100;
     }
-    const reqBytes = parseReqMemBytes(alloc[2], m.cores);
-    if (maxRssBytes !== undefined && reqBytes) { m.memEfficiencyPct = maxRssBytes / reqBytes * 100; }
+    if (maxRssKib !== undefined && reqMemKib) { m.memEfficiencyPct = maxRssKib / reqMemKib * 100; }
     return m;
 }
 

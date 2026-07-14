@@ -9,8 +9,8 @@ import { RunMetrics, SessionRunRecord, SlurmSession } from './models';
 
 const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
-// No -X: usage (MaxRSS, TRESUsageInTot) lives on the .batch step rows, which parseSacctUtil turns into efficiency.
-const SACCT = 'sacct -P -n --format=JobID,AllocCPUs,ReqMem,CPUTimeRAW,ElapsedRaw,MaxRSS,AllocTRES,TRESUsageInTot -j';
+// No -X keeps the .batch step rows that carry usage (MaxRSS, TotalCPU); --units=K puts every memory field in KiB.
+const SACCT = 'sacct -P -n --units=K --format=JobID,AllocCPUs,ReqMem,ElapsedRaw,CPUTimeRAW,MaxRSS,TotalCPU -j';
 const RUNS_PER_SESSION = 10;
 const MAX_RUNS = 200;
 // slurmdbd flushes step-level accounting (MaxRSS/usage) a beat after the job ends, so re-query until it lands before

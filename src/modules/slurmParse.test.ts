@@ -69,15 +69,15 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
     assert.doesNotMatch(script, /--gres=/);
 });
 
-test('parseSacctUtil reads allocation fields, ignoring the empty usage on an -X-style row', () => {
-    const out = '20041571|2|2G|3146|1573||billing=2000,cpu=2,mem=2G,node=1|';
-    assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2G', elapsedSec: 1573 });
+test('parseSacctUtil reads allocation fields, ignoring the empty usage on the main row', () => {
+    const out = '20041571|2|2097152K|1573|3146||';
+    assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2.0 GB', elapsedSec: 1573 });
 });
 
 test('parseSacctUtil derives CPU and memory efficiency from the batch step usage', () => {
     const out = [
-        '20041571|2|2G|3146|1573||billing=2000,cpu=2,mem=2G,node=1|',
-        '20041571.batch|2|2G|3146|1573|1048576K||cpu=00:26:00,mem=1048576K',
+        '20041571|2|2097152K|1573|3146||',
+        '20041571.batch|2|2097152K|1573|3146|1048576K|00:26:00',
     ].join('\n');
     const m = parseSacctUtil(out);
     assert.equal(m.cores, 2);
@@ -87,10 +87,10 @@ test('parseSacctUtil derives CPU and memory efficiency from the batch step usage
     assert.equal(Math.round(m.cpuEfficiencyPct!), 50); // 1560s used / 3146s allocated = 49.6%
 });
 
-test('parseSacctUtil handles per-CPU ReqMem suffix and a day-spanning CPU time', () => {
-    const out = '55|4|1Gc|345600|86400||cpu=4,mem=4G,node=1|\n55.batch|4|1Gc|345600|86400|2147483648||cpu=1-00:00:00,mem=2147483648';
+test('parseSacctUtil derives efficiency across a day-spanning TotalCPU', () => {
+    const out = '55|4|4194304K|86400|345600||\n55.batch|4|4194304K|86400|345600|2097152K|1-00:00:00';
     const m = parseSacctUtil(out);
-    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 2 GiB used / (1 GiB x 4 cores) = 50%
+    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 2 GiB used / 4 GiB requested
     assert.equal(Math.round(m.cpuEfficiencyPct!), 25); // 86400s used / 345600s allocated = 25%
 });
 
