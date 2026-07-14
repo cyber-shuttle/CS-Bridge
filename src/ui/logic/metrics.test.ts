@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { efficiencyColor, fmtPct } from './metrics';
+import { efficiencyColor, fmtPct, groupRunsBySession } from './metrics';
 
 test('efficiencyColor buckets by waste threshold', () => {
     const green = 'var(--vscode-charts-green)', yellow = 'var(--vscode-charts-yellow)';
@@ -16,4 +16,16 @@ test('efficiencyColor buckets by waste threshold', () => {
 test('fmtPct rounds, and shows a dash when unknown', () => {
     assert.equal(fmtPct(47.2), '47%');
     assert.equal(fmtPct(undefined), '—');
+});
+
+test('groupRunsBySession buckets by session, preserving newest-first order across and within groups', () => {
+    const runs = [
+        { sessionId: 'A', sessionName: 'a', cluster: 'delta', jobId: '3', endedAt: 300 },
+        { sessionId: 'B', sessionName: 'b', cluster: 'expanse', jobId: '2', endedAt: 250 },
+        { sessionId: 'A', sessionName: 'a', cluster: 'delta', jobId: '1', endedAt: 100 },
+    ] as unknown as Parameters<typeof groupRunsBySession>[0];
+    const groups = groupRunsBySession(runs);
+    assert.deepEqual(groups.map(g => g[0].sessionId), ['A', 'B']); // group order = each session's newest run
+    assert.deepEqual(groups[0].map(r => r.jobId), ['3', '1']); // within-group newest-first preserved
+    assert.equal(groups[1].length, 1);
 });
