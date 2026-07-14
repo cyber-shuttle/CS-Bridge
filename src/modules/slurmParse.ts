@@ -1,4 +1,4 @@
-import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
+import { GresInfo, RunMetrics, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
 
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
@@ -71,6 +71,61 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     else if (state.includes('RUNNING')) { status = SlurmJobStatus.RUNNING; }
 
     return { status, elapsedSec };
+}
+
+// With `--units=K`, sacct emits every memory field (MaxRSS, ReqMem) in KiB, so a value is just its leading number —
+// parseFloat drops the trailing 'K' and any legacy per-CPU/node 'c'/'n'. Blank/unparseable → undefined.
+function parseKib(s: string | undefined): number | undefined {
+    const n = parseFloat((s ?? '').trim());
+    return Number.isFinite(n) ? n : undefined;
+}
+
+// SLURM "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
+function hmsSeconds(s: string | undefined): number | undefined {
+    const t = s?.trim();
+    if (!t) { return undefined; }
+    const [days, rest] = t.includes('-') ? t.split('-') : ['0', t];
+    const parts = rest.split(':').map(Number);
+    if (parts.length < 2 || parts.some(n => !Number.isFinite(n))) { return undefined; }
+    return Number(days) * 86400 + parts.reduce((sec, p) => sec * 60 + p, 0);
+}
+
+function humanKib(kib: number): string {
+    if (kib >= 1024 ** 2) { return `${(kib / 1024 ** 2).toFixed(1)} GB`; }
+    if (kib >= 1024) { return `${(kib / 1024).toFixed(1)} MB`; }
+    return `${Math.round(kib)} KB`;
+}
+
+const maxOf = (xs: (number | undefined)[]): number | undefined => {
+    const defined = xs.filter((n): n is number => n !== undefined);
+    return defined.length ? Math.max(...defined) : undefined;
+};
+
+// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU). Allocation fields
+// are on the main record; usage (MaxRSS, TotalCPU) is on the .batch step, blank on the main row, so efficiency is
+// derived only when present.
+export function parseSacctUtil(output: string): RunMetrics {
+    const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
+    if (rows.length === 0) { return {}; }
+    const alloc = rows.find(r => !r[0].includes('.')) ?? rows[0]; // main allocation record, not ".batch"/".extern"
+
+    const m: RunMetrics = {};
+    const cores = Number(alloc[1]);
+    if (Number.isFinite(cores) && cores > 0) { m.cores = cores; }
+    const reqMemKib = parseKib(alloc[2]);
+    if (alloc[3] && Number.isFinite(Number(alloc[3]))) { m.elapsedSec = Number(alloc[3]); }
+    const allocCpuSec = Number(alloc[4]); // CPUTimeRAW = elapsed × cpus
+
+    const maxRssKib = maxOf(rows.map(r => parseKib(r[5])));
+    const usedCpuSec = maxOf(rows.map(r => hmsSeconds(r[6])));
+
+    if (reqMemKib !== undefined) { m.reqMem = humanKib(reqMemKib); }
+    if (maxRssKib !== undefined) { m.maxRss = humanKib(maxRssKib); }
+    if (usedCpuSec !== undefined && Number.isFinite(allocCpuSec) && allocCpuSec > 0) {
+        m.cpuEfficiencyPct = usedCpuSec / allocCpuSec * 100;
+    }
+    if (maxRssKib !== undefined && reqMemKib) { m.memEfficiencyPct = maxRssKib / reqMemKib * 100; }
+    return m;
 }
 
 // One `sinfo -h -o "%P|%c|%m|%G"` line: name|cpuCount|memory|gres

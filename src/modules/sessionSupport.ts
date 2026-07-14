@@ -2,6 +2,7 @@ import { SlurmJobStatus, SlurmSession, TunnelCredential, PromptObserver } from '
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
 import { updateSession } from '../extensionStore';
+import { recordSessionRun } from '../sessionRunSupport';
 import { SshManager } from './sshSupport';
 import { getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
@@ -32,8 +33,9 @@ export class SessionMonitor {
     private healthFails(id: string): number { return this.healthFailedCounts.get(id) ?? 0; }
     private bumpHealthFails(id: string): number { const n = this.healthFails(id) + 1; this.healthFailedCounts.set(id, n); return n; }
 
-    // Free the local relay and end this session's poll loop.
     private endSession(sessionId: string): void {
+        const session = this.sessions.get(sessionId);
+        if (session) { void recordSessionRun(session); }
         void disposeTunnelClient(sessionId);
         this.stopMonitoring(sessionId);
     }
@@ -303,6 +305,7 @@ export async function stopSession(session: SlurmSession, monitor: SessionMonitor
         await disposeTunnelClient(session.id);
     }
 
+    void recordSessionRun(session);
     monitor.stopMonitoring(session.id);
 
     if (stopError) { throw stopError; }
