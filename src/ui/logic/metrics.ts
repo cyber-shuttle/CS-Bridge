@@ -7,7 +7,6 @@ export function efficiencyColor(pct?: number): string {
     return 'var(--vscode-errorForeground)';
 }
 
-/** Efficiency % as "47%", or "—" when unknown. */
 export function fmtPct(pct?: number): string {
     return pct === undefined ? '—' : `${Math.round(pct)}%`;
 }
