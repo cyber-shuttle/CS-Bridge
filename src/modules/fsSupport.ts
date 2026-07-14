@@ -35,3 +35,35 @@ export function release(filepath: string): void {
     try { fs.unlinkSync(`${filepath}.lock`); }
     catch { /* already gone */ }
 }
+
+// JSON-array file read with a graceful fallback: missing file (ENOENT on first run), unparseable, or a corrupt /
+// hand-edited non-array all yield []. Shared by the sessions.json and runs.json stores.
+export function readJsonArray<T>(file: string): T[] {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        return Array.isArray(parsed) ? parsed : [];
+    }
+    catch { return []; }
+}
+
+// Locked read-modify-write of a JSON-array file. `mutate` returns the array to write, or null to skip (no-op). The
+// write is atomic (temp + rename) so a crash mid-write can't corrupt the file, and unlocked readers in other windows
+// see the old or new file whole, never a truncated one.
+export function updateJsonArray<T>(file: string, mutate: (arr: T[]) => T[] | null, onError?: (err: unknown) => void): void {
+    lock(file);
+    try {
+        const next = mutate(readJsonArray<T>(file));
+        if (next !== null) {
+            fs.writeFileSync(`${file}.tmp`, JSON.stringify(next, null, 2), 'utf-8');
+            fs.renameSync(`${file}.tmp`, file);
+        }
+    }
+    catch (err) { onError?.(err); }
+    finally { release(file); }
+}
+
+// fs.watch a directory for one file's changes. Lenient match: a temp+rename write can surface as the filename or (on
+// some platforms) a null filename, so fire on either.
+export function watchDirFile(dir: string, filename: string, callback: () => void): fs.FSWatcher {
+    return fs.watch(dir, (_, changed) => { if (!changed || changed === filename) { callback(); } });
+}
