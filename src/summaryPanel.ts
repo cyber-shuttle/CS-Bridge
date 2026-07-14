@@ -16,14 +16,14 @@ export async function enqueuePendingSummary(context: vscode.ExtensionContext, id
     await context.globalState.update(PENDING_KEY, queue.slice(-MAX_PENDING));
 }
 
-// On a local window's activation: if a summary is queued, shift one and open its tab. No-op otherwise.
-export async function consumePendingSummary(context: vscode.ExtensionContext, extensionUri: vscode.Uri): Promise<void> {
+export async function consumePendingSummary(context: vscode.ExtensionContext, extensionUri: vscode.Uri): Promise<SlurmSession | undefined> {
     const queue = context.globalState.get<string[]>(PENDING_KEY, []);
-    if (queue.length === 0) { return; }
+    if (queue.length === 0) { return undefined; }
     const [id, ...rest] = queue;
     await context.globalState.update(PENDING_KEY, rest);
     const session = getSession(id);
     if (session) { openSummaryPanel(extensionUri, session); }
+    return session;
 }
 
 export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, metricsOverride?: RunMetrics): void {

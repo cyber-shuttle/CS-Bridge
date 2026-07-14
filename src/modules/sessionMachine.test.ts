@@ -111,3 +111,11 @@ test('UNKNOWN holds (never terminalizes) — a transient/unrecognized sacct stat
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.UNKNOWN), {});
     assert.deepEqual(computeStatusTransition('connected', SlurmJobStatus.UNKNOWN), {});
 });
+
+test('a stopping session is never resurrected: RUNNING/QUEUED hold, only a terminal state finishes it', () => {
+    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.RUNNING), {});
+    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.QUEUED), {});
+    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.UNKNOWN), {});
+    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.CANCELLED), { next: 'stopped', stopMonitoring: true });
+    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.COMPLETED), { next: 'completed', stopMonitoring: true });
+});
