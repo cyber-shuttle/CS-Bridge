@@ -130,6 +130,10 @@ export interface SessionRunRecord {
     metrics?: RunMetrics;
 }
 
+export interface StatsState {
+    runs: SessionRunRecord[];
+}
+
 export interface SummaryState {
     session: SlurmSession;
     metrics?: RunMetrics;
@@ -170,4 +174,5 @@ export interface WebviewMessage {
     cpus?: string;
     memory?: string;
     allocation?: string;
+    jobId?: string;
 }
