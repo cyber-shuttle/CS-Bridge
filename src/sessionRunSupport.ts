@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Logger } from './logger';
-import { lock, release } from './modules/fsSupport';
+import { lock, release, readJsonArray } from './modules/fsSupport';
 import { CS_HOME } from './extensionStore';
 import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
@@ -18,13 +18,7 @@ const MAX_RUNS = 200;
 const METRIC_RETRIES = 2;
 const METRIC_RETRY_MS = 3000;
 
-function readRuns(): SessionRunRecord[] {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(RUNS_FILE, 'utf-8'));
-        return Array.isArray(parsed) ? parsed : []; // ENOENT on first run, or a corrupt/hand-edited file → start fresh
-    }
-    catch { return []; }
-}
+const readRuns = (): SessionRunRecord[] => readJsonArray<SessionRunRecord>(RUNS_FILE);
 
 export function getSessionRuns(): SessionRunRecord[] {
     return readRuns().sort((a, b) => b.endedAt - a.endedAt);

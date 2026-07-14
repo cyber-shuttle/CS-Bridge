@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { uuidv7 } from 'uuidv7';
 import { Logger } from './logger';
-import { lock, release, isPidAlive } from './modules/fsSupport';
+import { lock, release, isPidAlive, readJsonArray } from './modules/fsSupport';
 import { SlurmSession } from './models';
 import { mergeFromDisk, upsertRecord } from './modules/sessionStore';
 
@@ -48,10 +48,7 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
     return sessionsFilePath;
 }
 
-function readSessionsFromDisk(): SlurmSession[] {
-    try { return JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8')); }
-    catch { return []; }
-}
+const readSessionsFromDisk = (): SlurmSession[] => readJsonArray<SlurmSession>(sessionsFilePath);
 
 // Field-scoped read-modify-write under the cross-process lock: the mutator edits the fresh on-disk array, so a
 // write for one session never clobbers a sibling another window changed concurrently.

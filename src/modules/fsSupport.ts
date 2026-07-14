@@ -35,3 +35,13 @@ export function release(filepath: string): void {
     try { fs.unlinkSync(`${filepath}.lock`); }
     catch { /* already gone */ }
 }
+
+// JSON-array file read with a graceful fallback: missing file (ENOENT on first run), unparseable, or a corrupt /
+// hand-edited non-array all yield []. Shared by the sessions.json and runs.json stores.
+export function readJsonArray<T>(file: string): T[] {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        return Array.isArray(parsed) ? parsed : [];
+    }
+    catch { return []; }
+}
