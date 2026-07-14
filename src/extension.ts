@@ -58,8 +58,6 @@ export async function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(new RemoteSessionController(context, id));
     }
     else {
-        // Local window: open a queued summary. If it was a user Stop (session left 'stopping'), finish the stop here —
-        // the scancel + metrics run in this window, after the summary card is up, never from the remote window.
         void consumePendingSummary(context, context.extensionUri).then((session) => {
             if (session?.status === 'stopping') { sessionProvider.finishInterruptedStop(session); }
         });

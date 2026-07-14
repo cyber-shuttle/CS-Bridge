@@ -62,7 +62,6 @@ export class RemoteSessionController implements vscode.Disposable {
         await this.endToLocal();
     }
 
-    // User hit Stop: mark the session stopping and reload to local, which finishes the stop + shows the summary.
     private async stopAndSummarize(): Promise<void> {
         if (this.torndown) { return; }
         const session = getSession(this.sessionId);
@@ -73,8 +72,7 @@ export class RemoteSessionController implements vscode.Disposable {
 
         this.torndown = true; // claim now so the 1s render tick can't race the reload
         this.stopItem.text = '$(loading~spin) Stopping…';
-        // Mark 'stopping' and reload to local now, so the summary opens immediately; the reloaded window finishes the
-        // stop (scancel + metrics) via finishInterruptedStop. remote.close tears this window down regardless.
+        // Persist 'stopping', then reload; the reloaded local window finishes the stop (scancel + metrics), not this one.
         session.status = 'stopping';
         session.errorMessage = '';
         updateSession(session);

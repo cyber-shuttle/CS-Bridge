@@ -66,8 +66,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     public async reattachLiveSessions(): Promise<void> {
         if (this.remoteSessionId) { return; }
         for (const s of getAllSessions()) {
-            // Leave a 'stopping' session alone: a remote-window Stop handed it off and its summary consumer finishes it
-            // (scancel + metrics) after the card opens. Monitoring or reconnecting it here would fight that stop.
+            // Skip a 'stopping' session: a remote Stop handed it off for the summary consumer to finish; monitoring would fight it.
             if (s.status !== 'stopping' && s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
         }
         if ((await getMicrosoftAccountInfo()).label === null) { return; } // don't force a sign-in popup at startup
@@ -434,8 +433,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         this.finishInterruptedStop(session);
     }
 
-    // The actual stop, via stopSession. Shared by the sidebar Stop and by the summary consumer finishing a session a
-    // remote window left 'stopping' on reload.
+    // The real stop (via stopSession), shared by the sidebar Stop and the summary consumer finishing a handed-off session.
     public finishInterruptedStop(session: SlurmSession): void {
         // No success toast: a clean stop is silent (the summary/card reflects it); only a failure surfaces via runSessionTask.
         this.runSessionTask(session, `Stopping Session ${session.name}...`, 'stop',
