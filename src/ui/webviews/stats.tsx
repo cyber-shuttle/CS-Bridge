@@ -46,7 +46,7 @@ function SessionGroup({ group }: { group: SessionRunGroup }) {
 
 function Root() {
     const state = useWebviewState<StatsState>();
-    const runs = state?.runs; // newest-first (getSessionRuns sorts by endedAt desc)
+    const runs = state?.runs;
     if (!runs) { return <Stack pad="8px"><Text muted>Loading…</Text></Stack>; }
     if (runs.length === 0) {
         return <Stack pad="8px"><Text muted>No finished runs yet — utilization appears here once a session ends.</Text></Stack>;

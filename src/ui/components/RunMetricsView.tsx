@@ -3,7 +3,6 @@ import { efficiencySeverity, SEVERITY_COLOR, fmtPct } from '@/ui/logic/metrics';
 import { fmtTime } from '@/ui/logic/session';
 import type { RunMetrics } from '@/models';
 
-// Efficiency pill, shared by the Stats rows and the summary.
 export function EfficiencyChip({ label, pct }: { label: string; pct?: number }) {
     const color = SEVERITY_COLOR[efficiencySeverity(pct)];
     return (

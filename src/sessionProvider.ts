@@ -165,7 +165,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             case 'stopSessionExecution':
                 this.stopSessionExecution(id);
                 break;
-            case 'stopRemoteSession': // remote-window card Stop → same scancel + swap-to-local + summary as the status-bar Stop
+            case 'stopRemoteSession':
                 if (this.remoteSessionId) { void vscode.commands.executeCommand('csbridge.stopRemoteSession'); }
                 break;
             case 'connectTunnel':

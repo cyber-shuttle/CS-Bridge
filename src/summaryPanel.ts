@@ -42,8 +42,8 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
         void panel.webview.postMessage({ command: 'state', state });
     };
     const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });
-    const runsSub = watchRuns(() => post()); // metrics landed (any window, incl. the sidebar monitor)
-    const sessSub = watchSessions(() => post()); // status changed (stopping → stopped), incl. cross-window
+    const runsSub = watchRuns(() => post());
+    const sessSub = watchSessions(() => post());
     panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
     panel.onDidDispose(() => { msgSub.dispose(); runsSub.close(); sessSub.close(); });
 }

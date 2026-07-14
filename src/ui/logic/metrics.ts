@@ -2,7 +2,6 @@ import type { SessionRunRecord } from '@/models';
 
 export type EffSeverity = 'good' | 'ok' | 'poor' | 'unknown';
 
-/** Efficiency % → waste severity (heuristic, tunable thresholds). */
 export function efficiencySeverity(pct?: number): EffSeverity {
     if (pct === undefined) { return 'unknown'; }
     if (pct >= 75) { return 'good'; }

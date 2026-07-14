@@ -7,8 +7,6 @@ import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
 import { RunMetrics, SessionRunRecord, SlurmSession } from './models';
 
-// Status of finished runs, in a JSON file (~/.cybershuttle/runs.json)
-
 const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
 // No -X: usage (MaxRSS, TRESUsageInTot) lives on the .batch step rows, which parseSacctUtil turns into efficiency.
@@ -42,7 +40,8 @@ const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.clus
 
 export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
-    if (readRuns().some(r => isSameRun(r, session))) { return; } // already recorded by another end path — skip the sacct fetch
+    const alreadyRecorded = readRuns().some(r => isSameRun(r, session));
+    if (alreadyRecorded) { return; }
     const metrics = await fetchMetrics(session);
     lock(RUNS_FILE);
     try {
@@ -57,7 +56,6 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
     finally { release(RUNS_FILE); }
 }
 
-// Keep each session's RUNS_PER_SESSION most-recent runs, then a global MAX_RUNS backstop — both newest-first by endedAt.
 function capRuns(runs: SessionRunRecord[]): SessionRunRecord[] {
     const bySession = new Map<string, SessionRunRecord[]>();
     for (const r of runs) {

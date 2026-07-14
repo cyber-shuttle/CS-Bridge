@@ -56,7 +56,6 @@ export class RemoteSessionController implements vscode.Disposable {
             ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
     }
 
-    // Graceful end on wall-time expiry / terminal status. Idempotent.
     private async teardown(): Promise<void> {
         if (this.torndown) { return; }
         this.torndown = true;
