@@ -13,6 +13,7 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 - **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed and connectable in one click.
 - **SLURM without scripts** — set partition, CPUs, memory, GPUs, and walltime in a form; CS Bridge writes and submits the batch script.
 - **Session memory** — restart an expired job with its previous resource selection in one click.
+- **Utilization at a glance** — each finished run records CPU and memory efficiency; a summary tab and a Stats view keep the history, so you can see how well a session used its allocation.
 - **No inbound ports** — a Microsoft Dev Tunnel carries the transport; the cluster opens nothing new.
 - **OS-native SSH** — uses your system `ssh` binary and its own ControlMaster pool, not a bundled SSH client.
 - **A full VS Code window on the compute node** — your editor, debugger, extensions, and keybindings, running where the code runs.
