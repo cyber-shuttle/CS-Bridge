@@ -111,6 +111,25 @@ export enum SlurmJobStatus {
 
 export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean };
 
+export interface RunMetrics {
+    cores?: number;
+    reqMem?: string;
+    elapsedSec?: number;
+    maxRss?: string; // peak RSS, human-normalized (e.g. "1.2 GB")
+    cpuEfficiencyPct?: number; // used / allocated CPU-seconds
+    memEfficiencyPct?: number; // MaxRSS / ReqMem
+}
+
+export interface SessionRunRecord {
+    sessionId: string;
+    sessionName: string;
+    cluster: string;
+    jobId: string;
+    endedAt: number;
+    finalStatus: Session['status'];
+    metrics?: RunMetrics;
+}
+
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.
 export type HostRuntime =
     | { phase: 'loading' }
