@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { uuidv7 } from 'uuidv7';
 import { Logger } from './logger';
-import { lock, release, isPidAlive } from './modules/fsSupport';
+import { lock, release, isPidAlive, readJsonArray, updateJsonArray, watchDirFile } from './modules/fsSupport';
 import { SlurmSession } from './models';
 import { mergeFromDisk, upsertRecord } from './modules/sessionStore';
 
@@ -48,26 +48,13 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
     return sessionsFilePath;
 }
 
-function readSessionsFromDisk(): SlurmSession[] {
-    try { return JSON.parse(fs.readFileSync(sessionsFilePath, 'utf-8')); }
-    catch { return []; }
-}
+const readSessionsFromDisk = (): SlurmSession[] => readJsonArray<SlurmSession>(sessionsFilePath);
 
 // Field-scoped read-modify-write under the cross-process lock: the mutator edits the fresh on-disk array, so a
 // write for one session never clobbers a sibling another window changed concurrently.
 function writeSessionsFile(mutate: (disk: SlurmSession[]) => void): void {
-    lock(sessionsFilePath);
-    try {
-        const disk = readSessionsFromDisk();
-        mutate(disk);
-        fs.writeFileSync(sessionsFilePath, JSON.stringify(disk, null, 2), 'utf-8');
-    }
-    catch (err) {
-        logger.error(`Failed to save sessions to ${sessionsFilePath}`, err);
-    }
-    finally {
-        release(sessionsFilePath);
-    }
+    updateJsonArray<SlurmSession>(sessionsFilePath, (disk) => { mutate(disk); return disk; },
+        err => logger.error(`Failed to save sessions to ${sessionsFilePath}`, err));
 }
 
 export function getAllSessions(): SlurmSession[] {
@@ -119,8 +106,7 @@ export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAli
 // Cross-window sync: another window wrote sessions.json. Merge disk state onto our existing instances in place
 // (never swap identity) so references held by the monitor / in-flight connect stay valid and auto-refresh.
 export function watchSessions(callback: () => void): fs.FSWatcher {
-    return fs.watch(CS_HOME, (_, filename) => {
-        if (filename !== 'sessions.json') { return; }
+    return watchDirFile(CS_HOME, 'sessions.json', () => {
         lock(sessionsFilePath);
         try { mergeFromDisk(sessions, readSessionsFromDisk()); }
         finally { release(sessionsFilePath); }
