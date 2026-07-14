@@ -1,14 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { efficiencySeverity, fmtPct, groupRunsBySession } from './metrics';
+import { efficiencyColor, fmtPct, groupRunsBySession } from './metrics';
 
-test('efficiencySeverity buckets by waste threshold', () => {
-    assert.equal(efficiencySeverity(90), 'good');
-    assert.equal(efficiencySeverity(75), 'good');
-    assert.equal(efficiencySeverity(50), 'ok');
-    assert.equal(efficiencySeverity(40), 'ok');
-    assert.equal(efficiencySeverity(10), 'poor');
-    assert.equal(efficiencySeverity(undefined), 'unknown');
+test('efficiencyColor buckets by waste threshold', () => {
+    const green = 'var(--vscode-charts-green)', yellow = 'var(--vscode-charts-yellow)';
+    const red = 'var(--vscode-errorForeground)', grey = 'var(--vscode-descriptionForeground)';
+    assert.equal(efficiencyColor(90), green);
+    assert.equal(efficiencyColor(75), green);
+    assert.equal(efficiencyColor(50), yellow);
+    assert.equal(efficiencyColor(40), yellow);
+    assert.equal(efficiencyColor(10), red);
+    assert.equal(efficiencyColor(undefined), grey);
 });
 
 test('fmtPct rounds, and shows a dash when unknown', () => {
@@ -23,7 +25,7 @@ test('groupRunsBySession buckets by session, preserving newest-first order acros
         { sessionId: 'A', sessionName: 'a', cluster: 'delta', jobId: '1', endedAt: 100 },
     ] as unknown as Parameters<typeof groupRunsBySession>[0];
     const groups = groupRunsBySession(runs);
-    assert.deepEqual(groups.map(g => g.sessionId), ['A', 'B']); // group order = each session's newest run
-    assert.deepEqual(groups[0].runs.map(r => r.jobId), ['3', '1']); // within-group newest-first preserved
-    assert.equal(groups[1].runs.length, 1);
+    assert.deepEqual(groups.map(g => g[0].sessionId), ['A', 'B']); // group order = each session's newest run
+    assert.deepEqual(groups[0].map(r => r.jobId), ['3', '1']); // within-group newest-first preserved
+    assert.equal(groups[1].length, 1);
 });

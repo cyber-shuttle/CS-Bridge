@@ -3,7 +3,7 @@ import { useState } from 'preact/hooks';
 import { useWebviewState, post } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Icon } from '@/ui/components/base';
 import { EfficiencyChip } from '@/ui/components/RunMetricsView';
-import { groupRunsBySession, type SessionRunGroup } from '@/ui/logic/metrics';
+import { groupRunsBySession } from '@/ui/logic/metrics';
 import type { StatsState, SessionRunRecord } from '@/models';
 
 function RunItem({ run }: { run: SessionRunRecord }) {
@@ -28,18 +28,19 @@ function RunItem({ run }: { run: SessionRunRecord }) {
     );
 }
 
-function SessionGroup({ group }: { group: SessionRunGroup }) {
+function SessionGroup({ runs }: { runs: SessionRunRecord[] }) {
     const [open, setOpen] = useState(true);
-    const runLabel = `${group.runs.length} run${group.runs.length === 1 ? '' : 's'}`;
+    const { sessionName, cluster } = runs[0];
+    const runLabel = `${runs.length} run${runs.length === 1 ? '' : 's'}`;
     return (
         <Stack gap={0}>
             <Row gap={4} pad="3px 0" style={{ cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
                 <Icon name={open ? 'chevron-down' : 'chevron-right'} />
-                <Text weight={600} ellipsis>{group.sessionName}</Text>
-                <Text muted size={11} style={{ flexShrink: 0 }}>· {group.cluster}</Text>
+                <Text weight={600} ellipsis>{sessionName}</Text>
+                <Text muted size={11} style={{ flexShrink: 0 }}>· {cluster}</Text>
                 <Text muted size={11} style={{ marginLeft: 'auto', flexShrink: 0 }}>{runLabel}</Text>
             </Row>
-            {open && group.runs.map(run => <RunItem key={`${run.cluster}:${run.jobId}`} run={run} />)}
+            {open && runs.map(run => <RunItem key={`${run.cluster}:${run.jobId}`} run={run} />)}
         </Stack>
     );
 }
@@ -53,7 +54,7 @@ function Root() {
     }
     return (
         <Stack gap={6} pad="4px 8px">
-            {groupRunsBySession(runs).map(group => <SessionGroup key={group.sessionId} group={group} />)}
+            {groupRunsBySession(runs).map(group => <SessionGroup key={group[0].sessionId} runs={group} />)}
         </Stack>
     );
 }

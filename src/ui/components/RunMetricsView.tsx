@@ -1,10 +1,10 @@
 import { Row, Stack, Text } from '@/ui/components/base';
-import { efficiencySeverity, SEVERITY_COLOR, fmtPct } from '@/ui/logic/metrics';
+import { efficiencyColor, fmtPct } from '@/ui/logic/metrics';
 import { fmtTime } from '@/ui/logic/session';
 import type { RunMetrics } from '@/models';
 
 export function EfficiencyChip({ label, pct }: { label: string; pct?: number }) {
-    const color = SEVERITY_COLOR[efficiencySeverity(pct)];
+    const color = efficiencyColor(pct);
     return (
         <Row gap={4} style={{ padding: '1px 7px', borderRadius: '10px', border: `1px solid ${color}` }}>
             <Text size={11} muted>{label}</Text>

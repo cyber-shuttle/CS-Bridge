@@ -22,8 +22,6 @@ function openSessionWindow(sessionId: string, forceNew: boolean): void {
     vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: forceNew });
 }
 
-const STOP_CLEANUP_HINT = 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.';
-
 export class SessionProvider extends WebviewProvider implements vscode.Disposable {
     public static readonly viewType = 'csbridge.sessionsView';
     protected readonly viewKind = 'sessions' as const;
@@ -441,7 +439,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     public finishInterruptedStop(session: SlurmSession): void {
         // No success toast: a clean stop is silent (the summary/card reflects it); only a failure surfaces via runSessionTask.
         this.runSessionTask(session, `Stopping Session ${session.name}...`, 'stop',
-            p => stopSession(session, this.monitor, p), STOP_CLEANUP_HINT);
+            p => stopSession(session, this.monitor, p), 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.');
     }
 
     private launchSession(sessionId: string) {
@@ -464,14 +462,13 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     }
 
     // Dismissing the progress notification marks the session stopped; a failure marks it failed and shows a dialog.
-    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string, successMessage?: string): void {
+    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string): void {
         const task = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
             token.onCancellationRequested(() => this.setStatus(session, 'stopped'));
             await run(progress);
         });
         Promise.resolve(task).then(() => {
             void this.pushState();
-            if (successMessage) { vscode.window.showInformationMessage(successMessage); }
         }).catch((error) => {
             if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: offer Retry, no error dialog
                 this.setStatus(session, 'interrupted', '');
