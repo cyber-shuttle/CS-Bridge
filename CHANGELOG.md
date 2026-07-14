@@ -4,6 +4,30 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.0.5] - 2026-07-14
+
+### Added
+
+- **Utilization metrics + Stats view** — each finished run records CPU/memory efficiency from `sacct`; a summary tab and the new Stats view keep the history. (#82, #83, #84)
+- **Wall-time session summary** — a status bar tracks elapsed time; a summary tab opens when a session ends. (#76)
+- **Submit-filter validation** — Add/Save preflights the script via `sbatch --test-only` and saves only on pass, showing the site's own rejection. (#72)
+
+### Changed
+
+- **Graceful Stop from the remote window** — Stop reloads the window to local and finishes the cancel + summary there; the session holds `stopping` until `sacct` confirms. (#85)
+- **Connect spinner; Switch focuses** — Connect stays disabled until the window registers (no duplicate windows); Switch focuses the live window. (#73)
+- **Monitoring rewrite** — one lock-free poll loop per session; relay-live sessions ping the tunnel and skip `sacct`; connect tolerates an already-forwarded tunnel. (#77)
+- **Per-cluster window names** — `<cluster>-<session>` instead of `cshost-<uuid>`. (#77)
+- **`PENDING` shown as `QUEUED`**. (#75)
+- **linkspan port pinned at launch** — tunnel URL derived without scraping logs. (#75)
+- **Atomic `sessions.json` writes** — temp-file + rename, no truncation on crash. (#81)
+
+### Fixed
+
+- **Dead node behind the Dev Tunnels edge** — require linkspan's `{"status":"ok"}` body so wall-time `TIMEOUT` is detected instead of staying green. (#70)
+- **Missing node count** — always emit `#SBATCH --nodes=1`. (#69)
+- **New sessions sorting to the bottom** — reissue legacy `session-<ts>` ids as UUIDv7 on load. (#71)
+
 ## [0.0.4] - 2026-06-30
 
 ### Changed
