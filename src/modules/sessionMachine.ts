@@ -41,6 +41,9 @@ export const isReattachable = (status: Status, hasRefs: boolean): boolean => !is
 
 // RUNNING-while-'preparing' is handled by the monitor instead (side effects: scrape output, start remote prepare).
 export function computeStatusTransition(current: Status, slurm: SlurmJobStatus): StatusTransition {
+    // A stopping session is being torn down; a still-live sacct reading (RUNNING/QUEUED, or a scancel/accounting lag)
+    // must not pull it back to preparing/queued. Only a terminal SLURM state below finishes it.
+    if (current === 'stopping' && (slurm === SlurmJobStatus.RUNNING || slurm === SlurmJobStatus.QUEUED)) { return {}; }
     switch (slurm) {
         case SlurmJobStatus.RUNNING:
             // Promote a freshly-running job to 'preparing'; never pull a connect-phase session back (would thrash reattach).

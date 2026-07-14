@@ -125,6 +125,10 @@ export function SessionCard({ session, readonly }: Props) {
                                 ? <Button key={a.kind} disabled><Row gap={4}><Spinner size={11} /> {a.label}</Row></Button>
                                 : <Button key={a.kind} icon={a.icon} disabled={a.kind === 'current' || undefined} onClick={() => act(a)}>{a.label}</Button>)}
                         </Row>
+                    ) : readonly && actions.some(a => a.kind === 'stop') ? (
+                        <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0, zoom: 0.85 }}>
+                            <Button icon="debug-stop" onClick={() => post({ command: 'stopRemoteSession', sessionId: session.id })}>Stop</Button>
+                        </Row>
                     ) : null}
                 </Row>
             </Stack>

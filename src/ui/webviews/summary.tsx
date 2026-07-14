@@ -23,7 +23,9 @@ function Root() {
     const state = useWebviewState<SummaryState>();
     const s = state?.session;
     if (!s) { return <Stack pad="12px"><Text muted>Loading summary…</Text></Stack>; }
-    const loadingMsg = state?.metricsPending ? 'Fetching utilization metrics…' : null;
+    const loadingMsg = s.status === 'stopping' ? 'Closing session and preparing summary…'
+        : state?.metricsPending ? 'Fetching utilization metrics…'
+            : null;
     if (loadingMsg) {
         return <Stack gap={12} pad="48px" style={{ alignItems: 'center' }}><Spinner size={28} /><Text muted>{loadingMsg}</Text></Stack>;
     }

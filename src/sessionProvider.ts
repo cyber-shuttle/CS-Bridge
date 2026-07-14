@@ -66,12 +66,14 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     public async reattachLiveSessions(): Promise<void> {
         if (this.remoteSessionId) { return; }
         for (const s of getAllSessions()) {
-            if (s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
+            // Leave a 'stopping' session alone: a remote-window Stop handed it off and its summary consumer finishes it
+            // (scancel + metrics) after the card opens. Monitoring or reconnecting it here would fight that stop.
+            if (s.status !== 'stopping' && s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
         }
         if ((await getMicrosoftAccountInfo()).label === null) { return; } // don't force a sign-in popup at startup
         for (const s of getAllSessions()) {
-            // Relaying an expired session would only flash "connecting…" then fail back; leave it for the monitor.
-            if (isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
+            // Relaying an expired (or stopping) session would only flash "connecting…" then fail back; leave it be.
+            if (s.status !== 'stopping' && isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
                 void this.establishRelay(s);
             }
         }
@@ -160,6 +162,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 break;
             case 'stopSessionExecution':
                 this.stopSessionExecution(id);
+                break;
+            case 'stopRemoteSession':
+                if (this.remoteSessionId) { void vscode.commands.executeCommand('csbridge.stopRemoteSession'); }
                 break;
             case 'connectTunnel':
                 void this.connectSessionToTunnel(id);
@@ -426,9 +431,15 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
 
         this.setStatus(session, 'stopping', '');
         void this.pushState();
-        const hint = 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.';
+        this.finishInterruptedStop(session);
+    }
+
+    // The actual stop, via stopSession. Shared by the sidebar Stop and by the summary consumer finishing a session a
+    // remote window left 'stopping' on reload.
+    public finishInterruptedStop(session: SlurmSession): void {
+        // No success toast: a clean stop is silent (the summary/card reflects it); only a failure surfaces via runSessionTask.
         this.runSessionTask(session, `Stopping Session ${session.name}...`, 'stop',
-            p => stopSession(session, this.monitor, p), hint, `Session stopped. ${hint}`);
+            p => stopSession(session, this.monitor, p), 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.');
     }
 
     private launchSession(sessionId: string) {
@@ -451,14 +462,13 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     }
 
     // Dismissing the progress notification marks the session stopped; a failure marks it failed and shows a dialog.
-    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string, successMessage?: string): void {
+    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string): void {
         const task = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
             token.onCancellationRequested(() => this.setStatus(session, 'stopped'));
             await run(progress);
         });
         Promise.resolve(task).then(() => {
             void this.pushState();
-            if (successMessage) { vscode.window.showInformationMessage(successMessage); }
         }).catch((error) => {
             if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: offer Retry, no error dialog
                 this.setStatus(session, 'interrupted', '');
