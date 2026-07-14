@@ -1,9 +1,10 @@
 import { render } from 'preact';
 import { useWebviewState } from '@/ui/platform/vscode';
-import { Stack, Row, Text, Card, Icon } from '@/ui/components/base';
+import { Stack, Row, Text, Card, Icon, Spinner } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
+import { RunMetricsView, MetricRow as Field } from '@/ui/components/RunMetricsView';
 import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
-import type { SlurmSession } from '@/models';
+import type { SlurmSession, SummaryState } from '@/models';
 
 const STATUS_LABEL: Partial<Record<SlurmSession['status'], string>> = {
     stopped: 'Stopped', completed: 'Completed', failed: 'Failed',
@@ -18,25 +19,21 @@ function finalStateLabel(s: SlurmSession): string {
     return 'Ended';
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-    return (
-        <Row justify="space-between" gap={12}>
-            <Text muted>{label}</Text>
-            <Text>{value}</Text>
-        </Row>
-    );
-}
-
 function Root() {
-    const s = useWebviewState<SlurmSession>();
+    const state = useWebviewState<SummaryState>();
+    const s = state?.session;
     if (!s) { return <Stack pad="12px"><Text muted>Loading summary…</Text></Stack>; }
+    const loadingMsg = state?.metricsPending ? 'Fetching utilization metrics…' : null;
+    if (loadingMsg) {
+        return <Stack gap={12} pad="48px" style={{ alignItems: 'center' }}><Spinner size={28} /><Text muted>{loadingMsg}</Text></Stack>;
+    }
 
     const gpus = s.gpuCount > 0 ? `${s.gpuCount} × ${s.gpuClass}` : 'None';
     const usedMs = elapsedRunMs(s, Date.now());
     const limitMs = wallMs(s.wallTime);
 
     return (
-        <Stack gap={10} pad="14px 16px" style={{ maxWidth: '640px' }}>
+        <Stack gap={10} pad="14px 16px" style={{ maxWidth: '640px', margin: '0 auto' }}>
             <Row gap={8} wrap>
                 <Icon name="server-environment" />
                 <Text size={16} weight={600}>{s.name}</Text>
@@ -61,11 +58,11 @@ function Root() {
             </Card>
 
             <Card>
-                <Row gap={6}>
+                <Row gap={6} style={{ marginBottom: '4px' }}>
                     <Icon name="graph" />
                     <Text weight={600}>Utilization &amp; efficiency</Text>
                 </Row>
-                <Text muted>Detailed CPU/GPU utilization and efficiency over time will appear here once the metrics agent is available.</Text>
+                <RunMetricsView metrics={state?.metrics} />
             </Card>
         </Stack>
     );
