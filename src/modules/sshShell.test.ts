@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildShellCommand, extractCommandResult, READY_MARKER } from './sshShell';
+import { buildShellCommand, extractCommandResult, READY_MARKER, renderAuthHtml } from './sshShell';
 
 // What the persistent login shell echoes back after running `cmd` with the given rid.
 const reply = (rid: string, stdout: string, stderr: string, code: number) =>
@@ -47,4 +47,21 @@ test('a unique rid keeps a colliding-looking payload from being mistaken for the
 test('READY_MARKER is a fixed, recognizable token', () => {
     assert.equal(typeof READY_MARKER, 'string');
     assert.ok(READY_MARKER.length > 0);
+});
+
+test('renderAuthHtml preserves QR block glyphs and newlines verbatim in the <pre>', () => {
+    const prompt = 'Hit enter when done\n▀▀▀ ▄█▄ ▀▀▀\n█ ▄▄▄ █ ▀▄▀';
+    const html = renderAuthHtml(prompt, 'NONCE123');
+    assert.ok(html.includes(`<pre>${prompt}</pre>`)); // exact bytes + newlines, no reformatting
+    assert.ok(html.includes(`script-src 'nonce-NONCE123'`)); // script gated by the nonce
+});
+
+test('renderAuthHtml turns an http(s) URL into a clickable link', () => {
+    const url = 'https://cilogon.org/device/?user_code=XQG-V9K-3NV';
+    assert.ok(renderAuthHtml(`Authenticate at ${url}`, 'N').includes(`<a href="${url}">${url}</a>`));
+});
+
+test('renderAuthHtml HTML-escapes the prompt so markup in it cannot inject', () => {
+    const html = renderAuthHtml('user & <b>host</b>', 'N');
+    assert.ok(html.includes('user &amp; &lt;b&gt;host&lt;/b&gt;'));
 });

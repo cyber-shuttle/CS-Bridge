@@ -7,7 +7,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release } from './fsSupport';
-import { buildShellCommand, extractCommandResult, READY_MARKER } from './sshShell';
+import { buildShellCommand, extractCommandResult, READY_MARKER, renderAuthHtml } from './sshShell';
 import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock, csHostAlias } from './sshHostsStore';
 
 const logger = Logger.getInstance();
@@ -246,6 +246,22 @@ export class SshManager {
         return shell;
     }
 
+    // SSH auth prompt in a monospace webview (renderAuthHtml); resolves to the response, or undefined on dismiss.
+    private promptAuth(hostName: string, prompt: string): Promise<string | undefined> {
+        const nonce = crypto.randomBytes(16).toString('hex');
+        const panel = vscode.window.createWebviewPanel(
+            'csbridge.sshAuth', `SSH Authentication — ${hostName}`,
+            vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true },
+        );
+        panel.webview.html = renderAuthHtml(prompt, nonce);
+        return new Promise<string | undefined>((resolve) => {
+            const finish = (v?: string) => { resolve(v); panel.dispose(); }; // resolve latches, dispose is idempotent
+            panel.webview.onDidReceiveMessage((m: { type?: string; value?: string }) =>
+                finish(m?.type === 'submit' ? (m.value ?? '') : undefined));
+            panel.onDidDispose(() => finish(undefined));
+        });
+    }
+
     private pollAskpass(shell: HostShell, hostName: string, observer?: PromptObserver): NodeJS.Timeout {
         const handled = new Set<string>();
         const cancelFile = path.join(shell.askpassDir, 'cancel');
@@ -260,12 +276,7 @@ export class SshManager {
                 try {
                     const { id, prompt } = JSON.parse(fs.readFileSync(path.join(shell.askpassDir, file), 'utf-8'));
                     observer?.('opened');
-                    const password = await vscode.window.showInputBox({
-                        title: `SSH Authentication — ${hostName}`,
-                        prompt: String(prompt).trim(),
-                        password: true,
-                        ignoreFocusOut: true,
-                    });
+                    const password = await this.promptAuth(hostName, String(prompt));
                     if (password !== undefined) {
                         fs.writeFileSync(path.join(shell.askpassDir, `response-${id}`), password, 'utf-8');
                         observer?.('answered');
