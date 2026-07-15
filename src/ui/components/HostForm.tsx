@@ -108,7 +108,8 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
                     )
                 : null}
 
-            <Select label="Allocation" value={allocation} onChange={setAllocation} options={info.accounts.map(a => [a, a])} />
+            {/* '' → (No Allocation): a cluster may expose no accounts to pick (buildSlurmScript then omits --account). */}
+            <Select label="Allocation" value={allocation} onChange={setAllocation} options={[['', '(No Allocation)'], ...info.accounts.map(a => [a, a])]} />
             <Select label="Partition" value={partName} onChange={selectPartition}>
                 {parts.map(p => (
                     <Option key={p.name} value={p.name}>

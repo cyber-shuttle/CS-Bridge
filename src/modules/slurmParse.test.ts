@@ -55,6 +55,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     assert.match(script, /^#SBATCH --cpus-per-task=4$/m);
     assert.match(script, /^#SBATCH --mem=8GB$/m);
     assert.match(script, /^#SBATCH --partition=gpu$/m);
+    assert.match(script, /^#SBATCH --account=acct1$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
     // linkspan binds the port csbridge pinned at launch, so csbridge knows the tunnel URL without discovery.
     assert.match(script, /--port 25000 --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
@@ -67,6 +68,15 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
     } as SlurmSession;
     const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
     assert.doesNotMatch(script, /--gres=/);
+});
+
+test('buildSlurmScript omits the account directive when no allocation is selected', () => {
+    const session = {
+        cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'debug', allocation: '',
+        gpuClass: '', gpuCount: 0,
+    } as SlurmSession;
+    const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
+    assert.doesNotMatch(script, /--account/); // a blank --account= is rejected by SLURM
 });
 
 test('parseSacctUtil reads allocation fields, ignoring the empty usage on the main row', () => {
