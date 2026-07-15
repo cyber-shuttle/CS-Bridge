@@ -13,12 +13,10 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         `#SBATCH --mem=${memSlurm}`,
         `#SBATCH --time=${session.wallTime}`,
         `#SBATCH --partition=${session.queue}`,
-        `#SBATCH --account=${session.allocation}`,
+        // SLURM rejects a blank --account, so omit it when no allocation is chosen.
+        ...(session.allocation.trim() ? [`#SBATCH --account=${session.allocation}`] : []),
+        ...(session.gpuClass !== '' && session.gpuCount > 0 ? [`#SBATCH --gres=${session.gpuClass}`] : []),
     ];
-
-    if (session.gpuClass !== '' && session.gpuCount > 0) {
-        sbatchLines.push(`#SBATCH --gres=${session.gpuClass}`);
-    }
 
     const scriptLines = [
         `#!/bin/bash`,
