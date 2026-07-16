@@ -12,7 +12,7 @@ import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, dispo
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { slurmAccount } from './modules/slurmParse';
-import { isTerminal, isCloseable, isStoppable, isReattachable, isWallTimeExpired } from './modules/sessionMachine';
+import { isTerminal, isCloseable, isStoppable, isReattachable, isRelayLive, isWallTimeExpired } from './modules/sessionMachine';
 
 // forceNew=false relies on VS Code deduping by workspace identity: it focuses the window already holding this URI.
 function openSessionWindow(sessionId: string, forceNew: boolean): void {
@@ -351,7 +351,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         try {
             setStatus(session, 'connecting');
             await ensureRemoteSession(session); // idempotent; refreshes tunnel creds for reattach
-            const localPort = await connectSessionToTunnel(session);
+            const localPort = await connectSessionToTunnel(session, () => void this.reconnectRelay(session.id));
             // These awaits can run tens of seconds against a dead node; if the monitor terminalized meanwhile (session
             // auto-refreshes in place), drop the relay rather than overwrite its verdict.
             if (isTerminal(session.status) || isWallTimeExpired(session, Date.now())) {
@@ -378,6 +378,15 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         finally {
             this.connecting.delete(session.id);
         }
+    }
+
+    // Auto-recover a half-open relay: rebuild Step 2 (establishRelay disposes the dead client, reconnects, rewrites the
+    // ssh_config port) while the session is still relay-live and within its wall time. Its own guard blocks re-entry.
+    private async reconnectRelay(sessionId: string): Promise<void> {
+        const session = getSession(sessionId);
+        if (!session || !isRelayLive(session.status) || isWallTimeExpired(session, Date.now())) { return; }
+        this.logger.warn(`Session ${session.id}: relay half-open — rebuilding the tunnel.`);
+        await this.establishRelay(session);
     }
 
     // 'opening' holds the card's spinner until the new window's extension registers a windowPid (60s fallback).

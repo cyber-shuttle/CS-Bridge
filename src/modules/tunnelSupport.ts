@@ -17,6 +17,8 @@ import { createSshServer, forwardPort, getSshServers, LinkspanSshStatus, sshdPor
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
 const DEV_TUNNELS_SCOPE = `${DEV_TUNNELS_APP_ID}/.default`;
+// Consecutive 15s keep-alive misses (~1 min of dead relay) before we rebuild a half-open tunnel the SDK won't self-heal.
+const RELAY_RECONNECT_AFTER_MISSES = 4;
 
 const logger = Logger.getInstance();
 
@@ -120,7 +122,7 @@ export function isTunnelClientConnected(sessionId: string): boolean {
     return activeTunnelClients.get(sessionId)?.connectionStatus === ConnectionStatus.Connected;
 }
 
-export async function connectSessionToTunnel(session: SlurmSession): Promise<number> {
+export async function connectSessionToTunnel(session: SlurmSession, onRelayLost: () => void): Promise<number> {
     logger.info(`Connecting session ${session.id} to tunnel...`);
 
     if (!session.connectionInfo) {
@@ -150,7 +152,12 @@ export async function connectSessionToTunnel(session: SlurmSession): Promise<num
     client.acceptLocalConnectionsForForwardedPorts = true;
     // Surface relay link health: a stalled/reconnecting tunnel is otherwise invisible, and this tells contention from raw relay bandwidth.
     client.connectionStatusChanged(e => logger.info(`Tunnel ${session.id}: relay ${e.previousStatus} → ${e.status}${e.disconnectError ? ` (${e.disconnectError.message})` : ''}`));
-    client.keepAliveFailed(e => logger.warn(`Tunnel ${session.id}: relay keep-alive missed ${e.count} consecutive probe(s)`));
+    client.keepAliveFailed((e) => {
+        logger.warn(`Tunnel ${session.id}: relay keep-alive missed ${e.count} consecutive probe(s)`);
+        // A half-open relay stays "Connected", so the SDK's enableReconnect never fires; rebuild once misses cross the
+        // bar. Fires once — the rebuild disposes this client, ending its events.
+        if (e.count === RELAY_RECONNECT_AFTER_MISSES) { onRelayLost(); }
+    });
     activeTunnelClients.set(session.id, client);
 
     let localPort: number;
