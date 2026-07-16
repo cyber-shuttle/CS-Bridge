@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { readJsonArray, updateJsonArray } from './fsSupport';
+import { readJsonArray, updateJsonArray, readJson, updateJson, deleteFile } from './fsSupport';
 
 const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fss-')), 'store.json');
 
@@ -28,4 +28,18 @@ test('updateJsonArray: atomic write persists, null skips, in-place style works, 
     updateJsonArray<number>(f, (arr) => { arr.push(3); return arr; }); // in-place-mutate style (sessions store)
     assert.deepEqual(readJsonArray(f), [1, 2, 3]);
     assert.equal(fs.existsSync(`${f}.tmp`), false); // temp+rename leaves nothing behind
+});
+
+test('readJson / updateJson / deleteFile: RMW sees current value, null skips, missing → undefined', () => {
+    const f = tmpFile();
+    assert.equal(readJson(f), undefined); // missing
+    updateJson<{ n: number }>(f, cur => ({ n: (cur?.n ?? 0) + 1 }));
+    updateJson<{ n: number }>(f, cur => ({ n: (cur?.n ?? 0) + 1 }));
+    assert.deepEqual(readJson(f), { n: 2 }); // mutator saw the prior value
+    updateJson<{ n: number }>(f, () => null); // null = no-op
+    assert.deepEqual(readJson(f), { n: 2 });
+    assert.equal(fs.existsSync(`${f}.tmp`), false);
+    deleteFile(f);
+    assert.equal(readJson(f), undefined);
+    deleteFile(f); // no throw when already gone
 });
