@@ -66,3 +66,28 @@ export function updateJsonArray<T>(file: string, mutate: (arr: T[]) => T[] | nul
 export function watchDirFile(dir: string, filename: string, callback: () => void): fs.FSWatcher {
     return fs.watch(dir, (_, changed) => { if (!changed || changed === filename) { callback(); } });
 }
+
+// Single-object JSON read; atomic writers make torn reads impossible, so this is lock-free. Missing/unparseable → undefined.
+export function readJson<T>(file: string): T | undefined {
+    try { return JSON.parse(fs.readFileSync(file, 'utf-8')) as T; }
+    catch { return undefined; }
+}
+
+// Per-file locked read-modify-write (atomic temp+rename). `mutate` returns the value to write, or null to skip.
+export function updateJson<T>(file: string, mutate: (cur: T | undefined) => T | null, onError?: (err: unknown) => void): void {
+    lock(file);
+    try {
+        const next = mutate(readJson<T>(file));
+        if (next !== null) {
+            fs.writeFileSync(`${file}.tmp`, JSON.stringify(next, null, 2), 'utf-8');
+            fs.renameSync(`${file}.tmp`, file);
+        }
+    }
+    catch (err) { onError?.(err); }
+    finally { release(file); }
+}
+
+export function deleteFile(file: string): void {
+    try { fs.unlinkSync(file); }
+    catch { /* already gone */ }
+}
