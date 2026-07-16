@@ -104,6 +104,17 @@ test('parseSacctUtil derives efficiency across a day-spanning TotalCPU', () => {
     assert.equal(Math.round(m.cpuEfficiencyPct!), 25); // 86400s used / 345600s allocated = 25%
 });
 
+test('parseSacctUtil ignores srun poll steps and the empty running batch (no efficiency until it flushes)', () => {
+    const out = [
+        '20240108|2|2097152K|1641|3282||00:00:00',
+        '20240108.batch|2||1641|3282||00:00:00', // batch usage not flushed yet
+        '20240108.extern|2||1641|3282||00:00:00',
+        '20240108.0|2||1|2|24K|00:00:00', // our srun metric-poll steps — tiny, must not be read
+        '20240108.77|2||0|0|64K|00:00:00',
+    ].join('\n');
+    assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2.0 GB', elapsedSec: 1641 });
+});
+
 test('parseSacctUtil returns an empty object for no output', () => {
     assert.deepEqual(parseSacctUtil(''), {});
 });
