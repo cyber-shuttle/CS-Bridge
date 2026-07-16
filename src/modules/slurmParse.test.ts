@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil } from './slurmParse';
+import { parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
 import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
 
 test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
@@ -70,13 +70,20 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
     assert.doesNotMatch(script, /--gres=/);
 });
 
-test('buildSlurmScript omits the account directive when no allocation is selected', () => {
-    const session = {
-        cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'debug', allocation: '',
-        gpuClass: '', gpuCount: 0,
-    } as SlurmSession;
-    const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
-    assert.doesNotMatch(script, /--account/); // a blank --account= is rejected by SLURM
+test('buildSlurmScript omits --account for a blank or non-token allocation', () => {
+    const cred = { provider: 'devtunnel', authToken: 't' } as TunnelCredential;
+    for (const allocation of ['', '(No Allocation)']) {
+        const session = { cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'debug', allocation, gpuClass: '', gpuCount: 0 } as SlurmSession;
+        assert.doesNotMatch(buildSlurmScript(session, cred), /--account/);
+    }
+});
+
+test('slurmAccount keeps real account tokens and blanks anything else', () => {
+    assert.equal(slurmAccount('acct1'), 'acct1');
+    assert.equal(slurmAccount('  bio-lab_2.0 '), 'bio-lab_2.0');
+    assert.equal(slurmAccount('(No Allocation)'), '');
+    assert.equal(slurmAccount(''), '');
+    assert.equal(slurmAccount(undefined), '');
 });
 
 test('parseSacctUtil reads allocation fields, ignoring the empty usage on the main row', () => {
