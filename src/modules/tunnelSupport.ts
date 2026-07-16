@@ -203,7 +203,7 @@ export async function disposeAllTunnelClients(): Promise<void> {
 
 export async function disconnectSessionFromTunnel(session: SlurmSession): Promise<void> {
     await disposeTunnelClient(session.id);
-    removeSshConfigEntry(session.id, csHostAlias(session.cluster, session.name));
+    await removeSshConfigEntry(session.id, csHostAlias(session.cluster, session.name));
     session.connectionInfo = undefined;
     updateSession(session);
     logger.info(`Session ${session.id} disconnected from tunnel.`);

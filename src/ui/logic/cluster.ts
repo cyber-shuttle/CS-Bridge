@@ -23,15 +23,15 @@ export function cpuOptions(partition: SlurmPartitionInfo | undefined): number[] 
     return Array.from({ length: Math.max(0, max - 1) }, (_, i) => i + 2);
 }
 
-// 2 GB floor: 1 GB OOM-kills the VS Code remote server/extension host.
-const MEM_STEPS = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
-const MEM_FALLBACK = [2, 4, 8, 16, 32, 64, 128];
+// 4 GB floor: 2 GB OOM-kills the VS Code remote server/extension host (observed on Delta: the 2 GB cgroup OOMs the ptyHost).
+const MEM_STEPS = [4, 8, 16, 32, 64, 128, 256, 512, 1024];
+const MEM_FALLBACK = [4, 8, 16, 32, 64, 128];
 
 // Non-numeric/zero memory (e.g. 'unlimited') falls back to a fixed list of GB steps.
 export function memoryOptions(partition: SlurmPartitionInfo | undefined): string[] {
     const maxGb = Math.floor((Number(partition?.memory) || 0) / 1024);
     const valid = maxGb <= 0 ? MEM_FALLBACK : MEM_STEPS.filter(g => g <= maxGb);
-    return (valid.length ? valid : [2]).map(g => `${g} GB`);
+    return (valid.length ? valid : [4]).map(g => `${g} GB`);
 }
 
 export function gpuOptions(partition: SlurmPartitionInfo | undefined, tab: ResourceTab): GpuOptions {

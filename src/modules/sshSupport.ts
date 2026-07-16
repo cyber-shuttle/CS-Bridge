@@ -319,9 +319,24 @@ export class SshManager {
     }
 }
 
-export function addSshConfigEntry(session: SlurmSession, localPort: number, privateKey: string): string {
+// Upsert/drop this alias in remote.SSH.serverInstallPath (host->path map Remote-SSH reads at connect). Best-effort and
+// unlocked: no Remote-SSH, or a race between concurrent connects, just leaves that session on $HOME (today's default).
+async function setServerInstallPath(hostAlias: string, dir: string | undefined): Promise<void> {
+    try {
+        const cfg = vscode.workspace.getConfiguration('remote.SSH');
+        const map = { ...(cfg.get<Record<string, string>>('serverInstallPath') ?? {}) };
+        if (dir === undefined) { delete map[hostAlias]; }
+        else { map[hostAlias] = dir; }
+        await cfg.update('serverInstallPath', map, vscode.ConfigurationTarget.Global);
+    }
+    catch (err) {
+        logger.warn(`Could not update remote.SSH.serverInstallPath for ${hostAlias}: ${errMsg(err)}`);
+    }
+}
+
+export async function addSshConfigEntry(session: SlurmSession, localPort: number, privateKey: string): Promise<string> {
     const hostAlias = csHostAlias(session.cluster, session.name);
-    removeSshConfigEntry(session.id, hostAlias);
+    await removeSshConfigEntry(session.id, hostAlias);
     writeSessionPrivateKey(session.id, privateKey);
 
     const hostname = '127.0.0.1';
@@ -339,6 +354,9 @@ export function addSshConfigEntry(session: SlurmSession, localPort: number, priv
     finally {
         release(CS_SSH_CONFIG_PATH);
     }
+    // Pin the server to node-local /tmp, not $HOME/.vscode-server: on HPC $HOME is a shared network fs where stalls miss
+    // the ptyHost heartbeat and one account's sessions fight over a single tree. Set after the prune above so it wins.
+    await setServerInstallPath(hostAlias, `/tmp/cs-vscode/${session.id}`);
     return hostAlias;
 }
 
@@ -364,7 +382,7 @@ function removeSessionPrivateKey(sessionId: string): void {
     }
 }
 
-export function removeSshConfigEntry(sessionId: string, hostAlias: string): void {
+export async function removeSshConfigEntry(sessionId: string, hostAlias: string): Promise<void> {
     lock(CS_SSH_CONFIG_PATH);
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
@@ -387,4 +405,5 @@ export function removeSshConfigEntry(sessionId: string, hostAlias: string): void
     finally {
         release(CS_SSH_CONFIG_PATH);
     }
+    await setServerInstallPath(hostAlias, undefined);
 }
