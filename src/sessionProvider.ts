@@ -290,7 +290,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             gpuClass: data.gpu ?? '',
             cpus: parseInt(data.cpus ?? '') || 0,
             memory: data.memory || '',
-            allocation: slurmAccount(data.allocation), // "(No Allocation)" / stray label → "" so no bogus --account
+            allocation: slurmAccount(data.allocation),
         };
     }
 

@@ -6,12 +6,8 @@ import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, Tunn
 const LINKSPAN_SOCKET_DIR = '/tmp/csbridge';
 export const linkspanSocketPath = (sessionId: string): string => `${LINKSPAN_SOCKET_DIR}/${sessionId}.sock`;
 
-// A SLURM account is a bare token; "" or a UI sentinel like "(No Allocation)" (spaces/parens) means no account.
-// SLURM rejects a bogus --account with "Invalid account or account/partition combination", so callers must gate on this.
-export const slurmAccount = (raw: string | undefined): string => {
-    const t = (raw ?? '').trim();
-    return /^[A-Za-z0-9_.-]+$/.test(t) ? t : '';
-};
+// A SLURM account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
+export const slurmAccount = (raw: string | undefined): string => (raw ?? '').trim().match(/^[\w.-]+$/)?.[0] ?? '';
 
 export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
     const memSlurm = session.memory.replace(/\s+/g, '');
@@ -26,7 +22,6 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         `#SBATCH --mem=${memSlurm}`,
         `#SBATCH --time=${session.wallTime}`,
         `#SBATCH --partition=${session.queue}`,
-        // Only emit --account for a real account token — a blank or the "(No Allocation)" sentinel must not become --account.
         ...(account ? [`#SBATCH --account=${account}`] : []),
         ...(session.gpuClass !== '' && session.gpuCount > 0 ? [`#SBATCH --gres=${session.gpuClass}`] : []),
     ];
