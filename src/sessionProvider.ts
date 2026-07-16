@@ -11,6 +11,7 @@ import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetric
 import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
+import { slurmAccount } from './modules/slurmParse';
 import { isTerminal, isCloseable, isStoppable, isReattachable, isWallTimeExpired } from './modules/sessionMachine';
 
 // forceNew=false relies on VS Code deduping by workspace identity: it focuses the window already holding this URI.
@@ -289,7 +290,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             gpuClass: data.gpu ?? '',
             cpus: parseInt(data.cpus ?? '') || 0,
             memory: data.memory || '',
-            allocation: data.allocation || '',
+            allocation: slurmAccount(data.allocation), // "(No Allocation)" / stray label → "" so no bogus --account
         };
     }
 
