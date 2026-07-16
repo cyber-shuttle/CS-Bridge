@@ -8,7 +8,7 @@ import { SlurmSession } from './models';
 import { mergeFromDisk, toPersistedRecord } from './modules/sessionStore';
 import { deleteSessionMetrics } from './modules/sessionMetricsStore';
 
-export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
+const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
 const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];

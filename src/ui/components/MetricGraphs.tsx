@@ -9,7 +9,7 @@ const PCT: [number, number] = [0, 100];
 const pct = (unit: string) => (v: number) => `${Math.round(v)}% ${unit}`;
 const gpuMemPct = (g?: GpuStat) => (g && g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : undefined);
 
-export type Graph = { label: string; lines: (SparkLine & { fmt: (v: number) => string })[] };
+type Graph = { label: string; lines: (SparkLine & { fmt: (v: number) => string })[] };
 
 // CPU / memory / per-GPU series from a rolling live-sample window, in MEM, CPU, GPU order.
 export function metricGraphs(history: Metric[], gpuCount: number): Graph[] {
@@ -30,7 +30,6 @@ export function metricGraphs(history: Metric[], gpuCount: number): Graph[] {
 
 export const graphTitle = (g: Graph) => `${g.label} — ${g.lines.map(l => l.fmt(l.values.at(-1)!)).join(', ')}`;
 
-// A plain row of labeled sparklines — used in the summary panel for a run's recorded history.
 export function MetricGraphs({ history, gpuCount }: { history: Metric[]; gpuCount: number }) {
     const shown = metricGraphs(history, gpuCount).filter(g => g.lines[0].values.length >= 2);
     if (!shown.length) { return null; }

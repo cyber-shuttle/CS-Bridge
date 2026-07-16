@@ -98,7 +98,6 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
         const created = await createSshServer(baseUrl, headers);
         logger.info(`SSH server for session ${session.id} created on port ${created.bind_port}.`);
         ci.sshPort = created.bind_port;
-        ci.sshPassword = created.password;
         ci.sshPrivateKey = created.private_key;
         writeSessionPrivateKey(session.id, created.private_key); // persist so a reload at ready_to_connect can reconnect
         updateSession(session);

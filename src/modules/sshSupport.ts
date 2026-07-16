@@ -352,7 +352,7 @@ export function getSessionPrivateKey(sessionId: string): string | undefined {
     catch { return undefined; }
 }
 
-export function removeSessionPrivateKey(sessionId: string): void {
+function removeSessionPrivateKey(sessionId: string): void {
     const privateKeyPath = sessionKeyPath(sessionId);
     try {
         if (fs.existsSync(privateKeyPath)) {

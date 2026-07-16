@@ -83,7 +83,6 @@ src/
     logic/                # (V, tested) pure view logic: session.ts (status→dot/actions/labels), cluster.ts (resource options)
 scripts/
   askpass.{js,sh,cmd}    # SSH_ASKPASS bridge (Electron-as-node) routing password/passphrase prompts to VS Code dialogs
-  info.sh                # standalone SLURM capabilities probe — NOT currently invoked (cluster info is queried inline)
 resources/               # csbridge.svg/.png (activity-bar + command icons)
 ```
 

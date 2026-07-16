@@ -3,7 +3,7 @@ import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, Tunn
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
 // linkspan's unix socket — the portless in-allocation channel (srun --overlap curl --unix-socket).
-export const LINKSPAN_SOCKET_DIR = '/tmp/csbridge';
+const LINKSPAN_SOCKET_DIR = '/tmp/csbridge';
 export const linkspanSocketPath = (sessionId: string): string => `${LINKSPAN_SOCKET_DIR}/${sessionId}.sock`;
 
 export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
@@ -36,7 +36,7 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         `# unset it (and TMPDIR) so the VS Code server linkspan launches falls back to its node-local /tmp default.`,
         `unset XDG_RUNTIME_DIR TMPDIR`,
         ``,
-        `# --- Run linkspan (pre-deployed via scp) ---`,
+        `# --- Run linkspan ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
         `mkdir -p ${LINKSPAN_SOCKET_DIR}`,
         // Bind the port csbridge pinned at launch so it knows the tunnel URL up front (no log/port discovery).

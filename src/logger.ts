@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 
 export const errMsg = (e: unknown): string => e instanceof Error ? e.message : String(e);
 
-export enum LogLevel {
+enum LogLevel {
     Debug = 0,
     Info = 1,
     Warn = 2,

@@ -59,9 +59,8 @@ export function computeStatusTransition(current: Status, slurm: SlurmJobStatus):
             // Wall-time reached or cancelled — the job is gone but the session can be restarted.
             return { next: 'stopped', stopMonitoring: true };
         case SlurmJobStatus.UNKNOWN:
-            // An unrecognized/blank sacct state (PREEMPTED, REQUEUED, COMPLETING, accounting lag) is not job death — hold.
-            return {};
         default:
+            // An unrecognized/blank sacct state (PREEMPTED, REQUEUED, COMPLETING, accounting lag) is not job death — hold.
             return {};
     }
 }
