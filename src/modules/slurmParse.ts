@@ -94,18 +94,14 @@ function humanKib(kib: number): string {
     return `${Math.round(kib)} KB`;
 }
 
-const maxOf = (xs: (number | undefined)[]): number | undefined => {
-    const defined = xs.filter((n): n is number => n !== undefined);
-    return defined.length ? Math.max(...defined) : undefined;
-};
-
-// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU). Allocation fields
-// are on the main record; usage (MaxRSS, TotalCPU) is on the .batch step, blank on the main row, so efficiency is
-// derived only when present.
+// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU). Usage (MaxRSS,
+// TotalCPU) lives on the .batch step — where the workload runs; reading the .extern or our own srun poll steps would
+// mask it with their tiny/zero values.
 export function parseSacctUtil(output: string): Stats {
     const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
     if (rows.length === 0) { return {}; }
-    const alloc = rows.find(r => !r[0].includes('.')) ?? rows[0]; // main allocation record, not ".batch"/".extern"
+    const alloc = rows.find(r => !r[0].includes('.')) ?? rows[0];
+    const usage = rows.find(r => r[0].endsWith('.batch')) ?? alloc;
 
     const m: Stats = {};
     const cores = Number(alloc[1]);
@@ -114,12 +110,13 @@ export function parseSacctUtil(output: string): Stats {
     if (alloc[3] && Number.isFinite(Number(alloc[3]))) { m.elapsedSec = Number(alloc[3]); }
     const allocCpuSec = Number(alloc[4]); // CPUTimeRAW = elapsed × cpus
 
-    const maxRssKib = maxOf(rows.map(r => parseKib(r[5])));
-    const usedCpuSec = maxOf(rows.map(r => hmsSeconds(r[6])));
+    const maxRssKib = parseKib(usage[5]);
+    const usedCpuSec = hmsSeconds(usage[6]);
 
     if (reqMemKib !== undefined) { m.reqMem = humanKib(reqMemKib); }
     if (maxRssKib !== undefined) { m.maxRss = humanKib(maxRssKib); }
-    if (usedCpuSec !== undefined && Number.isFinite(allocCpuSec) && allocCpuSec > 0) {
+    // TotalCPU is 00:00:00 until the step ends, so a zero means "not flushed yet", not a truly idle job — skip it.
+    if (usedCpuSec && Number.isFinite(allocCpuSec) && allocCpuSec > 0) {
         m.cpuEfficiencyPct = usedCpuSec / allocCpuSec * 100;
     }
     if (maxRssKib !== undefined && reqMemKib) { m.memEfficiencyPct = maxRssKib / reqMemKib * 100; }
