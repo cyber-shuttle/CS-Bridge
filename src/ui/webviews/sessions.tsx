@@ -75,13 +75,9 @@ function AlertOverlay({ alert }: { alert: NonNullable<SessionsState['alert']> })
 function SessionsView({ state }: { state: SessionsState }) {
     if (state.isRemote) {
         const session = state.sessions[0];
-        return (
-            <>
-                {session
-                    ? <SessionCard key={session.id} session={session} readonly />
-                    : <Text muted style={{ margin: '2px 0' }}>No active session.</Text>}
-            </>
-        );
+        return session
+            ? <SessionCard key={session.id} session={session} readonly />
+            : <Text muted style={{ margin: '2px 0' }}>No active session.</Text>;
     }
     return (
         <>

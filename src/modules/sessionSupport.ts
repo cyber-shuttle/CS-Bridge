@@ -1,7 +1,7 @@
 import { Metric, SlurmJobStatus, SlurmSession, TunnelCredential, PromptObserver } from '../models';
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
-import { updateSession } from '../extensionStore';
+import { updateSession, setStatus } from '../extensionStore';
 import { recordSessionRun, sacctStats } from '../sessionRunSupport';
 import { SshManager } from './sshSupport';
 import { getMetricsViaSrun, getSlurmJobStatus } from './slurmSupport';
@@ -46,11 +46,7 @@ export class SessionMonitor {
 
     // Apply a poll transition: persist a status change, tear down on an authoritative terminal verdict.
     private applyTransition(session: SlurmSession, t: StatusTransition): void {
-        if (t.next) {
-            session.status = t.next;
-            if (t.error) { session.errorMessage = t.error; }
-            updateSession(session);
-        }
+        if (t.next) { setStatus(session, t.next, t.error); } // t.error is undefined or non-empty, so it sets only on a real error
         if (t.stopMonitoring) { this.endSession(session.id); }
     }
 
@@ -83,10 +79,8 @@ export class SessionMonitor {
             await ensureRemoteSession(session); // linkspan is up — start the sshd and forward it (all over the tunnel)
             if (session.status === 'preparing') { // may have left 'preparing' during the awaits (e.g. user hit Stop)
                 this.healthFailedCounts.delete(session.id); // Step 1 up — clear the prepare-failure tally
-                session.status = 'ready_to_connect';
-                session.errorMessage = ''; // clear any transient-retry warning now that Step 1 is up
                 this.log(session, 'linkspan is ready to connect.');
-                updateSession(session);
+                setStatus(session, 'ready_to_connect', ''); // clear any transient-retry warning now that Step 1 is up
             }
         }
         catch (err) {
@@ -119,9 +113,7 @@ export class SessionMonitor {
             const now = Date.now();
             if (session.status !== 'stopping' && isWallTimeExpired(session, now)
                 && (!isTunnelClientConnected(session.id) || isWallTimeExpired(session, now - WALL_TIME_GRACE_MS))) {
-                session.status = 'stopped';
-                session.errorMessage = '';
-                updateSession(session);
+                setStatus(session, 'stopped', '');
                 this.endSession(sessionId);
                 return;
             }
@@ -175,9 +167,7 @@ export class SessionMonitor {
             this.warn(session, `cluster unreachable (will retry): ${errMsg(error)}`);
             const next = unreachableStatus(session.status);
             if (next && session.status !== next) {
-                session.status = next;
-                session.errorMessage = `Cluster unreachable: ${errMsg(error)}`;
-                updateSession(session);
+                setStatus(session, next, `Cluster unreachable: ${errMsg(error)}`);
             }
         }
         finally {
@@ -293,15 +283,12 @@ export async function stopSession(session: SlurmSession, monitor: SessionMonitor
         else {
             logger.warn(`Session ${session.name}: has no job ID; marking stopped without scancel.`);
         }
-        session.status = 'stopped';
-        updateSession(session);
+        setStatus(session, 'stopped');
     }
     catch (error) {
         stopError = error instanceof Error ? error : new Error(String(error));
         logger.error(`Session ${session.name}: Error while stopping:`, error);
-        session.status = 'failed';
-        session.errorMessage = stopError.message;
-        updateSession(session);
+        setStatus(session, 'failed', stopError.message);
     }
 
     // On failure the job may still be alive, so free only the local port and keep the refs for reattach.

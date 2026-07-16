@@ -12,7 +12,7 @@ const METRIC_RETRY_MS = 3000;
 
 export const getSessionRuns = (): SessionRunRecord[] => readAllRuns();
 export const clearSessionRuns = (): void => clearAllRuns();
-export const watchRuns = (callback: () => void) => watchSessionMetrics(callback);
+export const watchRuns = watchSessionMetrics;
 
 const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.cluster && r.jobId === s.jobId;
 

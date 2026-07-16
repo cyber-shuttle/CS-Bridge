@@ -114,12 +114,10 @@ export function sshCommandToConfig(command: string): SshConfigEntry {
 const INVALID_HOST_CHARS = ['\\', '\'', '"', '`', '!', '%', '\r', '\n'];
 
 export function assertValidHost(entry: SshConfigEntry): void {
-    const hostName = entry.HostName;
-    const user = entry.User;
-    if (hostName.startsWith('-')) { throw new CommandParseError('SSH host name cannot begin with -'); }
-    if (user && user.startsWith('-')) { throw new CommandParseError('SSH user name cannot begin with -'); }
-    for (const ch of INVALID_HOST_CHARS) {
-        if (hostName.includes(ch)) { throw new CommandParseError(`SSH host name cannot include the character ${ch}`); }
-        if (user && user.includes(ch)) { throw new CommandParseError(`SSH user name cannot include the character ${ch}`); }
+    for (const [label, val] of [['host', entry.HostName], ['user', entry.User]] as const) {
+        if (!val) { continue; }
+        if (val.startsWith('-')) { throw new CommandParseError(`SSH ${label} name cannot begin with -`); }
+        const bad = INVALID_HOST_CHARS.find(ch => val.includes(ch));
+        if (bad) { throw new CommandParseError(`SSH ${label} name cannot include the character ${bad}`); }
     }
 }

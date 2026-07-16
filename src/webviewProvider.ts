@@ -40,6 +40,12 @@ export abstract class WebviewProvider implements vscode.WebviewViewProvider {
     }
 }
 
+// Modal confirm dialog; true only when the user clicked the confirm button.
+export async function confirmModal(title: string, confirmLabel: string, detail?: string): Promise<boolean> {
+    const choice = await vscode.window.showWarningMessage(title, { modal: true, detail }, confirmLabel);
+    return choice === confirmLabel;
+}
+
 // CSP-gated HTML shell that loads the view's esbuild bundle (out/<view>.js) + codicons.
 export function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri, view: ViewKind): string {
     const nonce = getNonce();
