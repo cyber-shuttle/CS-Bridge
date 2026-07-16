@@ -60,3 +60,20 @@ export function deleteFile(file: string): void {
     try { fs.unlinkSync(file); }
     catch { /* already gone */ }
 }
+
+// Per-file locked read-modify-write of a text file (atomic temp+rename). `transform` gets the current text (undefined
+// if absent) and returns the new text, or null to skip.
+export function updateTextFile(file: string, transform: (cur: string | undefined) => string | null, mode?: number): void {
+    lock(file);
+    try {
+        let cur: string | undefined;
+        try { cur = fs.readFileSync(file, 'utf-8'); }
+        catch { /* missing → undefined */ }
+        const next = transform(cur);
+        if (next !== null) {
+            fs.writeFileSync(`${file}.tmp`, next, mode !== undefined ? { mode } : undefined);
+            fs.renameSync(`${file}.tmp`, file);
+        }
+    }
+    finally { release(file); }
+}

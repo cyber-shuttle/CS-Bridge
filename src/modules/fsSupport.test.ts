@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { readJson, updateJson, deleteFile } from './fsSupport';
+import { readJson, updateJson, deleteFile, updateTextFile } from './fsSupport';
 
 const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fss-')), 'store.json');
 
@@ -19,4 +19,14 @@ test('readJson / updateJson / deleteFile: RMW sees current value, null skips, mi
     deleteFile(f);
     assert.equal(readJson(f), undefined);
     deleteFile(f); // no throw when already gone
+});
+
+test('updateTextFile: missing → undefined, RMW appends, null skips (no file created), atomic', () => {
+    const f = tmpFile();
+    updateTextFile(f, cur => (cur === undefined ? null : cur + 'x')); // missing → null → no write
+    assert.equal(fs.existsSync(f), false);
+    updateTextFile(f, cur => (cur ?? '') + 'a');
+    updateTextFile(f, cur => (cur ?? '') + 'b');
+    assert.equal(fs.readFileSync(f, 'utf-8'), 'ab'); // transform saw the prior text
+    assert.equal(fs.existsSync(`${f}.tmp`), false);
 });
