@@ -8,7 +8,8 @@ import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, setStatus, watchSessions, liveAndCleanup } from './extensionStore';
 import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
-import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount, linkspanEndpoint } from './modules/tunnelSupport';
+import { getHealth } from './modules/linkspanSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { slurmAccount } from './modules/slurmParse';
@@ -52,6 +53,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         this.sharedReady = true;
         this.shared.push(vscode.authentication.onDidChangeSessions((e) => {
             if (e.provider.id === 'microsoft') { void this.pushState(); }
+        }));
+        this.shared.push(vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('csbridge.developerMode')) { void this.pushState(); }
         }));
         // A remote window re-renders only when its own session changes.
         let lastMine: string | undefined;
@@ -177,6 +181,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             case 'removeSession':
                 this.removeSession(id);
                 break;
+            case 'pingLinkspan':
+                void this.pingLinkspan(id);
+                break;
             default:
                 this.logger.warn('Unknown command from webview:', command);
         }
@@ -190,6 +197,24 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             if (push) { void this.pushState(); }
         }
         return s;
+    }
+
+    // Developer-mode debug ping: hit linkspan's /health over the session's tunnel and surface the result as a toast.
+    private async pingLinkspan(id: string): Promise<void> {
+        const session = this.requireSession(id, 'ping linkspan', false);
+        if (!session) { return; }
+        if (!session.connectionInfo?.apiTunnelId) {
+            vscode.window.showWarningMessage(`${session.cluster}: no linkspan tunnel yet — connect the session first.`);
+            return;
+        }
+        try {
+            const { baseUrl, headers } = linkspanEndpoint(session);
+            await getHealth(baseUrl, headers);
+            vscode.window.showInformationMessage(`linkspan is up — ${session.cluster} (${session.name}).`);
+        }
+        catch (error) {
+            vscode.window.showErrorMessage(`linkspan unreachable — ${session.cluster}: ${errMsg(error)}`);
+        }
     }
 
     private async removeSession(sessionId: string) {
@@ -319,6 +344,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             view.description = account.label ?? 'Not Signed In';
             const state: SessionsState = {
                 isRemote: this.remoteSessionId !== undefined,
+                developerMode: vscode.workspace.getConfiguration('csbridge').get('developerMode', false),
                 sessions: this.scopedSessions()
                     .map((s) => {
                         const live = liveAndCleanup(s);

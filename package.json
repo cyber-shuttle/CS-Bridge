@@ -31,6 +31,16 @@
 	],
 	"main": "./out/extension.js",
 	"contributes": {
+		"configuration": {
+			"title": "CS Bridge",
+			"properties": {
+				"csbridge.developerMode": {
+					"type": "boolean",
+					"default": false,
+					"description": "Show developer-only debugging controls, such as the per-session linkspan health check button on each session card."
+				}
+			}
+		},
 		"viewsContainers": {
 			"activitybar": [
 				{

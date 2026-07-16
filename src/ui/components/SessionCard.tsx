@@ -12,6 +12,7 @@ import { post } from '@/ui/platform/vscode';
 interface Props {
     session: ViewSession;
     readonly?: boolean;
+    dev?: boolean;
 }
 
 // 1s clock owned by the Sessions root, fed through this context so StatusText re-renders each tick.
@@ -102,7 +103,7 @@ function StatusText({ session }: { session: ViewSession }) {
     }
 }
 
-export function SessionCard({ session, readonly }: Props) {
+export function SessionCard({ session, readonly, dev }: Props) {
     const { statusColor, canClose, actions } = statusDescriptor(session);
     const status = STATUS_ICON[session.status];
 
@@ -120,11 +121,12 @@ export function SessionCard({ session, readonly }: Props) {
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
                 {session.jobDirectory ? <Text muted size={11} ellipsis>{session.jobDirectory}</Text> : null}
-                {!readonly && canClose
+                {!readonly && (dev || canClose)
                     ? (
                             <Row gap={4} style={{ marginLeft: 'auto' }}>
-                                <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
-                                <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
+                                {dev ? <ActionIcon name="circle-filled" ariaLabel="Check linkspan" title="Check linkspan availability (dev)" size={14} onClick={() => post({ command: 'pingLinkspan', sessionId: session.id })} /> : null}
+                                {canClose ? <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} /> : null}
+                                {canClose ? <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} /> : null}
                             </Row>
                         )
                     : null}

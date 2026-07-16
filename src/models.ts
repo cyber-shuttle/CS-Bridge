@@ -167,6 +167,7 @@ export type HostRuntime =
 
 export interface SessionsState {
     isRemote: boolean;
+    developerMode: boolean;
     sessions: ViewSession[];
     draftHost: string | null;
     editingId: string | null;
