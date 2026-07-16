@@ -6,18 +6,17 @@ import { Logger } from './logger';
 import { readJson, updateJson, deleteFile, isPidAlive } from './modules/fsSupport';
 import { SlurmSession } from './models';
 import { mergeFromDisk, toPersistedRecord } from './modules/sessionStore';
+import { deleteSessionMetrics } from './modules/sessionMetricsStore';
 
 export const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
 const logger = Logger.getInstance();
-// One record file per session (sessions/{id}.json), so each session locks independently — no shared sessions.json lock
-// whose contention compounds with sessions × windows.
 let sessions: SlurmSession[] = [];
 let sessionsDir = '';
 
 const isUuid = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 const recordPath = (id: string): string => path.join(sessionsDir, `${id}.json`);
-const isRecordFile = (name: string): boolean => name.endsWith('.json'); // excludes the *.json.tmp mid-write temp
+const isRecordFile = (name: string): boolean => name.endsWith('.json');
 
 function readAllRecords(): SlurmSession[] {
     try {
@@ -28,13 +27,13 @@ function readAllRecords(): SlurmSession[] {
     catch { return []; }
 }
 
-// Preserves the on-disk windowPids (owned by mutateWindowPids) so a record write can't clobber another window's pids.
+// Keeps the on-disk windowPids so a record write can't clobber another window's pids.
 function writeRecord(session: SlurmSession): void {
     updateJson<SlurmSession>(recordPath(session.id), cur => toPersistedRecord(session, cur?.windowPids),
         err => logger.error(`Failed to save session ${session.id}`, err));
 }
 
-// One-time: split a legacy sessions.json array into per-session record files, then retire it.
+// One-time migration of the legacy sessions.json array.
 function migrateLegacyFile(): void {
     const legacy = path.join(CS_HOME, 'sessions.json');
     let arr: unknown;
@@ -84,6 +83,7 @@ export function removeSession(sessionId: string) {
     const index = sessions.findIndex(s => s.id === sessionId);
     if (index !== -1) { sessions.splice(index, 1); }
     deleteFile(recordPath(sessionId));
+    deleteSessionMetrics(sessionId);
 }
 
 export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
@@ -103,8 +103,7 @@ export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAli
     return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
 }
 
-// Cross-window sync: reconcile in-memory from the per-session files in place (never swap identity, so monitor/connect
-// refs stay valid). Lock-free reads (atomic writes → whole files); fires only when the record set actually changed.
+// Cross-window sync: reconcile in-memory from disk in place (never swap identity, so monitor/connect refs stay valid).
 export function watchSessions(callback: () => void): fs.FSWatcher {
     return fs.watch(sessionsDir, (_event, filename) => {
         if (filename && !isRecordFile(filename)) { return; }
