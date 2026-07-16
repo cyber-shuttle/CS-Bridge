@@ -215,7 +215,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         await disposeTunnelClient(sessionId);
         await removeDevTunnel(session);
         try {
-            removeSshConfigEntry(sessionId, csHostAlias(session.cluster, session.name));
+            await removeSshConfigEntry(sessionId, csHostAlias(session.cluster, session.name));
         }
         catch (err) {
             this.logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);
@@ -360,7 +360,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             }
             const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
             if (!privateKey) { throw new Error('SSH private key not found for session'); }
-            const hostAlias = addSshConfigEntry(session, localPort, privateKey);
+            const hostAlias = await addSshConfigEntry(session, localPort, privateKey);
             this.logger.info(`SSH config entry ready for session ${session.id} (ssh ${hostAlias})`);
             setStatus(session, 'connected');
             return true;
