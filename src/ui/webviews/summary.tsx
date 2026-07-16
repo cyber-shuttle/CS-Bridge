@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useWebviewState } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Card, Icon, Spinner } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
-import { RunMetricsView, MetricRow as Field } from '@/ui/components/RunMetricsView';
+import { StatsView, MetricRow as Field } from '@/ui/components/StatsView';
 import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
 import type { SlurmSession, SummaryState } from '@/models';
 
@@ -64,7 +64,7 @@ function Root() {
                     <Icon name="graph" />
                     <Text weight={600}>Utilization &amp; efficiency</Text>
                 </Row>
-                <RunMetricsView metrics={state?.metrics} />
+                <StatsView stats={state?.stats} />
             </Card>
         </Stack>
     );

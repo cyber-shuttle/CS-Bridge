@@ -2,7 +2,7 @@ import { render } from 'preact';
 import { useState } from 'preact/hooks';
 import { useWebviewState, post } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Icon } from '@/ui/components/base';
-import { EfficiencyChip } from '@/ui/components/RunMetricsView';
+import { EfficiencyChip } from '@/ui/components/StatsView';
 import { groupRunsBySession } from '@/ui/logic/metrics';
 import type { StatsState, SessionRunRecord } from '@/models';
 
@@ -21,8 +21,8 @@ function RunItem({ run }: { run: SessionRunRecord }) {
                 <Text muted size={11} style={{ flexShrink: 0 }}>{run.finalStatus}</Text>
             </Row>
             <Row gap={4} style={{ flexShrink: 0 }}>
-                <EfficiencyChip label="CPU" pct={run.metrics?.cpuEfficiencyPct} />
-                <EfficiencyChip label="Mem" pct={run.metrics?.memEfficiencyPct} />
+                <EfficiencyChip label="CPU" pct={run.stats?.cpuEfficiencyPct} />
+                <EfficiencyChip label="Mem" pct={run.stats?.memEfficiencyPct} />
             </Row>
         </Row>
     );

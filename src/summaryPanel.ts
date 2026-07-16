@@ -3,7 +3,7 @@ import { getSession, watchSessions } from './extensionStore';
 import { getSessionRuns, watchRuns } from './sessionRunSupport';
 import { renderHtml } from './webviewProvider';
 import { isTerminal } from './modules/sessionMachine';
-import { RunMetrics, SlurmSession, SummaryState } from './models';
+import { Stats, SlurmSession, SummaryState } from './models';
 
 const PENDING_KEY = 'csbridge.pendingSummaries';
 // ponytail: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.
@@ -26,7 +26,7 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
     return session;
 }
 
-export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, metricsOverride?: RunMetrics): void {
+export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, statsOverride?: Stats): void {
     const panel = vscode.window.createWebviewPanel(
         'csbridge.summary', `Session ${session.name} summary: `,
         vscode.ViewColumn.One, { enableScripts: true },
@@ -36,9 +36,9 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
         const s = getSession(session.id) ?? session;
         const run = getSessionRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
         // Terminal session with no run record yet → recordSessionRun is still in flight; the webview keeps its spinner
-        // rather than flashing "no metrics". A stats-opened summary passes metricsOverride, so it's never pending.
-        const metricsPending = metricsOverride === undefined && isTerminal(s.status) && !run;
-        const state: SummaryState = { session: s, metrics: metricsOverride ?? run?.metrics, metricsPending };
+        // rather than flashing "no stats". A stats-opened summary passes statsOverride, so it's never pending.
+        const metricsPending = statsOverride === undefined && isTerminal(s.status) && !run;
+        const state: SummaryState = { session: s, stats: statsOverride ?? run?.stats, metricsPending };
         void panel.webview.postMessage({ command: 'state', state });
     };
     const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });

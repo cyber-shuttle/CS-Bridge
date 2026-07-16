@@ -4,7 +4,7 @@ import { readJsonArray, updateJsonArray, watchDirFile } from './modules/fsSuppor
 import { CS_HOME } from './extensionStore';
 import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
-import { RunMetrics, SessionRunRecord, SlurmSession } from './models';
+import { Stats, SessionRunRecord, SlurmSession } from './models';
 
 const logger = Logger.getInstance();
 const RUNS_FILE = path.join(CS_HOME, 'runs.json');
@@ -31,8 +31,8 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
     const alreadyRecorded = readRuns().some(r => isSameRun(r, session));
     if (alreadyRecorded) { return; }
-    const metrics = await fetchMetrics(session);
-    const record: SessionRunRecord = { sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, metrics };
+    const stats = await fetchMetrics(session);
+    const record: SessionRunRecord = { sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, stats };
     updateJsonArray<SessionRunRecord>(RUNS_FILE,
         runs => runs.some(r => isSameRun(r, session)) ? null : capRuns([...runs, record]),
         err => logger.error('Failed to record run', err));
@@ -50,7 +50,7 @@ function capRuns(runs: SessionRunRecord[]): SessionRunRecord[] {
         .sort((a, b) => b.endedAt - a.endedAt).slice(0, MAX_RUNS);
 }
 
-async function fetchMetrics(session: SlurmSession): Promise<RunMetrics | undefined> {
+async function fetchMetrics(session: SlurmSession): Promise<Stats | undefined> {
     for (let attempt = 0; ; attempt++) {
         const m = await sacctMetrics(session);
         if ((m && m.maxRss !== undefined) || attempt >= METRIC_RETRIES) { return m; }
@@ -58,7 +58,7 @@ async function fetchMetrics(session: SlurmSession): Promise<RunMetrics | undefin
     }
 }
 
-async function sacctMetrics(session: SlurmSession): Promise<RunMetrics | undefined> {
+async function sacctMetrics(session: SlurmSession): Promise<Stats | undefined> {
     try {
         const r = await SshManager.getInstance().runRemoteCommand(session.cluster, `${SACCT} ${session.jobId} 2>/dev/null`, undefined, { batch: true });
         const m = r.code === 0 ? parseSacctUtil(r.stdout) : undefined;

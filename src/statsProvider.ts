@@ -18,8 +18,8 @@ export class StatsProvider extends WebviewProvider {
         if (data.command === 'ready') { void this.pushState(); return; }
         if (data.command === 'openRunSummary' && data.sessionId) {
             const session = getSession(data.sessionId);
-            const pinnedMetrics = getSessionRuns().find(r => r.sessionId === data.sessionId && r.jobId === data.jobId)?.metrics;
-            if (session) { openSummaryPanel(this.extensionUri, session, pinnedMetrics); }
+            const pinnedStats = getSessionRuns().find(r => r.sessionId === data.sessionId && r.jobId === data.jobId)?.stats;
+            if (session) { openSummaryPanel(this.extensionUri, session, pinnedStats); }
         }
     }
 
