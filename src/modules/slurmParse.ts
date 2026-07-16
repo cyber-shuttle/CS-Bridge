@@ -1,4 +1,4 @@
-import { GresInfo, RunMetrics, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
+import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
 
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
@@ -102,12 +102,12 @@ const maxOf = (xs: (number | undefined)[]): number | undefined => {
 // Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU). Allocation fields
 // are on the main record; usage (MaxRSS, TotalCPU) is on the .batch step, blank on the main row, so efficiency is
 // derived only when present.
-export function parseSacctUtil(output: string): RunMetrics {
+export function parseSacctUtil(output: string): Stats {
     const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
     if (rows.length === 0) { return {}; }
     const alloc = rows.find(r => !r[0].includes('.')) ?? rows[0]; // main allocation record, not ".batch"/".extern"
 
-    const m: RunMetrics = {};
+    const m: Stats = {};
     const cores = Number(alloc[1]);
     if (Number.isFinite(cores) && cores > 0) { m.cores = cores; }
     const reqMemKib = parseKib(alloc[2]);

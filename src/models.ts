@@ -111,7 +111,7 @@ export enum SlurmJobStatus {
 
 export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean };
 
-export interface RunMetrics {
+export interface Stats {
     cores?: number;
     reqMem?: string;
     elapsedSec?: number;
@@ -127,7 +127,7 @@ export interface SessionRunRecord {
     jobId: string;
     endedAt: number;
     finalStatus: Session['status'];
-    metrics?: RunMetrics;
+    stats?: Stats;
 }
 
 export interface StatsState {
@@ -136,8 +136,8 @@ export interface StatsState {
 
 export interface SummaryState {
     session: SlurmSession;
-    metrics?: RunMetrics;
-    metricsPending?: boolean; // terminal but the run isn't recorded yet — the webview spins instead of showing "no metrics"
+    stats?: Stats;
+    metricsPending?: boolean; // terminal but the run isn't recorded yet — the webview spins instead of showing "no stats"
 }
 
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.

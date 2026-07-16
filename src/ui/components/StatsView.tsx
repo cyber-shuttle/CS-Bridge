@@ -1,7 +1,7 @@
 import { Row, Stack, Text } from '@/ui/components/base';
 import { efficiencyColor, fmtPct } from '@/ui/logic/metrics';
 import { fmtTime } from '@/ui/logic/session';
-import type { RunMetrics } from '@/models';
+import type { Stats } from '@/models';
 
 export function EfficiencyChip({ label, pct }: { label: string; pct?: number }) {
     const color = efficiencyColor(pct);
@@ -22,11 +22,11 @@ export function MetricRow({ label, value }: { label: string; value: string }) {
     );
 }
 
-export function RunMetricsView({ metrics }: { metrics?: RunMetrics }) {
-    if (!metrics || Object.keys(metrics).length === 0) {
-        return <Text muted>No utilization metrics were recorded for this run.</Text>;
+export function StatsView({ stats }: { stats?: Stats }) {
+    if (!stats || Object.keys(stats).length === 0) {
+        return <Text muted>No utilization stats were recorded for this run.</Text>;
     }
-    const { cpuEfficiencyPct, memEfficiencyPct, cores, reqMem, maxRss, elapsedSec } = metrics;
+    const { cpuEfficiencyPct, memEfficiencyPct, cores, reqMem, maxRss, elapsedSec } = stats;
     return (
         <Stack gap={4}>
             <Row gap={6} wrap>
