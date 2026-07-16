@@ -94,6 +94,12 @@
 				"title": "Refresh Utilization History",
 				"category": "CS Bridge",
 				"icon": "$(refresh)"
+			},
+			{
+				"command": "csbridge.clearRunHistory",
+				"title": "Clear Utilization History",
+				"category": "CS Bridge",
+				"icon": "$(clear-all)"
 			}
 		],
 		"menus": {
@@ -116,6 +122,11 @@
 				{
 					"command": "csbridge.refreshStats",
 					"group": "navigation@0",
+					"when": "view == csbridge.statsView"
+				},
+				{
+					"command": "csbridge.clearRunHistory",
+					"group": "navigation@1",
 					"when": "view == csbridge.statsView"
 				},
 				{
@@ -143,6 +154,10 @@
 				},
 				{
 					"command": "csbridge.refreshStats",
+					"when": "false"
+				},
+				{
+					"command": "csbridge.clearRunHistory",
 					"when": "false"
 				}
 			]

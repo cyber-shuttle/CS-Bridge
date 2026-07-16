@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { WebviewProvider } from './webviewProvider';
 import { StatsState, WebviewMessage } from './models';
-import { getSessionRuns, watchRuns } from './sessionRunSupport';
+import { getSessionRuns, clearSessionRuns, watchRuns } from './sessionRunSupport';
 import { getSession } from './extensionStore';
 import { openSummaryPanel } from './summaryPanel';
 
@@ -21,6 +21,11 @@ export class StatsProvider extends WebviewProvider {
             const pinnedStats = getSessionRuns().find(r => r.sessionId === data.sessionId && r.jobId === data.jobId)?.stats;
             if (session) { openSummaryPanel(this.extensionUri, session, pinnedStats); }
         }
+    }
+
+    public async clearHistory(): Promise<void> {
+        const choice = await vscode.window.showWarningMessage('Clear all recorded run history?', { modal: true }, 'Clear');
+        if (choice === 'Clear') { clearSessionRuns(); }
     }
 
     public refresh(): void { void this.pushState(); }

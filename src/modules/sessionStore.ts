@@ -1,7 +1,6 @@
 import { SlurmSession, persistableConnectionInfo } from '../models';
 
-// Reconcile in-memory sessions to disk IN PLACE (refresh existing instances so monitor/connect refs stay valid, add
-// new ids, drop removed). Keeps this window's in-memory connectionInfo. Returns whether anything changed.
+// Reconcile in-memory sessions to disk in place (never swap identity, so monitor/connect refs stay valid). Returns whether anything changed.
 export function mergeFromDisk(mem: SlurmSession[], disk: SlurmSession[]): boolean {
     let changed = false;
     const diskIds = new Set(disk.map(s => s.id));
@@ -18,8 +17,7 @@ export function mergeFromDisk(mem: SlurmSession[], disk: SlurmSession[]): boolea
     return changed;
 }
 
-// This session's persisted record: secrets trimmed, windowPids kept from disk (owned by mutateWindowPids) so a record
-// write never clobbers another window's pids.
+// Persisted record: secrets trimmed, windowPids kept from disk so a write can't clobber another window's pids.
 export function toPersistedRecord(session: SlurmSession, diskWindowPids?: number[]): SlurmSession {
     return { ...session, connectionInfo: persistableConnectionInfo(session.connectionInfo), windowPids: diskWindowPids ?? session.windowPids };
 }
