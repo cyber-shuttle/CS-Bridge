@@ -45,6 +45,7 @@ test('parsePartitionLine throws on a malformed line', () => {
 
 test('buildSlurmScript emits the resource #SBATCH directives and the linkspan invocation', () => {
     const session = {
+        id: 'sess-1',
         cpus: 4, memory: '8 GB', wallTime: '02:00:00', queue: 'gpu', allocation: 'acct1',
         gpuClass: 'gpu:a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
         connectionInfo: { apiPort: 25000, sshPort: 0, sshTunnelId: '', region: '' },
@@ -57,8 +58,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     assert.match(script, /^#SBATCH --partition=gpu$/m);
     assert.match(script, /^#SBATCH --account=acct1$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
-    // linkspan binds the port csbridge pinned at launch, so csbridge knows the tunnel URL without discovery.
-    assert.match(script, /--port 25000 --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
+    assert.match(script, /--port 25000 --socket \/tmp\/csbridge\/sess-1\.sock --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
 });
 
 test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {

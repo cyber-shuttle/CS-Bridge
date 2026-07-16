@@ -1,9 +1,12 @@
 import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
-import type { CSSProperties } from 'preact';
-import type { ViewSession } from '@/models';
+import type { CSSProperties, VNode } from 'preact';
+import { METRICS_HISTORY_LEN, type ViewSession } from '@/models';
 import { statusDescriptor, remainingMs, fmtTime, wallMs, elapsedLabel, type SessionAction } from '@/ui/logic/session';
-import { Row, Stack, Text, Card, ActionIcon, Button, Spinner } from '@/ui/components/base';
+import { isRelayLive } from '@/modules/sessionMachine';
+import { Row, Stack, Text, Card, ActionIcon, Button, Spinner, Chip } from '@/ui/components/base';
+import { Sparkline } from '@/ui/components/Sparkline';
+import { metricGraphs, graphTitle } from '@/ui/components/MetricGraphs';
 import { post } from '@/ui/platform/vscode';
 
 interface Props {
@@ -44,16 +47,36 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
 
-const chipStyle: CSSProperties = { padding: '1px 6px', borderRadius: '4px', background: 'var(--vscode-keybindingLabel-background)', color: 'var(--vscode-keybindingLabel-foreground)', border: '1px solid var(--vscode-keybindingLabel-border)', fontSize: '11px', whiteSpace: 'nowrap' };
+const sepStyle: CSSProperties = { width: '1px', alignSelf: 'stretch', background: 'var(--vscode-descriptionForeground)', opacity: 0.45 };
 
-type ChipData = { label: string; title?: string };
-
-function Chip({ label, title }: ChipData) {
-    return <span title={title} style={chipStyle}>{label}</span>;
+// Lay items in a row divided by vertical separators, one before the first and after the last too.
+function Divided({ items }: { items: VNode[] }) {
+    return (
+        <Row gap={8} wrap style={{ alignItems: 'stretch' }}>
+            {items.flatMap((c, i) => [<div key={`sep${i}`} style={sepStyle} />, c]).concat(<div key="sepEnd" style={sepStyle} />)}
+        </Row>
+    );
 }
 
-function ChipRow({ chips }: { chips: ChipData[] }) {
-    return <Row gap={4} wrap>{chips.map(c => <Chip key={c.label} {...c} />)}</Row>;
+// Raw resource text (e.g. "MEM: 2G", "CPU: 1", "GPU: 1") above each live sparkline when relay-live; a plain row
+// otherwise. Columns bracketed by vertical separators.
+function ResourceStats({ session }: { session: ViewSession }) {
+    const mem = session.memory.replace(/\s+/g, '').replace(/B$/i, '');
+    const textOf: Record<string, string> = { MEM: `MEM: ${mem}`, CPU: `CPU: ${session.cpus}`, GPU: `GPU: ${session.gpuCount}`, GPU0: `GPU: ${session.gpuCount}` };
+    if (!isRelayLive(session.status)) {
+        return <Divided items={['MEM', 'CPU', 'GPU'].map(k => <Text key={k} size={11}>{textOf[k]}</Text>)} />;
+    }
+    return (
+        <Divided items={metricGraphs(session.metrics ?? [], session.gpuCount).map(g => (
+            <Stack key={g.label} gap={1} style={{ minWidth: '44px', alignItems: 'flex-start' }}>
+                <Text size={11}>{textOf[g.label] ?? g.label}</Text>
+                {g.lines[0].values.length >= 2
+                    ? <Sparkline lines={g.lines} slots={METRICS_HISTORY_LEN} title={graphTitle(g)} />
+                    : <div style={{ height: '14px' }} />}
+            </Stack>
+        ))}
+        />
+    );
 }
 
 function StatusText({ session }: { session: ViewSession }) {
@@ -88,12 +111,6 @@ export function SessionCard({ session, readonly }: Props) {
         if (command) { post({ command, sessionId: session.id }); }
     };
 
-    const resources: ChipData[] = [
-        { label: `${session.cpus} CPU` },
-        { label: `${session.gpuCount} GPU`, title: session.gpuClass !== 'None' ? session.gpuClass : undefined },
-        { label: session.memory },
-    ].filter(c => c.label);
-
     return (
         <Card>
             {/* Fixed height keeps the gap to the detail row constant whether or not the close button shows. */}
@@ -114,7 +131,7 @@ export function SessionCard({ session, readonly }: Props) {
             </Row>
             <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
             <Stack gap={6}>
-                <ChipRow chips={resources} />
+                <ResourceStats session={session} />
                 <Row gap={6}>
                     <Chip label={fmtTime(wallMs(session.wallTime))} />
                     <StatusText session={session} />

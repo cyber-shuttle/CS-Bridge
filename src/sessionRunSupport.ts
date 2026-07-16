@@ -1,7 +1,7 @@
 import { Logger } from './logger';
 import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
-import { readAllRuns, readSessionRuns, appendRun, clearAllRuns, watchSessionMetrics } from './modules/sessionMetricsStore';
+import { readAllRuns, readSessionRuns, readSessionMetrics, readSessionStats, appendRun, clearAllRuns, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { Stats, SessionRunRecord, SlurmSession } from './models';
 
 const logger = Logger.getInstance();
@@ -19,8 +19,8 @@ const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.clus
 export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
     if (readSessionRuns(session.id).some(r => isSameRun(r, session))) { return; }
-    const stats = await fetchStats(session);
-    const record: SessionRunRecord = { sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, stats };
+    const stats = await fetchStats(session) ?? readSessionStats(session.id); // fall back to the last in-run copy if the end query came back empty
+    const record: SessionRunRecord = { sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, stats, metrics: readSessionMetrics(session.id), allocation: session.allocation, queue: session.queue };
     appendRun(record, err => logger.error('Failed to record run', err));
 }
 
@@ -32,7 +32,8 @@ async function fetchStats(session: SlurmSession): Promise<Stats | undefined> {
     }
 }
 
-async function sacctStats(session: SlurmSession): Promise<Stats | undefined> {
+// One sacct read (no flush-retry) — the monitor calls this during a run to keep the live stats copy non-stale.
+export async function sacctStats(session: SlurmSession): Promise<Stats | undefined> {
     try {
         const r = await SshManager.getInstance().runRemoteCommand(session.cluster, `${SACCT} ${session.jobId} 2>/dev/null`, undefined, { batch: true });
         const m = r.code === 0 ? parseSacctUtil(r.stdout) : undefined;

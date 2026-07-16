@@ -1,18 +1,21 @@
-import { SlurmJobStatus, SlurmSession, TunnelCredential, PromptObserver } from '../models';
+import { Metric, SlurmJobStatus, SlurmSession, TunnelCredential, PromptObserver } from '../models';
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
 import { updateSession } from '../extensionStore';
-import { recordSessionRun } from '../sessionRunSupport';
+import { recordSessionRun, sacctStats } from '../sessionRunSupport';
 import { SshManager } from './sshSupport';
-import { getSlurmJobStatus } from './slurmSupport';
+import { getMetricsViaSrun, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus, StatusTransition } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, isTunnelClientConnected, linkspanEndpoint, removeDevTunnel } from './tunnelSupport';
-import { getHealth, getSshServers, summarizeSshStatus } from './linkspanSupport';
+import { getHealth, getMetrics } from './linkspanSupport';
+import { appendMetric, writeSessionStats, resetLive } from './sessionMetricsStore';
 
 const logger = Logger.getInstance();
 const POLLING_INTERVAL_MS = 5000;
+// How often to refresh the in-run sacct copy; coarse since usage only flushes at step end.
+const SACCT_REFRESH_MS = 30_000;
 // Consecutive failed /health pings before we stop trusting the tunnel and cross-check the job over batch sacct.
 const HEALTH_GIVEUP = 6;
 // Lets an authoritative sacct verdict win first when reachable (it can lag ~HEALTH_GIVEUP polls in the relay-live path).
@@ -25,6 +28,7 @@ export class SessionMonitor {
     private tickers = new Map<string, ReturnType<typeof setInterval>>();
     private ticking = new Set<string>(); // per-session reentrancy guard: a slow tick must not overlap its next fire
     private healthFailedCounts = new Map<string, number>();
+    private lastSacctAt = new Map<string, number>(); // throttles the in-run sacct refresh, per session
 
     // Every monitor line is "Session <name>: <msg>" — one format, one place.
     private log(session: SlurmSession, msg: string): void { logger.info(`Session ${session.name}: ${msg}`); }
@@ -131,30 +135,21 @@ export class SessionMonitor {
             }
 
             if (session.connectionInfo?.apiTunnelId && isRelayLive(session.status)) {
-                // A live relay client's keepAlive already watches the link — the authoritative liveness signal. Polling
-                // the same tunnel the SSH traffic rides just competes with it (the "aborted due to timeout" WARNs), so
-                // when our relay is connected, trust it and skip the ping. Only ping when no relay is up (waiting to
-                // connect, reconnecting, or another window owns it).
-                if (isTunnelClientConnected(session.id)) {
-                    this.healthFailedCounts.delete(session.id);
-                    if (session.errorMessage) { session.errorMessage = ''; updateSession(session); } // clear a stale health-blip
-                    return;
-                }
-                // The sshd list doubles as the ping and reports its state. Awaited (via pingOrCrossCheck, under the tick
-                // reentrancy guard) so a slow ping under load can't stack behind the next 5s fire.
+                // Pulling /metrics is the health check: success = alive + a live sample; HEALTH_GIVEUP failures
+                // cross-check sacct for death. Transport follows the relay — devtunnel when it owns the tunnel, else srun.
                 await this.pingOrCrossCheck(session, async () => {
                     try {
-                        const { baseUrl, headers } = linkspanEndpoint(session);
-                        const ssh = await getSshServers(baseUrl, headers);
+                        const m = await this.pullMetrics(session);
                         this.healthFailedCounts.delete(session.id);
-                        this.log(session, `healthcheck (tunnel): ${session.status} — sshd: ${summarizeSshStatus(ssh)}`);
+                        // Samples go to the per-session metrics file; only write the record when a persisted field changes.
+                        if (session.errorMessage) { session.errorMessage = ''; updateSession(session); }
+                        if (m.memBytes !== undefined) { appendMetric(session.id, { ...m, atMs: Date.now() }); }
+                        void this.refreshStats(session);
                     }
                     catch (err) {
-                        if (isRelayLive(session.status)) { // may have left a live state (e.g. Stop) mid-ping
-                            // A blip is not job death: count and cross-check, but don't flag the card — the relay path is
-                            // flaky and self-recovers, so only an authoritative death (via crossCheck) should show.
+                        if (isRelayLive(session.status)) {
                             const attempt = this.bumpHealthFails(session.id);
-                            this.warn(session, `healthcheck (tunnel): failed (attempt ${attempt}/${HEALTH_GIVEUP}): ${errMsg(err)}`);
+                            this.warn(session, `healthcheck (metrics): failed (attempt ${attempt}/${HEALTH_GIVEUP}): ${errMsg(err)}`);
                         }
                     }
                 });
@@ -190,6 +185,21 @@ export class SessionMonitor {
         }
     }
 
+    private pullMetrics(session: SlurmSession): Promise<Metric> {
+        if (!isTunnelClientConnected(session.id)) { return getMetricsViaSrun(session); }
+        const { baseUrl, headers } = linkspanEndpoint(session);
+        return getMetrics(baseUrl, headers);
+    }
+
+    // Throttled sacct refresh, fire-and-forget from the health path (sacctStats swallows its own errors).
+    private async refreshStats(session: SlurmSession): Promise<void> {
+        const now = Date.now();
+        if (now - (this.lastSacctAt.get(session.id) ?? 0) < SACCT_REFRESH_MS) { return; }
+        this.lastSacctAt.set(session.id, now);
+        const m = await sacctStats(session);
+        if (m && Object.keys(m).length) { writeSessionStats(session.id, m); }
+    }
+
     // Begin an independent poll loop for one active session (no-op if already running or not yet launched). The first
     // poll fires now so status isn't stale for a full interval; the rest run on the interval.
     public startMonitoring(session: SlurmSession): void {
@@ -209,6 +219,7 @@ export class SessionMonitor {
         this.sessions.delete(sessionId);
         this.ticking.delete(sessionId);
         this.healthFailedCounts.delete(sessionId);
+        this.lastSacctAt.delete(sessionId);
         logger.info(`Session ${name}: monitoring stopped.`);
     }
 
@@ -226,6 +237,7 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     // Fresh launch: drop the prior run's connection info (dead sshd port/keys, old apiPort/tunnel refs) BEFORE re-minting,
     // so ensureDevTunnel builds clean state and the apiPort pinned below survives to the monitor. Must precede ensureDevTunnel.
     session.connectionInfo = undefined;
+    resetLive(session.id); // clear the prior run's live samples + stats, keep the run history
 
     // Fresh launch: drop the prior run's tunnel so its ports don't accumulate toward Microsoft's PortsPerTunnel (10) cap.
     await removeDevTunnel(session);

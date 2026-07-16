@@ -3,6 +3,7 @@ import { useWebviewState } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Card, Icon, Spinner } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
 import { StatsView, MetricRow as Field } from '@/ui/components/StatsView';
+import { MetricGraphs } from '@/ui/components/MetricGraphs';
 import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
 import type { SlurmSession, SummaryState } from '@/models';
 
@@ -24,8 +25,8 @@ function Root() {
     const s = state?.session;
     if (!s) { return <Stack pad="12px"><Text muted>Loading summary…</Text></Stack>; }
     const loadingMsg = s.status === 'stopping' ? 'Closing session and preparing summary…'
-        : state?.metricsPending ? 'Fetching utilization metrics…'
-            : null;
+        : !state?.stats ? 'Fetching utilization stats…'
+                : null;
     if (loadingMsg) {
         return <Stack gap={12} pad="48px" style={{ alignItems: 'center' }}><Spinner size={28} /><Text muted>{loadingMsg}</Text></Stack>;
     }
@@ -58,6 +59,16 @@ function Root() {
                 <Field label="Used" value={fmtTime(usedMs)} />
                 <Field label="Limit" value={limitMs > 0 ? fmtTime(limitMs) : 'No limit'} />
             </Card>
+
+            {state?.metrics?.length ? (
+                <Card>
+                    <Row gap={6} style={{ marginBottom: '4px' }}>
+                        <Icon name="pulse" />
+                        <Text weight={600}>Live resource history</Text>
+                    </Row>
+                    <MetricGraphs history={state.metrics} gpuCount={s.gpuCount} />
+                </Card>
+            ) : null}
 
             <Card>
                 <Row gap={6} style={{ marginBottom: '4px' }}>

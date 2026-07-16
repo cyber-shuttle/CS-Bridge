@@ -7,6 +7,7 @@ import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManag
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
+import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
@@ -60,6 +61,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             void this.pushState();
         });
         this.shared.push({ dispose: () => sessionsWatcher.close() });
+
+        // Live samples land in the per-session files (bypassing updateSession); pushState reads them at render time.
+        const metricsWatcher = watchSessionMetrics(() => void this.pushState());
+        this.shared.push({ dispose: () => metricsWatcher.close() });
     }
 
     // At activation (sidebar only): resume monitoring and rebuild the relay (gone after restart) for every live-backend session.
@@ -323,7 +328,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     .map((s) => {
                         const live = liveAndCleanup(s);
                         if (live.windowAlive) { this.opening.delete(s.id); }
-                        return { ...s, ...live, opening: this.opening.has(s.id) };
+                        return { ...s, ...live, opening: this.opening.has(s.id), metrics: readSessionMetrics(s.id) };
                     })
                     // newest first (uuidv7 ids are time-ordered)
                     .sort((a, b) => b.id.localeCompare(a.id)),

@@ -1,3 +1,5 @@
+import { Metric } from '../models';
+
 // linkspan's HTTP API client — one function per endpoint, each taking the base URL + auth headers its transport
 // mandates (devtunnel today; see tunnelSupport.linkspanEndpoint). It does the calling but owns no transport of its
 // own, so devtunnel and linkspan stay separate and compose at the caller.
@@ -43,6 +45,11 @@ export async function getSshServers(baseUrl: string, headers: Record<string, str
     return await get(baseUrl, headers, '/vscode/sessions', Array.isArray) as LinkspanSshStatus[];
 }
 
+// GET /metrics — linkspan's live sample; a valid body also confirms the host is up.
+export async function getMetrics(baseUrl: string, headers: Record<string, string>): Promise<Metric> {
+    return await get(baseUrl, headers, '/metrics', j => typeof j === 'object' && j !== null && !Array.isArray(j)) as Metric;
+}
+
 // POST /vscode/sessions — create a fresh sshd. Not idempotent; the caller guards re-creation.
 export async function createSshServer(baseUrl: string, headers: Record<string, string>): Promise<SshServerInfo> {
     return await (await post(baseUrl, headers, '/vscode/sessions', { mount_user_home: false })).json() as SshServerInfo;
@@ -56,11 +63,3 @@ export async function forwardPort(baseUrl: string, headers: Record<string, strin
 // linkspan binds each sshd on ":<port>" and ids it "s-<port>", so both fields encode the (restart-stable) port.
 export const sshdPort = (s: LinkspanSshStatus): number =>
     Number(s.addr?.split(':').pop()) || Number(s.id.replace(/^s-/, '')) || 0;
-
-export function summarizeSshStatus(list: LinkspanSshStatus[]): string {
-    if (!list.length) { return 'no sshd'; }
-    return list.map(s =>
-        `${s.state}${s.active ? '' : '/inactive'}${s.addr ? ` @${s.addr}` : ''}`
-        + `${s.restarts ? ` restarts=${s.restarts}` : ''}${s.last_error ? ` err="${s.last_error}"` : ''}`,
-    ).join(', ');
-}

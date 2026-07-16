@@ -2,8 +2,13 @@ import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, Tunn
 
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
+// linkspan's unix socket — the portless in-allocation channel (srun --overlap curl --unix-socket).
+export const LINKSPAN_SOCKET_DIR = '/tmp/csbridge';
+export const linkspanSocketPath = (sessionId: string): string => `${LINKSPAN_SOCKET_DIR}/${sessionId}.sock`;
+
 export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
     const memSlurm = session.memory.replace(/\s+/g, '');
+    const socketPath = linkspanSocketPath(session.id);
 
     const sbatchLines = [
         `#SBATCH --job-name=linkspan-session`,
@@ -33,8 +38,9 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         ``,
         `# --- Run linkspan (pre-deployed via scp) ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
+        `mkdir -p ${LINKSPAN_SOCKET_DIR}`,
         // Bind the port csbridge pinned at launch so it knows the tunnel URL up front (no log/port discovery).
-        `"$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
+        `"$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --socket ${socketPath} --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
     ];
 
     return scriptLines.join('\n');
@@ -88,7 +94,7 @@ function hmsSeconds(s: string | undefined): number | undefined {
     return Number(days) * 86400 + parts.reduce((sec, p) => sec * 60 + p, 0);
 }
 
-function humanKib(kib: number): string {
+export function humanKib(kib: number): string {
     if (kib >= 1024 ** 2) { return `${(kib / 1024 ** 2).toFixed(1)} GB`; }
     if (kib >= 1024) { return `${(kib / 1024).toFixed(1)} MB`; }
     return `${Math.round(kib)} KB`;

@@ -2,8 +2,11 @@ import * as vscode from 'vscode';
 import { getSession, watchSessions } from './extensionStore';
 import { getSessionRuns, watchRuns } from './sessionRunSupport';
 import { renderHtml } from './webviewProvider';
-import { isTerminal } from './modules/sessionMachine';
-import { Stats, SlurmSession, SummaryState } from './models';
+import { readSessionMetrics, readSessionStats, watchSessionMetrics } from './modules/sessionMetricsStore';
+import { Metric, Stats, SlurmSession, SummaryState } from './models';
+
+// A finished run's fixed snapshot (from the Stats view), shown instead of the possibly-relaunched live session.
+export interface RunSnapshot { stats?: Stats; metrics?: Metric[] }
 
 const PENDING_KEY = 'csbridge.pendingSummaries';
 // ponytail: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.
@@ -26,7 +29,7 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
     return session;
 }
 
-export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, statsOverride?: Stats): void {
+export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, runSnapshot?: RunSnapshot): void {
     const panel = vscode.window.createWebviewPanel(
         'csbridge.summary', `Session ${session.name} summary: `,
         vscode.ViewColumn.One, { enableScripts: true },
@@ -34,16 +37,17 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
     // Re-read the session each post: it may still be 'stopping' at open and flip to 'stopped' while the tab is up.
     const post = () => {
         const s = getSession(session.id) ?? session;
-        const run = getSessionRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
-        // Terminal session with no run record yet → recordSessionRun is still in flight; the webview keeps its spinner
-        // rather than flashing "no stats". A stats-opened summary passes statsOverride, so it's never pending.
-        const metricsPending = statsOverride === undefined && isTerminal(s.status) && !run;
-        const state: SummaryState = { session: s, stats: statsOverride ?? run?.stats, metricsPending };
+        // Past run from Stats: its fixed snapshot. Live: current samples + latest sacct copy (run record or in-run file).
+        const run = runSnapshot ? undefined : getSessionRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
+        const metrics = runSnapshot ? runSnapshot.metrics : readSessionMetrics(s.id);
+        const stats = runSnapshot ? runSnapshot.stats : (run?.stats ?? readSessionStats(s.id));
+        const state: SummaryState = { session: s, metrics, stats };
         void panel.webview.postMessage({ command: 'state', state });
     };
     const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });
     const runsSub = watchRuns(() => post());
     const sessSub = watchSessions(() => post());
+    const metricsSub = watchSessionMetrics(() => post()); // live view: refresh sparklines as samples land
     panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
-    panel.onDidDispose(() => { msgSub.dispose(); runsSub.close(); sessSub.close(); });
+    panel.onDidDispose(() => { msgSub.dispose(); runsSub.close(); sessSub.close(); metricsSub.close(); });
 }
