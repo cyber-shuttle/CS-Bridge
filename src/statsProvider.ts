@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { WebviewProvider } from './webviewProvider';
+import { WebviewProvider, confirmModal } from './webviewProvider';
 import { StatsState, WebviewMessage } from './models';
 import { getSessionRuns, clearSessionRuns, watchRuns } from './sessionRunSupport';
 import { getSession } from './extensionStore';
@@ -33,8 +33,7 @@ export class StatsProvider extends WebviewProvider {
     }
 
     public async clearHistory(): Promise<void> {
-        const choice = await vscode.window.showWarningMessage('Clear all recorded run history?', { modal: true }, 'Clear');
-        if (choice === 'Clear') { clearSessionRuns(); }
+        if (await confirmModal('Clear all recorded run history?', 'Clear')) { clearSessionRuns(); }
     }
 
     public refresh(): void { void this.pushState(); }

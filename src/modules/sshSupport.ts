@@ -100,9 +100,9 @@ export class SshManager {
         const hash = crypto.createHash('sha256').update(hostName).digest('hex').substring(0, 16);
         const socketPath = path.join(CS_SSH_CONTROL_DIR, hash);
         return [
-            '-o', `ControlMaster=auto`,
+            '-o', 'ControlMaster=auto',
             '-o', `ControlPath=${socketPath}`,
-            '-o', `ControlPersist=600`,
+            '-o', 'ControlPersist=600',
         ];
     }
 

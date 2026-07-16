@@ -79,6 +79,13 @@ export function updateSession(session: SlurmSession) {
     writeRecord(session);
 }
 
+// The one status-write path: set status (and, when given, errorMessage) and persist.
+export function setStatus(session: SlurmSession, status: SlurmSession['status'], errorMessage?: string): void {
+    session.status = status;
+    if (errorMessage !== undefined) { session.errorMessage = errorMessage; }
+    updateSession(session);
+}
+
 export function removeSession(sessionId: string) {
     const index = sessions.findIndex(s => s.id === sessionId);
     if (index !== -1) { sessions.splice(index, 1); }

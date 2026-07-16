@@ -32,11 +32,11 @@ export async function getSlurmClusterInfo(hostName: string, observer?: PromptObs
             'sacctmgr show associations where user=$USER format=Account -p', observer);
 
         if (accountResult.code === 0) {
-            const lines = accountResult.stdout.trim().split('\n');
-            for (let i = 1; i < lines.length; i++) { // skip the Account header row
-                const account = lines[i].trim().split('|')[0].trim();
-                if (account) { clusterInfo.accounts.push(account); }
-            }
+            clusterInfo.accounts = accountResult.stdout.trim()
+                .split('\n')
+                .slice(1) // skip the Account header row
+                .map(l => l.split('|')[0].trim())
+                .filter(Boolean);
         }
         else {
             throw new Error(`Failed to query associations (exit ${accountResult.code}): ${accountResult.stderr || 'Unknown error'}`);

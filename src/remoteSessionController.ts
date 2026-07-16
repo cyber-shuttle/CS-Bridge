@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
-import { getSession, updateSession, watchSessions } from './extensionStore';
+import { getSession, setStatus, watchSessions } from './extensionStore';
 import { isTerminal, isWallTimeExpired } from './modules/sessionMachine';
 import { remainingMs, fmtTime, wallMs } from './ui/logic/session';
 import { enqueuePendingSummary } from './summaryPanel';
+import { confirmModal } from './webviewProvider';
 
 const WARN_THRESHOLD_MS = 10 * 60_000; // color the status bar under 10 minutes left
 
@@ -66,16 +67,14 @@ export class RemoteSessionController implements vscode.Disposable {
         if (this.torndown) { return; }
         const session = getSession(this.sessionId);
         if (!session) { return; }
-        const choice = await vscode.window.showWarningMessage(
-            'Stop session?', { modal: true, detail: 'This stops the running job and returns this window to local.' }, 'Stop');
-        if (choice !== 'Stop' || this.torndown) { return; } // may have torn down (wall-time/terminal) during the dialog
+        const confirmed = await confirmModal(
+            'Stop session?', 'Stop', 'This stops the running job and returns this window to local.');
+        if (!confirmed || this.torndown) { return; } // may have torn down (wall-time/terminal) during the dialog
 
         this.torndown = true; // claim now so the 1s render tick can't race the reload
         this.stopItem.text = '$(loading~spin) Stopping…';
         // Persist 'stopping', then reload; the reloaded local window finishes the stop (scancel + metrics), not this one.
-        session.status = 'stopping';
-        session.errorMessage = '';
-        updateSession(session);
+        setStatus(session, 'stopping', '');
         await this.endToLocal();
     }
 

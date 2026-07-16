@@ -106,16 +106,11 @@ export function removeHostFromConfigText(text: string, name: string): string {
 }
 
 export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
-    const seen = new Set<string>();
-    const result: SshHost[] = [];
-    for (const list of lists) {
-        for (const host of list) {
-            if (seen.has(host.name)) { continue; }
-            seen.add(host.name);
-            result.push(host);
-        }
+    const byName = new Map<string, SshHost>();
+    for (const host of lists.flat()) {
+        if (!byName.has(host.name)) { byName.set(host.name, host); } // keep-first: earlier lists win
     }
-    return result;
+    return [...byName.values()];
 }
 
 export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): void {

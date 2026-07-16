@@ -2,11 +2,11 @@ import * as vscode from 'vscode';
 import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
 import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
-import { WebviewProvider } from './webviewProvider';
+import { WebviewProvider, confirmModal } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
-import { addSession, removeSession, getSession, getAllSessions, updateSession, watchSessions, liveAndCleanup } from './extensionStore';
+import { addSession, removeSession, getSession, getAllSessions, updateSession, setStatus, watchSessions, liveAndCleanup } from './extensionStore';
 import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
@@ -204,15 +204,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             return;
         }
 
-        const choice = await vscode.window.showWarningMessage(
-            'Remove session?',
-            {
-                modal: true,
-                detail: 'This removes the session record and cleans up its SSH config entry and key file.',
-            },
-            'Remove',
-        );
-        if (choice !== 'Remove') {
+        const confirmed = await confirmModal('Remove session?', 'Remove',
+            'This removes the session record and cleans up its SSH config entry and key file.');
+        if (!confirmed) {
             void this.pushState();
             return;
         }
@@ -354,7 +348,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         }
         this.connecting.add(session.id);
         try {
-            this.setStatus(session, 'connecting');
+            setStatus(session, 'connecting');
             await ensureRemoteSession(session); // idempotent; refreshes tunnel creds for reattach
             const localPort = await connectSessionToTunnel(session);
             // These awaits can run tens of seconds against a dead node; if the monitor terminalized meanwhile (session
@@ -367,7 +361,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             if (!privateKey) { throw new Error('SSH private key not found for session'); }
             const hostAlias = addSshConfigEntry(session, localPort, privateKey);
             this.logger.info(`SSH config entry ready for session ${session.id} (ssh ${hostAlias})`);
-            this.setStatus(session, 'connected');
+            setStatus(session, 'connected');
             return true;
         }
         catch (error) {
@@ -376,7 +370,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             // Same terminal guard as the success path: don't resurrect a session the monitor stopped mid-connect.
             if (!isTerminal(session.status)) {
                 // Step 1 still up (sshTunnelId persisted) -> relay-only failure, retry from ready_to_connect; else unreachable.
-                this.setStatus(session, session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'unreachable', `Failed to connect tunnel: ${errMsg(error)}`);
+                setStatus(session, session.connectionInfo?.sshTunnelId ? 'ready_to_connect' : 'unreachable', `Failed to connect tunnel: ${errMsg(error)}`);
             }
             return false;
         }
@@ -398,7 +392,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (!session) { return; }
         // Stale Connect/Switch on an expired session: stop it (the monitor terminal-guard untracks) instead of a doomed relay.
         if (isWallTimeExpired(session, Date.now())) {
-            this.setStatus(session, 'stopped', '');
+            setStatus(session, 'stopped', '');
             await disposeTunnelClient(session.id);
             vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Restart it to run again.');
             void this.pushState();
@@ -426,14 +420,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             return;
         }
 
-        const choice = await vscode.window.showWarningMessage(
-            'Stop session?',
-            { modal: true, detail: 'This stops the running job.' },
-            'Stop',
-        );
-        if (choice !== 'Stop') { void this.pushState(); return; }
+        if (!await confirmModal('Stop session?', 'Stop', 'This stops the running job.')) { void this.pushState(); return; }
 
-        this.setStatus(session, 'stopping', '');
+        setStatus(session, 'stopping', '');
         void this.pushState();
         this.finishInterruptedStop(session);
     }
@@ -450,38 +439,32 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (!session) { return; }
         this.previewSession = null;
         session.startedAt = undefined; // fresh launch: re-anchor the wall-time countdown when the new job starts running
-        this.setStatus(session, 'submitting', '');
+        setStatus(session, 'submitting', '');
         void this.pushState();
         // An SSH auth box during launch shows on the card as awaiting_input, reverting to submitting once answered.
-        const observer: PromptObserver = (e) => { this.setStatus(session, e === 'opened' ? 'awaiting_input' : 'submitting'); void this.pushState(); };
+        const observer: PromptObserver = (e) => { setStatus(session, e === 'opened' ? 'awaiting_input' : 'submitting'); void this.pushState(); };
         this.runSessionTask(session, `Launching Session ${session.name}...`, 'launch',
             p => launchSession(session, this.monitor, p, observer), 'Please clean up any resources on the cluster if necessary.');
-    }
-
-    private setStatus(session: SlurmSession, status: SlurmSession['status'], errorMessage?: string): void {
-        session.status = status;
-        if (errorMessage !== undefined) { session.errorMessage = errorMessage; }
-        updateSession(session);
     }
 
     // Dismissing the progress notification marks the session stopped; a failure marks it failed and shows a dialog.
     private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string): void {
         const task = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
-            token.onCancellationRequested(() => this.setStatus(session, 'stopped'));
+            token.onCancellationRequested(() => setStatus(session, 'stopped'));
             await run(progress);
         });
         Promise.resolve(task).then(() => {
             void this.pushState();
         }).catch((error) => {
             if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: offer Retry, no error dialog
-                this.setStatus(session, 'interrupted', '');
+                setStatus(session, 'interrupted', '');
                 void this.pushState();
                 return;
             }
             const detail = `Failed to ${verb} session: ${errMsg(error)}`;
             this.logger.error(`${detail} (id ${session.id})`, error);
             vscode.window.showErrorMessage(`${detail}. ${cleanupHint}`);
-            this.setStatus(session, 'failed', detail);
+            setStatus(session, 'failed', detail);
             void this.pushState();
         });
     }
