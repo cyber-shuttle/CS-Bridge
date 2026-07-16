@@ -109,7 +109,24 @@ export enum SlurmJobStatus {
     UNKNOWN = 'unknown',
 }
 
-export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean };
+export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean; metrics?: Metric[] };
+
+export const METRICS_HISTORY_LEN = 20; // rolling live-sample window, also the sparkline slot count
+
+// A resource sample from linkspan's /metrics. atMs (when taken) is set once stored, for rate derivation.
+export interface Metric {
+    memBytes?: number;
+    cpuUsageUsec?: number;
+    gpus?: GpuStat[];
+    atMs?: number;
+}
+
+export interface GpuStat {
+    index: number;
+    utilPct: number;
+    memUsedMiB: number;
+    memTotalMiB: number;
+}
 
 export interface Stats {
     cores?: number;
@@ -128,6 +145,9 @@ export interface SessionRunRecord {
     endedAt: number;
     finalStatus: Session['status'];
     stats?: Stats;
+    metrics?: Metric[];
+    allocation?: string;
+    queue?: string;
 }
 
 export interface StatsState {
@@ -136,8 +156,8 @@ export interface StatsState {
 
 export interface SummaryState {
     session: SlurmSession;
-    stats?: Stats;
-    metricsPending?: boolean; // terminal but the run isn't recorded yet — the webview spins instead of showing "no stats"
+    metrics?: Metric[]; // live sample history (sparklines)
+    stats?: Stats; // sacct accounting; absent → the webview shows a "fetching…" spinner
 }
 
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.

@@ -1,6 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { efficiencyColor, fmtPct, groupRunsBySession } from './metrics';
+import { cpuCoreSeries, efficiencyColor, fmtPct, groupRunsBySession } from './metrics';
+
+test('cpuCoreSeries derives cores-busy from cumulative usec across sample gaps', () => {
+    // 10s wall gaps (dt=1e7 usec). +1e7 usec/gap → 1.0 core; +2e7 → 2.0 cores.
+    const samples = [
+        { atMs: 0, cpuUsageUsec: 0 },
+        { atMs: 10_000, cpuUsageUsec: 10_000_000 },
+        { atMs: 20_000, cpuUsageUsec: 30_000_000 },
+    ];
+    assert.deepEqual(cpuCoreSeries(samples), [1, 2]);
+});
+
+test('cpuCoreSeries skips gaps with a missing reading or non-advancing clock', () => {
+    const samples = [
+        { atMs: 0, cpuUsageUsec: 0 },
+        { atMs: 10_000 }, // missing reading → gap dropped
+        { atMs: 20_000, cpuUsageUsec: 20_000_000 },
+        { atMs: 20_000, cpuUsageUsec: 25_000_000 }, // dt=0 → dropped
+    ];
+    assert.deepEqual(cpuCoreSeries(samples), []);
+});
 
 test('efficiencyColor buckets by waste threshold', () => {
     const green = 'var(--vscode-charts-green)', yellow = 'var(--vscode-charts-yellow)';

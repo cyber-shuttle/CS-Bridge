@@ -1,7 +1,7 @@
-import { SlurmClusterInfo, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
+import { Metric, SlurmClusterInfo, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
 import { Logger, errMsg } from '../logger';
 import { SshManager } from './sshSupport';
-import { parsePartitionLine, parseSacctStatus } from './slurmParse';
+import { linkspanSocketPath, parsePartitionLine, parseSacctStatus } from './slurmParse';
 
 export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ status: SlurmJobStatus; elapsedSec: number }> {
     const command = `sacct -j ${slurmSession.jobId} -n -o State%20,ExitCode,Reason%40,ElapsedRaw --parsable2 2>/dev/null | head -1`;
@@ -10,6 +10,16 @@ export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ s
         throw new Error(`Failed to get job status. SSH command error: ${commandResult.stderr}`);
     }
     return parseSacctStatus(commandResult.stdout.trim());
+}
+
+// linkspan's /metrics over its unix socket from inside the allocation. --input none is load-bearing: srun forwards
+// stdin to the task, which would otherwise swallow the persistent shell's completion marker (sshShell) and hang.
+export async function getMetricsViaSrun(session: SlurmSession): Promise<Metric> {
+    const command = `srun --jobid=${session.jobId} --overlap --quiet --input none `
+        + `curl -sf --max-time 4 --unix-socket ${linkspanSocketPath(session.id)} http://localhost/api/v1/metrics`;
+    const res = await SshManager.getInstance().runRemoteCommand(session.cluster, command, undefined, { batch: true });
+    if (res.code !== 0) { throw new Error(`live metrics via srun failed (${res.code}): ${res.stderr}`); }
+    return JSON.parse(res.stdout) as Metric;
 }
 
 export async function getSlurmClusterInfo(hostName: string, observer?: PromptObserver): Promise<SlurmClusterInfo> {

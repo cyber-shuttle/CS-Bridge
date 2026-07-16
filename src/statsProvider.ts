@@ -9,17 +9,26 @@ export class StatsProvider extends WebviewProvider {
     public static readonly viewType = 'csbridge.statsView';
     protected readonly viewKind = 'stats' as const;
 
+    // The watch fires on every live tick too (shared file), so only re-render when the run history actually changed.
+    private lastRunsJson = '';
+
     constructor(extensionUri: vscode.Uri) {
         super(extensionUri);
-        watchRuns(() => void this.pushState());
+        watchRuns(() => {
+            const json = JSON.stringify(getSessionRuns());
+            if (json === this.lastRunsJson) { return; }
+            this.lastRunsJson = json;
+            void this.pushState();
+        });
     }
 
     protected handleMessage(data: WebviewMessage): void {
         if (data.command === 'ready') { void this.pushState(); return; }
         if (data.command === 'openRunSummary' && data.sessionId) {
             const session = getSession(data.sessionId);
-            const pinnedStats = getSessionRuns().find(r => r.sessionId === data.sessionId && r.jobId === data.jobId)?.stats;
-            if (session) { openSummaryPanel(this.extensionUri, session, pinnedStats); }
+            const run = getSessionRuns().find(r => r.sessionId === data.sessionId && r.jobId === data.jobId);
+            // Show the run's own recorded snapshot, not the (possibly relaunched) live session's.
+            if (session) { openSummaryPanel(this.extensionUri, session, { stats: run?.stats, metrics: run?.metrics }); }
         }
     }
 

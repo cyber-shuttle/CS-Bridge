@@ -1,7 +1,7 @@
 import { render } from 'preact';
 import { useState } from 'preact/hooks';
 import { useWebviewState, post } from '@/ui/platform/vscode';
-import { Stack, Row, Text, Icon } from '@/ui/components/base';
+import { Stack, Row, Text, Icon, Chip } from '@/ui/components/base';
 import { EfficiencyChip } from '@/ui/components/StatsView';
 import { groupRunsBySession } from '@/ui/logic/metrics';
 import type { StatsState, SessionRunRecord } from '@/models';
@@ -30,14 +30,15 @@ function RunItem({ run }: { run: SessionRunRecord }) {
 
 function SessionGroup({ runs }: { runs: SessionRunRecord[] }) {
     const [open, setOpen] = useState(true);
-    const { sessionName, cluster } = runs[0];
+    const { cluster, allocation, queue } = runs[0];
     const runLabel = `${runs.length} run${runs.length === 1 ? '' : 's'}`;
     return (
         <Stack gap={0}>
             <Row gap={4} pad="3px 0" style={{ cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
                 <Icon name={open ? 'chevron-down' : 'chevron-right'} />
-                <Text weight={600} ellipsis>{sessionName}</Text>
-                <Text muted size={11} style={{ flexShrink: 0 }}>· {cluster}</Text>
+                <Text weight={600} ellipsis>{cluster}</Text>
+                {allocation ? <Chip label={allocation} /> : null}
+                {queue ? <Chip label={queue} /> : null}
                 <Text muted size={11} style={{ marginLeft: 'auto', flexShrink: 0 }}>{runLabel}</Text>
             </Row>
             {open && runs.map(run => <RunItem key={`${run.cluster}:${run.jobId}`} run={run} />)}
