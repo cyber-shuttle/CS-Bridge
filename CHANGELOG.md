@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Atomic `sessions.json` writes** — temp-file + rename, no truncation on crash. (#81)
 - **Per-session storage** — `sessions.json` and the run store split into per-session files (`sessions/{id}.json`, `metrics/{id}.json`), cutting cross-window write contention. (#91, #92)
 - **SSH auth prompts rendered verbatim** in a monospace webview, so password/Duo challenges stay readable. (#88)
+- **New extension logo** — refreshed the CS Bridge activity-bar and command icons (`csbridge.svg`/`csbridge.png`).
 
 ### Fixed
 
@@ -36,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Half-open Dev Tunnel relay** — a relay that goes half-open (keep-alive failing while the SDK still reports Connected) now rebuilds itself, so the SSH forward self-heals instead of hanging until a manual reconnect. (#98)
 - **`sacct` efficiency accounting** — utilization is read from the `.batch` step only, fixing incorrect CPU/memory efficiency numbers. (#93)
 - **Atomic, locked `~/.ssh/config` edits** — host-config writes are file-locked and atomic, avoiding corruption when multiple windows edit hosts. (#94)
+- **Remote VS Code server OOM on Delta** — the server now installs to node-local disk (`/tmp`) instead of `$HOME`, and the job memory floor is raised to 4 GB, fixing 2 GB job-cgroup OOM crashes. (#99)
 
 ## [0.0.4] - 2026-06-30
 
