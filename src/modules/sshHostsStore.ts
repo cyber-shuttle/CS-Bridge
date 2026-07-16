@@ -4,6 +4,7 @@ import * as path from 'path';
 import { parse, LineType } from 'ssh-config';
 import { SshHost } from '../models';
 import { SshConfigEntry } from './sshCommandParser';
+import { updateTextFile } from './fsSupport';
 
 export const USER_SSH_CONFIG_PATH = path.join(os.homedir(), '.ssh', 'config');
 export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
@@ -119,12 +120,9 @@ export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
 
 export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    const text = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
-    fs.writeFileSync(filePath, addHostToConfigText(text, entry), { mode: 0o600 });
+    updateTextFile(filePath, text => addHostToConfigText(text ?? '', entry), 0o600);
 }
 
 export function removeHostFromConfigFile(filePath: string, name: string): void {
-    if (!fs.existsSync(filePath)) { return; }
-    const text = fs.readFileSync(filePath, 'utf-8');
-    fs.writeFileSync(filePath, removeHostFromConfigText(text, name), { mode: 0o600 });
+    updateTextFile(filePath, text => (text === undefined ? null : removeHostFromConfigText(text, name)), 0o600);
 }
