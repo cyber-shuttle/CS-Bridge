@@ -4,13 +4,16 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.0.5] - 2026-07-14
+## [0.0.5] - 2026-07-16
 
 ### Added
 
 - **Utilization metrics + Stats view** — each finished run records CPU/memory efficiency from `sacct`; a summary tab and the new Stats view keep the history. (#82, #83, #84)
 - **Wall-time session summary** — a status bar tracks elapsed time; a summary tab opens when a session ends. (#76)
 - **Submit-filter validation** — Add/Save preflights the script via `sbatch --test-only` and saves only on pass, showing the site's own rejection. (#72)
+- **Live resource metrics on the session card** — each running session shows live CPU/memory samples pulled from linkspan. (#87)
+- **`(No Allocation)` allocation option** — pick it to omit `--account` on clusters that don't require an allocation. (#89)
+- **Clear a session's run history** from its card. (#92)
 
 ### Changed
 
@@ -21,12 +24,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`PENDING` shown as `QUEUED`**. (#75)
 - **linkspan port pinned at launch** — tunnel URL derived without scraping logs. (#75)
 - **Atomic `sessions.json` writes** — temp-file + rename, no truncation on crash. (#81)
+- **Per-session storage** — `sessions.json` and the run store split into per-session files (`sessions/{id}.json`, `metrics/{id}.json`), cutting cross-window write contention. (#91, #92)
+- **SSH auth prompts rendered verbatim** in a monospace webview, so password/Duo challenges stay readable. (#88)
 
 ### Fixed
 
 - **Dead node behind the Dev Tunnels edge** — require linkspan's `{"status":"ok"}` body so wall-time `TIMEOUT` is detected instead of staying green. (#70)
 - **Missing node count** — always emit `#SBATCH --nodes=1`. (#69)
 - **New sessions sorting to the bottom** — reissue legacy `session-<ts>` ids as UUIDv7 on load. (#71)
+- **`(No Allocation)` leaking as a bogus `--account`** — its label no longer reaches `sbatch`, which had failed session create with "Invalid account or account/partition combination". (#97)
+- **Half-open Dev Tunnel relay** — a relay that goes half-open (keep-alive failing while the SDK still reports Connected) now rebuilds itself, so the SSH forward self-heals instead of hanging until a manual reconnect. (#98)
+- **`sacct` efficiency accounting** — utilization is read from the `.batch` step only, fixing incorrect CPU/memory efficiency numbers. (#93)
+- **Atomic, locked `~/.ssh/config` edits** — host-config writes are file-locked and atomic, avoiding corruption when multiple windows edit hosts. (#94)
 
 ## [0.0.4] - 2026-06-30
 
