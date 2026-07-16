@@ -5,7 +5,7 @@ import { persistableConnectionInfo, SessionConnectionInfo } from '../models';
 test('persistableConnectionInfo keeps reattach refs + apiPort and drops secrets/volatile fields', () => {
     const full: SessionConnectionInfo = {
         sshTunnelId: 'tid', sshPort: 40393, region: 'usw3', apiPort: 38157,
-        sshTunnelForwardPort: 51000, sshPassword: 'pw', sshPrivateKey: 'KEY',
+        sshTunnelForwardPort: 51000, sshPrivateKey: 'KEY',
         apiTunnelId: 'tid', apiTunnelAccessToken: 'tok',
     };
     assert.deepEqual(persistableConnectionInfo(full), {

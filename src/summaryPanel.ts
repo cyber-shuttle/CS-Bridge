@@ -6,7 +6,7 @@ import { readSessionMetrics, readSessionStats, watchSessionMetrics } from './mod
 import { Metric, Stats, SlurmSession, SummaryState } from './models';
 
 // A finished run's fixed snapshot (from the Stats view), shown instead of the possibly-relaunched live session.
-export interface RunSnapshot { stats?: Stats; metrics?: Metric[] }
+interface RunSnapshot { stats?: Stats; metrics?: Metric[] }
 
 const PENDING_KEY = 'csbridge.pendingSummaries';
 // ponytail: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.

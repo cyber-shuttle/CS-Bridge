@@ -36,7 +36,7 @@ export function memoryOptions(partition: SlurmPartitionInfo | undefined): string
 
 export function gpuOptions(partition: SlurmPartitionInfo | undefined, tab: ResourceTab): GpuOptions {
     if (tab !== 'gpu' || !partition || !hasGres(partition)) { return { counts: [], types: [] }; }
-    const max = partition.gres[0].count; // count ceiling from the first gres entry
+    const max = partition.gres[0].count;
     return {
         counts: Array.from({ length: max }, (_, i) => i + 1),
         types: partition.gres.map(g => g.name),

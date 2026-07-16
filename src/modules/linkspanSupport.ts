@@ -15,7 +15,7 @@ export interface LinkspanSshStatus {
     last_error?: string;
 }
 
-export interface SshServerInfo { bind_port: number; password: string; id: string; private_key: string }
+interface SshServerInfo { bind_port: number; password: string; id: string; private_key: string }
 
 // GET and require a shape-checked JSON body — the tunnel edge answers 200 with an HTML page once the host is gone,
 // so a valid body (not resp.ok) is the real liveness signal.
@@ -35,7 +35,6 @@ async function post(baseUrl: string, headers: Record<string, string>, path: stri
     return resp;
 }
 
-// GET /health — throws until linkspan answers {"status":"ok"}.
 export async function getHealth(baseUrl: string, headers: Record<string, string>): Promise<void> {
     await get(baseUrl, headers, '/health', j => (j as { status?: unknown })?.status === 'ok');
 }

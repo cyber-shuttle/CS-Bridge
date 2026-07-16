@@ -7,7 +7,7 @@ export interface RemoteRunner {
     runRemoteCommand(host: string, command: string): Promise<{ stdout: string; stderr: string; code: number }>;
 }
 
-export interface LogSink {
+interface LogSink {
     info(message: string, ...args: unknown[]): void;
     warn(message: string, ...args: unknown[]): void;
     error(message: string, ...args: unknown[]): void;

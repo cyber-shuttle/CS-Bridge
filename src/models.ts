@@ -17,7 +17,7 @@ export interface SlurmSession extends Session {
 // ready_to_connect → connecting → connected; unreachable on a dropped link or cluster outage; stopping → stopped/failed/completed.
 // Wall-time killed → stopped (restartable). An SSH auth prompt during launch shows as awaiting_input
 // (reverts to submitting once answered); dismissing it → interrupted.
-export interface Session {
+interface Session {
     id: string;
     name: string;
     cluster: string;
@@ -40,7 +40,6 @@ export interface SessionConnectionInfo {
     sshTunnelId: string;
     region: string;
     sshTunnelForwardPort?: number;
-    sshPassword?: string;
     sshPrivateKey?: string;
     apiTunnelId?: string;
     apiTunnelAccessToken?: string;
@@ -139,7 +138,6 @@ export interface Stats {
 
 export interface SessionRunRecord {
     sessionId: string;
-    sessionName: string;
     cluster: string;
     jobId: string;
     endedAt: number;

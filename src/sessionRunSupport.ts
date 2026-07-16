@@ -20,7 +20,7 @@ export async function recordSessionRun(session: SlurmSession): Promise<void> {
     if (!session.jobId) { return; }
     if (readSessionRuns(session.id).some(r => isSameRun(r, session))) { return; }
     const stats = await fetchStats(session) ?? readSessionStats(session.id); // fall back to the last in-run copy if the end query came back empty
-    const record: SessionRunRecord = { sessionId: session.id, sessionName: session.name, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, stats, metrics: readSessionMetrics(session.id), allocation: session.allocation, queue: session.queue };
+    const record: SessionRunRecord = { sessionId: session.id, cluster: session.cluster, jobId: session.jobId, endedAt: Date.now(), finalStatus: session.status, stats, metrics: readSessionMetrics(session.id), allocation: session.allocation, queue: session.queue };
     appendRun(record, err => logger.error('Failed to record run', err));
 }
 

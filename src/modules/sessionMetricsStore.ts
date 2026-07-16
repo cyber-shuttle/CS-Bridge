@@ -29,7 +29,6 @@ export function appendMetric(id: string, sample: Metric): void {
 }
 export const readSessionMetrics = (id: string): Metric[] => read(id).metrics ?? [];
 
-// live sacct copy
 export const writeSessionStats = (id: string, stats: Stats): void => mutate(id, cur => ({ ...cur, stats }));
 export const readSessionStats = (id: string): Stats | undefined => read(id).stats;
 
