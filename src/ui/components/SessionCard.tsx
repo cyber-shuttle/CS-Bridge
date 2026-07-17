@@ -41,7 +41,7 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     connected: { name: 'circle-filled' },
     unreachable: { name: 'primitive-square' },
     failed: { name: 'primitive-square' },
-    stopped: { name: 'circle-outline' },
+    stopped: { name: 'primitive-square' },
     stopping: { name: 'loading', spin: true },
     awaiting_input: { name: 'primitive-square' },
 };
