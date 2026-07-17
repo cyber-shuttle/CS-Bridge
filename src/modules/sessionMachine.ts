@@ -22,7 +22,7 @@ export interface StatusTransition {
 
 // Session-status categories — the single source of truth shared by the provider, monitor, and webview UI.
 const CONNECT_PHASE: Status[] = ['preparing', 'ready_to_connect', 'connecting', 'connected'];
-const TERMINAL: Status[] = ['stopped', 'failed', 'completed'];
+const TERMINAL: Status[] = ['stopped', 'failed'];
 // 'stopping' is excluded so Stop neither shows nor re-triggers while a stop is already in flight.
 const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'ready_to_connect', 'connecting', 'connected', 'unreachable'];
 const RELAY_LIVE: Status[] = ['ready_to_connect', 'connecting', 'connected'];
@@ -30,7 +30,7 @@ const RELAY_LIVE: Status[] = ['ready_to_connect', 'connecting', 'connected'];
 const MONITORABLE_OFFLINE: Status[] = ['submitting', 'queued', 'preparing', 'unreachable'];
 
 export const isTerminal = (status: Status): boolean => TERMINAL.includes(status);
-export const isCloseable = (status: Status): boolean => isTerminal(status) || status === 'not_started' || status === 'interrupted';
+export const isCloseable = (status: Status): boolean => isTerminal(status) || status === 'not_started';
 export const isStoppable = (status: Status): boolean => STOPPABLE.includes(status);
 export const isRelayLive = (status: Status): boolean => RELAY_LIVE.includes(status);
 
@@ -48,7 +48,8 @@ export function computeStatusTransition(current: Status, slurm: SlurmJobStatus):
             // Promote a freshly-running job to 'preparing'; never pull a connect-phase session back (would thrash reattach).
             return CONNECT_PHASE.includes(current) ? {} : { next: 'preparing' };
         case SlurmJobStatus.COMPLETED:
-            return { next: 'completed', stopMonitoring: true };
+            // Completed collapses into 'stopped' — the job is gone, the session is restartable, same as a wall-time stop.
+            return { next: 'stopped', stopMonitoring: true };
         case SlurmJobStatus.FAILED:
         case SlurmJobStatus.OUT_OF_MEMORY:
             return { next: 'failed', stopMonitoring: true, error: `Job ended with status: ${slurm}` };

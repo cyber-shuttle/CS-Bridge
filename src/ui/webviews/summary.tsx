@@ -8,7 +8,7 @@ import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
 import type { SlurmSession, SummaryState } from '@/models';
 
 const STATUS_LABEL: Partial<Record<SlurmSession['status'], string>> = {
-    stopped: 'Stopped', completed: 'Completed', failed: 'Failed',
+    stopped: 'Stopped', failed: 'Failed',
 };
 
 // The record may not be terminal yet at summary time: the wall-time path tears down at the deadline,
