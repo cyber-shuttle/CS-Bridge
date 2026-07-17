@@ -6,7 +6,7 @@
 
 Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC and resources, and CS Bridge submits the SLURM job and attaches VS Code to it.
 
-<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/demo-overview.webp?raw=true" alt="Demo" width="400">
+<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/demo-overview.webp?raw=true" alt="Demo" width="480">
 
 ## Features
 
@@ -34,15 +34,15 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 
 CS Bridge queries HPC partitions/accounts/limits. You can pick the configuration you need, and save it as a reusable session.
 
-<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/02-sessions.png" alt="Sessions sidebar" width="400">
+<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/02-sessions.png" alt="Sessions sidebar" width="480">
 
 CS Bridge shows each session's live status — a running session streams its CPU, memory, and GPU use inline. Start, Stop, and Connect from there:
 
-<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-live-status.png" alt="Live session status" width="400">
+<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-live-status.png" alt="Live session status" width="480">
 
 Every run's resource use is recorded — live in the sidebar while it runs, and afterward in a per-run summary tab that reports the run's full resource history and its CPU and memory efficiency. The Stats view keeps every past run with its efficiency, so you can see how well each session used its allocation and right-size the next one.
 
-<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png" alt="Past runs and their utilization" width="400">
+<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png" alt="Past runs and their utilization" width="480">
 
 When you click **Start**:
 
@@ -56,7 +56,7 @@ When you click **Connect**:
 2. CS Bridge opens a new window with URI `vscode-remote://ssh-remote+<cluster>-<last 6 of session name>/{HOME}` (e.g. `delta-493119`).
 3. VS Code's remote-SSH plugin intercepts this window, connects to the relayed SSH server via the OS-native `ssh` client, installs VS Code Server, and attaches the window to the compute node.
 
-<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/05-remote-window.png" alt="VS Code running on the compute node" width="400">
+<img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/05-remote-window.png" alt="VS Code running on the compute node" width="480">
 
 Full architecture in [CONTRIBUTING.md](CONTRIBUTING.md#architecture).
 
