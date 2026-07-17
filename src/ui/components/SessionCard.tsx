@@ -39,11 +39,11 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     ready_to_connect: { name: 'circle-filled' },
     connecting: { name: 'loading', spin: true },
     connected: { name: 'circle-filled' },
-    unreachable: { name: 'warning' },
-    failed: { name: 'warning' },
+    unreachable: { name: 'triangle-up' },
+    failed: { name: 'triangle-up' },
     stopped: { name: 'circle-filled' },
     stopping: { name: 'loading', spin: true },
-    awaiting_input: { name: 'warning' },
+    awaiting_input: { name: 'triangle-up' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
