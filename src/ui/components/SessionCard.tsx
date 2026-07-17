@@ -30,18 +30,20 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 };
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
-    not_started: { name: 'play' },
-    submitting: { name: 'cloud-upload' },
-    queued: { name: 'watch' },
-    preparing: { name: 'sync', spin: true },
-    ready_to_connect: { name: 'plug' },
+    // Bare-minimum glyph vocabulary — a dot at rest, a spinner in progress, a triangle for trouble;
+    // dotColor() carries the state distinction (grey idle · green live · yellow needs-action · orange error).
+    not_started: { name: 'circle-filled' },
+    submitting: { name: 'loading', spin: true },
+    queued: { name: 'loading', spin: true },
+    preparing: { name: 'loading', spin: true },
+    ready_to_connect: { name: 'circle-filled' },
     connecting: { name: 'loading', spin: true },
-    connected: { name: 'vm-active' },
+    connected: { name: 'circle-filled' },
     unreachable: { name: 'warning' },
-    failed: { name: 'error' },
-    stopped: { name: 'debug-pause' },
+    failed: { name: 'warning' },
+    stopped: { name: 'circle-filled' },
     stopping: { name: 'loading', spin: true },
-    awaiting_input: { name: 'terminal' },
+    awaiting_input: { name: 'warning' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };

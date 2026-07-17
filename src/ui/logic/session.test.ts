@@ -41,12 +41,14 @@ function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) 
     return { status, ...extra } as ViewSession;
 }
 
-test('dotColor: orange for attention, green for live relay, grey for everything else', () => {
+test('dotColor: orange error, yellow needs-action, green live, grey otherwise', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-charts-orange)');
     assert.equal(dotColor('unreachable'), 'var(--vscode-charts-orange)');
+    assert.equal(dotColor('ready_to_connect'), 'var(--vscode-charts-yellow)');
+    assert.equal(dotColor('awaiting_input'), 'var(--vscode-charts-yellow)');
     assert.equal(dotColor('connecting'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
-    for (const s of ['not_started', 'submitting', 'queued', 'preparing', 'ready_to_connect', 'stopping', 'stopped', 'awaiting_input'] as const) {
+    for (const s of ['not_started', 'submitting', 'queued', 'preparing', 'stopping', 'stopped'] as const) {
         assert.equal(dotColor(s), 'var(--vscode-descriptionForeground)', `${s} should be grey`);
     }
 });
