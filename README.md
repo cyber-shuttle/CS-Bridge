@@ -40,7 +40,7 @@ CS Bridge shows each session's live status — a running session streams its CPU
 
 ![Live session status](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-live-status.png)
 
-Every finished run is recorded. A per-session summary tab and the Stats view keep the history — CPU and memory efficiency for each run — so you can see how well a session used its allocation and right-size the next one.
+A session's summary tab tracks its live resource use and efficiency — CPU, memory, and GPU — while it runs. The Stats view keeps the history of past runs, each with its own CPU and memory efficiency, so you can see how well every session used its allocation and right-size the next one.
 
 ![Past runs and their utilization](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png)
 
