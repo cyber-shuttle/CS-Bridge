@@ -10,10 +10,10 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 
 ## Features
 
-- **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed and connectable in one click.
+- **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed in the SSH Hosts view and ready to launch a session on.
 - **SLURM without scripts** — set partition, CPUs, memory, GPUs, and walltime in a form; CS Bridge writes and submits the batch script.
 - **Session memory** — restart an expired job with its previous resource selection in one click.
-- **Utilization at a glance** — each finished run records CPU and memory efficiency; a summary tab and a Stats view keep the history, so you can see how well a session used its allocation.
+- **Utilization at a glance** — each finished run records CPU and memory efficiency; the Stats view keeps the history, and a per-run summary tab shows each run's detail, so you can see how well a session used its allocation.
 - **No inbound ports** — a Microsoft Dev Tunnel carries the transport; the cluster opens nothing new.
 - **OS-native SSH** — uses your system `ssh` binary and its own ControlMaster pool, not a bundled SSH client.
 - **A full VS Code window on the compute node** — your editor, debugger, extensions, and keybindings, running where the code runs.
@@ -26,7 +26,7 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 2. Click the CS Bridge icon in the activity bar and sign in with a Microsoft account (used only to authenticate the Dev Tunnel).
 3. Pick a host from your `~/.ssh/config`.
 4. Fill the resource form: partition, CPUs, memory, GPUs, walltime.
-5. Click **Launch**, then **Connect** — a new VS Code window opens on the compute node.
+5. Click **Start**, then **Connect** — a new VS Code window opens on the compute node.
 
 **Requires:** VS Code 1.98+, a SLURM cluster reachable in your `~/.ssh/config`, and a free Microsoft account. Building from source? See [CONTRIBUTING.md](CONTRIBUTING.md#development-setup).
 
@@ -34,20 +34,29 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 
 CS Bridge queries HPC partitions/accounts/limits. You can pick the configuration you need, and save it as a reusable session.
 
-![Pick HPC and Resources](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/02-resource-selection.png)
+![Sessions sidebar](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/02-sessions.png)
 
-CS-Bridge shows the live status of each session. Start, Stop, and Connect from there:
+CS Bridge shows each session's live status — a running session streams its CPU, memory, and GPU use inline. Start, Stop, and Connect from there:
 
-![Start/Stop Sessions](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-session-management.png)
+![Live session status](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-live-status.png)
+
+Every run's resource use is recorded — live in the sidebar while it runs, and afterward in a per-run summary tab that reports the run's full resource history and its CPU and memory efficiency. The Stats view keeps every past run with its efficiency, so you can see how well each session used its allocation and right-size the next one.
+
+![Past runs and their utilization](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png)
 
 When you click **Start**:
 
 1. CS Bridge generates a SLURM batch script and submits it with `sbatch`. The script runs `linkspan` on the allocated compute node.
 2. CS Bridge polls `sacct` for job status and waits for `linkspan` to come live.
-3. `linkspan` starts a REST API and an SSH server on the compute node, exposing both over a Dev Tunnel.
-4. CS Bridge reaches `linkspan` and the SSH server through the Microsoft Dev Tunnels SDK and relays the SSH server to localhost.
-5. CS Bridge opens a new window with URI `vscode-remote://ssh-remote+cshost-<sessionId>/{HOME}`.
-6. VS Code's remote-SSH plugin intercepts this window, connects to the relayed SSH server via the OS-native `ssh` client, installs VS Code Server, and attaches the window to the compute node.
+3. `linkspan` starts a REST API and an SSH server on the compute node, exposing both over a Dev Tunnel. The session is now ready to connect.
+
+When you click **Connect**:
+
+1. CS Bridge reaches `linkspan`'s REST API over the Dev Tunnel (HTTPS) and relays the compute-node SSH server to localhost with the Microsoft Dev Tunnels SDK.
+2. CS Bridge opens a new window with URI `vscode-remote://ssh-remote+<cluster>-<last 6 of session name>/{HOME}` (e.g. `delta-493119`).
+3. VS Code's remote-SSH plugin intercepts this window, connects to the relayed SSH server via the OS-native `ssh` client, installs VS Code Server, and attaches the window to the compute node.
+
+![VS Code running on the compute node](https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/05-remote-window.png)
 
 Full architecture in [CONTRIBUTING.md](CONTRIBUTING.md#architecture).
 
@@ -55,13 +64,13 @@ Full architecture in [CONTRIBUTING.md](CONTRIBUTING.md#architecture).
 
 **Training a model on a GPU cluster.** Click + to add session, pick the GPU cluster, choose a GPU partition and walltime, then **Start** -> **Connect**. The Python and Jupyter extensions behave as they do locally; `torch.cuda.is_available()` returns `True`.
 
-**Resuming after walltime expiry.** The expired session is flagged in the sidebar. Click **Restart** -> CS Bridge resubmits with the same partition, account, and resources. Files on the shared filesystem are untouched.
+**Resuming after walltime expiry.** The expired session shows as **Stopped** in the sidebar. Click **Restart** -> CS Bridge resubmits with the same partition, account, and resources. Files on the shared filesystem are untouched.
 
 **Several clusters at once.** Each cluster is a separate entry, and sessions on different clusters run side by side. Switch between them with a click -> no extra terminals, no SSH alias juggling.
 
 ## Files and paths
 
-**Local:** `~/.cybershuttle/sessions.json` (session metadata, shared across VS Code windows)
+**Local:** `~/.cybershuttle/sessions/` (one `<sessionId>.json` per session; metadata shared across VS Code windows)
 `~/.cybershuttle/ssh_config`, `~/.cybershuttle/ssh_keys/`, `~/.cybershuttle/ssh_control/` (generated SSH config, per-session keys, ControlMaster sockets).
 CS Bridge prepends `Include ~/.cybershuttle/ssh_config` to your `~/.ssh/config` so OS-native `ssh` picks up the per-session aliases.
 The Microsoft account token is held by VS Code's built-in authentication provider (OS keychain).
@@ -73,22 +82,22 @@ To reset, remove both `~/.cybershuttle/` directories and the `Include` line in `
 ## Troubleshooting
 
 1. **No hosts listed.** `~/.ssh/config` is empty or unreadable. Add a `Host` block with `HostName`, `User`, and `IdentityFile`, then refresh.
-2. **Microsoft sign-in fails.** Your network may block `login.microsoftonline.com` or `*.devtunnels.ms`. Allowlist both the Dev Tunnel is the only supported transport today.
+2. **Microsoft sign-in fails.** Your network may block `login.microsoftonline.com` or `*.devtunnels.ms`. Allowlist both. The Dev Tunnel is the only supported transport today.
 3. **Job stuck in `PENDING`.** Cluster busy or request too large. Try smaller resources, or run `squeue -u $USER` on the cluster for the reason.
 4. **Session fails with "Slurm is not available".** The selected host has no `sinfo` on `PATH`. CS Bridge requires SLURM for now - see the [Roadmap](#roadmap).
-5. **Connect window disconnects immediately.** Tunnel blocked or compute node lost network. Click **Restart**; check `View -> Output -> CS Bridge` for the failing step.
-6. **Session stuck in `deploying_agent`.** linkspan is downloading on first use. Wait, then check `~/.cybershuttle/logs/` on the remote. If it never moves, **Stop** and **Launch** again.
+5. **Connect window disconnects.** If the tunnel or compute-node network drops, the session shows as **Unreachable**; click **Reconnect** to rebuild the relay. Check `View -> Output -> CS Bridge` for the failing step.
+6. **Session stuck on `Submitting…`.** linkspan may be downloading on first use. Wait, then check `~/.cybershuttle/logs/` on the remote. If it never moves, click **Stop**, then **Restart**.
 7. **Permission denied on the remote linkspan binary.** Run `chmod +x ~/.cybershuttle/bin/linkspan` on the remote, then **Restart**.
 
 ## FAQ
 
-1. **Do I install anything on the remote?** No. CS Bridge uploads `linkspan` to `~/.cybershuttle/bin/` automatically on first connect.
+1. **Do I install anything on the remote?** No. CS Bridge downloads `linkspan` into `~/.cybershuttle/bin/` on the cluster automatically on first connect (the remote needs outbound access to github.com).
 2. **Does it work without SLURM?** Not yet. The launch path runs `sinfo` and fails if SLURM is missing. Plain-SSH support is on the [Roadmap](#roadmap).
 3. **Are my local files copied?** No. You work against the cluster's filesystem directly. Local-workspace mounting is on the [Roadmap](#roadmap).
 4. **Walltime expired mid-work?** Click **Restart** to resubmit with the same selection, then **Connect**.
 5. **Does CS Bridge require the Remote-SSH extension?** Not as a hard dependency, but the final attach uses VS Code's `vscode-remote://ssh-remote+...` URI, which Remote-SSH (or any compatible provider) handles via your OS `ssh` binary.
 6. **VS Code Insiders, Cursor, or other forks?** CS Bridge targets VS Code 1.98+. Forks with compatible remote-SSH support and Marketplace access usually work but aren't officially tested.
-7. **Where do tokens and state live?** Tokens are held by VS Code's built-in Microsoft authentication provider (OS keychain). Session metadata lives in `~/.cybershuttle/sessions.json`.
+7. **Where do tokens and state live?** Tokens are held by VS Code's built-in Microsoft authentication provider (OS keychain). Session metadata lives in per-session files under `~/.cybershuttle/sessions/` (one `<sessionId>.json` per session).
 8. **Does my institution see what I'm doing?** No more than before. CS Bridge uses your existing SSH credentials and the Microsoft account you sign in with; tunnel traffic is encrypted end to end.
 9. **Does the cluster session survive closing my laptop?** Yes. The SLURM job and your remote processes run until walltime ends. Reopen and **Connect** to reattach.
 10. **Windows, macOS, Linux?** Yes on the local side, wherever VS Code and OpenSSH run. The remote needs a Unix-like environment with SSH and SLURM.
@@ -104,7 +113,7 @@ Remote-SSH alone is enough when you SSH into a static dev box. CS Bridge is for 
 
 These items are planned and may change.
 
-- [x] **UI for adding SSH config entries** — direct users to the Remote-SSH extension UI to create new `~/.ssh/config` entries.
+- [x] **UI for adding SSH config entries** — add a host from an SSH connection command (e.g. `ssh user@host -A`) in the SSH Hosts view; CS Bridge parses the command and writes the `Host` entry to `~/.ssh/config`.
 - [ ] **UI to report issues** — file an issue from inside the extension with a typed description and an auto-captured stack trace.
 - [ ] **UI for queue visibility** — show queued jobs, queue positions, and estimated start times.
 - [ ] **Opt-in anonymous usage metrics** — explicit consent flow, reporting telemetry to a central endpoint.
