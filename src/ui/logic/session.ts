@@ -49,8 +49,8 @@ export function elapsedRunMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt
 // Colour buckets for the status dot: orange = error, yellow = needs-your-action, green = live.
 // Everything else (idle/pending/stopping/stopped) falls through to neutral grey.
 const ORANGE: SlurmSession['status'][] = ['failed', 'unreachable'];
-const YELLOW: SlurmSession['status'][] = ['ready_to_connect', 'awaiting_input'];
-const GREEN: SlurmSession['status'][] = ['connecting', 'connected'];
+const YELLOW: SlurmSession['status'][] = ['awaiting_input'];
+const GREEN: SlurmSession['status'][] = ['ready_to_connect', 'connecting', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
 

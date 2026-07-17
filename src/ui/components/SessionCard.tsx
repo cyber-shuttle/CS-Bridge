@@ -30,13 +30,14 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 };
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
-    // Bare-minimum glyph vocabulary — a dot at rest, a spinner in progress, a triangle for trouble;
+    // Bare-minimum glyph vocabulary — a dot at rest, a spinner in progress, a square for trouble;
     // dotColor() carries the state distinction (grey idle · green live · yellow needs-action · orange error).
+    // A hollow circle is idle-but-not-live (not_started, ready_to_connect); a filled circle is live (connected).
     not_started: { name: 'circle-outline' },
     submitting: { name: 'loading', spin: true },
     queued: { name: 'loading', spin: true },
     preparing: { name: 'loading', spin: true },
-    ready_to_connect: { name: 'circle-filled' },
+    ready_to_connect: { name: 'circle-outline' },
     connecting: { name: 'loading', spin: true },
     connected: { name: 'circle-filled' },
     unreachable: { name: 'primitive-square' },
