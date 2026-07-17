@@ -448,17 +448,18 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         const session = this.requireSession(sessionId, 'launch', false);
         if (!session) { return; }
         this.previewSession = null;
+        const preLaunchStatus = session.status; // dismissing the auth box reverts here, not to a dead-end state
         session.startedAt = undefined; // fresh launch: re-anchor the wall-time countdown when the new job starts running
         setStatus(session, 'submitting', '');
         void this.pushState();
         // An SSH auth box during launch shows on the card as awaiting_input, reverting to submitting once answered.
         const observer: PromptObserver = (e) => { setStatus(session, e === 'opened' ? 'awaiting_input' : 'submitting'); void this.pushState(); };
         this.runSessionTask(session, `Launching Session ${session.name}...`, 'launch',
-            p => launchSession(session, this.monitor, p, observer), 'Please clean up any resources on the cluster if necessary.');
+            p => launchSession(session, this.monitor, p, observer), 'Please clean up any resources on the cluster if necessary.', preLaunchStatus);
     }
 
     // Dismissing the progress notification marks the session stopped; a failure marks it failed and shows a dialog.
-    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string): void {
+    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string, promptCancelStatus: SlurmSession['status'] = 'stopped'): void {
         const task = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
             token.onCancellationRequested(() => setStatus(session, 'stopped'));
             await run(progress);
@@ -466,8 +467,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         Promise.resolve(task).then(() => {
             void this.pushState();
         }).catch((error) => {
-            if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: offer Retry, no error dialog
-                setStatus(session, 'interrupted', '');
+            if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: revert to the pre-launch state, no error dialog
+                setStatus(session, promptCancelStatus, '');
                 void this.pushState();
                 return;
             }

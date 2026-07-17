@@ -46,23 +46,24 @@ export function elapsedRunMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt
     return Math.max(0, total > 0 ? Math.min(raw, total) : raw);
 }
 
-const FAILED: SlurmSession['status'][] = ['failed', 'stopped'];
-const ACTIVATING: SlurmSession['status'][] = ['queued', 'stopping', 'submitting', 'awaiting_input', 'unreachable'];
-const LIVE: SlurmSession['status'][] = ['preparing', 'connected'];
+// Colour buckets for the status dot: orange = error, yellow = needs-your-action, green = live.
+// Everything else (idle/pending/stopping/stopped) falls through to neutral grey.
+const ORANGE: SlurmSession['status'][] = ['failed', 'unreachable'];
+const YELLOW: SlurmSession['status'][] = ['awaiting_input'];
+const GREEN: SlurmSession['status'][] = ['ready_to_connect', 'connecting', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
 
 export function dotColor(status: SlurmSession['status']): string {
-    if (FAILED.includes(status)) { return 'var(--vscode-errorForeground)'; }
-    if (ACTIVATING.includes(status)) { return 'var(--vscode-charts-yellow)'; }
-    if (LIVE.includes(status)) { return 'var(--vscode-charts-green)'; }
+    if (ORANGE.includes(status)) { return 'var(--vscode-charts-orange)'; }
+    if (YELLOW.includes(status)) { return 'var(--vscode-charts-yellow)'; }
+    if (GREEN.includes(status)) { return 'var(--vscode-charts-green)'; }
     return 'var(--vscode-descriptionForeground)';
 }
 
 export function sessionActions(session: ViewSession): SessionAction[] {
     const s = session.status;
     if (isTerminal(s)) { return [{ kind: 'restart', label: 'Restart', icon: 'debug-restart' }]; }
-    if (s === 'interrupted') { return [{ kind: 'restart', label: 'Retry', icon: 'debug-restart' }]; }
     if (s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
 
     const actions: SessionAction[] = [];

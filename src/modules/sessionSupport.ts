@@ -99,7 +99,7 @@ export class SessionMonitor {
         if (!session || this.ticking.has(sessionId)) { return; }
         this.ticking.add(sessionId);
         try {
-            // Without this a terminal-but-still-tracked session resurrects: computeStatusTransition('completed', RUNNING) → 'preparing'.
+            // Without this a terminal-but-still-tracked session resurrects: computeStatusTransition('stopped', RUNNING) → 'preparing'.
             if (isTerminal(session.status)) {
                 this.endSession(sessionId);
                 return;

@@ -29,20 +29,21 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 };
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
+    // Bare-minimum glyph vocabulary — a dot at rest, a spinner in progress, a square for trouble;
+    // dotColor() carries the state distinction (grey idle · green live · yellow needs-action · orange error).
+    // A hollow circle is idle-but-not-live (not_started, ready_to_connect); a filled circle is live (connected).
     not_started: { name: 'circle-outline' },
     submitting: { name: 'loading', spin: true },
     queued: { name: 'loading', spin: true },
     preparing: { name: 'loading', spin: true },
-    ready_to_connect: { name: 'plug' },
+    ready_to_connect: { name: 'circle-outline' },
     connecting: { name: 'loading', spin: true },
-    connected: { name: 'vm-active' },
-    unreachable: { name: 'warning' },
-    completed: { name: 'pass' },
-    failed: { name: 'error' },
-    stopped: { name: 'debug-stop' },
+    connected: { name: 'circle-filled' },
+    unreachable: { name: 'primitive-square' },
+    failed: { name: 'primitive-square' },
+    stopped: { name: 'primitive-square' },
     stopping: { name: 'loading', spin: true },
-    awaiting_input: { name: 'loading', spin: true },
-    interrupted: { name: 'warning' },
+    awaiting_input: { name: 'primitive-square' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -96,8 +97,6 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
         case 'stopped': return <Row style={statusStyle}>{session.errorMessage ? `Stop failed: ${session.errorMessage}` : 'Stopped'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;
-        case 'interrupted': return <Row style={statusStyle}>Interrupted — input dismissed</Row>;
-        case 'completed': return <Row style={statusStyle}>Completed</Row>;
         default: return null;
     }
 }
@@ -115,7 +114,7 @@ export function SessionCard({ session, readonly }: Props) {
         <Card>
             {/* Fixed height keeps the gap to the detail row constant whether or not the close button shows. */}
             <Row gap={6} style={{ minHeight: '20px' }}>
-                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0 }}></vscode-icon>
+                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0, marginRight: '-3px' }}></vscode-icon>
                 <Text weight={600}>{session.cluster}</Text>
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
