@@ -32,7 +32,7 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
     // Bare-minimum glyph vocabulary — a dot at rest, a spinner in progress, a triangle for trouble;
     // dotColor() carries the state distinction (grey idle · green live · yellow needs-action · orange error).
-    not_started: { name: 'circle-filled' },
+    not_started: { name: 'circle-outline' },
     submitting: { name: 'loading', spin: true },
     queued: { name: 'loading', spin: true },
     preparing: { name: 'loading', spin: true },
@@ -41,7 +41,7 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     connected: { name: 'circle-filled' },
     unreachable: { name: 'primitive-square' },
     failed: { name: 'primitive-square' },
-    stopped: { name: 'circle-filled' },
+    stopped: { name: 'circle-outline' },
     stopping: { name: 'loading', spin: true },
     awaiting_input: { name: 'primitive-square' },
 };
@@ -114,7 +114,7 @@ export function SessionCard({ session, readonly, dev }: Props) {
         <Card>
             {/* Fixed height keeps the gap to the detail row constant whether or not the close button shows. */}
             <Row gap={6} style={{ minHeight: '20px' }}>
-                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0 }}></vscode-icon>
+                <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0, marginRight: '-3px' }}></vscode-icon>
                 <Text weight={600}>{session.cluster}</Text>
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
