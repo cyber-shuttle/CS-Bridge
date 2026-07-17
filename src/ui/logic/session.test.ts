@@ -41,18 +41,26 @@ function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) 
     return { status, ...extra } as ViewSession;
 }
 
-test('dotColor buckets statuses into idle/activating/live/failed colours', () => {
-    assert.equal(dotColor('failed'), 'var(--vscode-errorForeground)');
+test('dotColor buckets statuses into grey/green/orange/red/yellow colours', () => {
+    // red: stopped + interrupted (closeable resting states share one look)
     assert.equal(dotColor('stopped'), 'var(--vscode-errorForeground)');
-    assert.equal(dotColor('queued'), 'var(--vscode-charts-yellow)');
-    assert.equal(dotColor('submitting'), 'var(--vscode-charts-yellow)');
-    assert.equal(dotColor('preparing'), 'var(--vscode-charts-green)');
+    assert.equal(dotColor('interrupted'), 'var(--vscode-errorForeground)');
+    // orange: attention states
+    assert.equal(dotColor('failed'), 'var(--vscode-charts-orange)');
+    assert.equal(dotColor('unreachable'), 'var(--vscode-charts-orange)');
+    // green: live relay
+    assert.equal(dotColor('connecting'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
-    assert.equal(dotColor('completed'), 'var(--vscode-descriptionForeground)');
+    // yellow: stop in flight
+    assert.equal(dotColor('stopping'), 'var(--vscode-charts-yellow)');
+    // grey: idle/pending — everything else
     assert.equal(dotColor('not_started'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('awaiting_input'), 'var(--vscode-charts-yellow)'); // same spinner-yellow as submitting; only the text changes
-    assert.equal(dotColor('interrupted'), 'var(--vscode-descriptionForeground)'); // neutral resting state
-    assert.equal(dotColor('unreachable'), 'var(--vscode-charts-yellow)'); // recoverable attention state
+    assert.equal(dotColor('submitting'), 'var(--vscode-descriptionForeground)');
+    assert.equal(dotColor('queued'), 'var(--vscode-descriptionForeground)');
+    assert.equal(dotColor('preparing'), 'var(--vscode-descriptionForeground)');
+    assert.equal(dotColor('ready_to_connect'), 'var(--vscode-descriptionForeground)');
+    assert.equal(dotColor('awaiting_input'), 'var(--vscode-descriptionForeground)');
+    assert.equal(dotColor('completed'), 'var(--vscode-descriptionForeground)');
 });
 
 test('sessionActions returns the right buttons per status', () => {

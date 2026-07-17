@@ -30,20 +30,20 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 };
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
-    not_started: { name: 'circle-outline' },
+    not_started: { name: 'play' },
     submitting: { name: 'loading', spin: true },
     queued: { name: 'loading', spin: true },
     preparing: { name: 'loading', spin: true },
     ready_to_connect: { name: 'plug' },
     connecting: { name: 'loading', spin: true },
-    connected: { name: 'vm-active' },
+    connected: { name: 'plug' },
     unreachable: { name: 'warning' },
     completed: { name: 'pass' },
-    failed: { name: 'error' },
+    failed: { name: 'warning' },
     stopped: { name: 'debug-stop' },
     stopping: { name: 'loading', spin: true },
-    awaiting_input: { name: 'loading', spin: true },
-    interrupted: { name: 'warning' },
+    awaiting_input: { name: 'terminal' },
+    interrupted: { name: 'debug-stop' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
