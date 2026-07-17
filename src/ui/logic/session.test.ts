@@ -41,26 +41,14 @@ function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) 
     return { status, ...extra } as ViewSession;
 }
 
-test('dotColor buckets statuses into grey/green/orange/red/yellow colours', () => {
-    // red: stopped + interrupted (closeable resting states share one look)
-    assert.equal(dotColor('stopped'), 'var(--vscode-errorForeground)');
-    assert.equal(dotColor('interrupted'), 'var(--vscode-errorForeground)');
-    // orange: attention states
+test('dotColor: orange for attention, green for live relay, grey for everything else', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-charts-orange)');
     assert.equal(dotColor('unreachable'), 'var(--vscode-charts-orange)');
-    // green: live relay
     assert.equal(dotColor('connecting'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
-    // yellow: stop in flight
-    assert.equal(dotColor('stopping'), 'var(--vscode-charts-yellow)');
-    // grey: idle/pending — everything else
-    assert.equal(dotColor('not_started'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('submitting'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('queued'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('preparing'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('ready_to_connect'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('awaiting_input'), 'var(--vscode-descriptionForeground)');
-    assert.equal(dotColor('completed'), 'var(--vscode-descriptionForeground)');
+    for (const s of ['not_started', 'submitting', 'queued', 'preparing', 'ready_to_connect', 'stopping', 'stopped', 'awaiting_input'] as const) {
+        assert.equal(dotColor(s), 'var(--vscode-descriptionForeground)', `${s} should be grey`);
+    }
 });
 
 test('sessionActions returns the right buttons per status', () => {
@@ -73,9 +61,6 @@ test('sessionActions returns the right buttons per status', () => {
     assert.deepEqual(sessionActions(sess('stopped')).map(a => a.kind), ['restart']);
     assert.deepEqual(sessionActions(sess('stopping')).map(a => a.kind), []); // stop in flight: spinner only, no Stop button
     assert.deepEqual(sessionActions(sess('awaiting_input')).map(a => a.kind), []); // the input box is the action
-    const retry = sessionActions(sess('interrupted'));
-    assert.deepEqual(retry.map(a => a.kind), ['restart']);
-    assert.equal(retry[0].label, 'Retry');
 });
 
 test('connected session: Current when this window, else Switch/Connect by window liveness', () => {
@@ -91,6 +76,6 @@ test('connected session: Current when this window, else Switch/Connect by window
 });
 
 test('statusDescriptor reports closeability', () => {
-    assert.equal(statusDescriptor(sess('completed')).canClose, true);
+    assert.equal(statusDescriptor(sess('stopped')).canClose, true);
     assert.equal(statusDescriptor(sess('preparing')).canClose, false);
 });

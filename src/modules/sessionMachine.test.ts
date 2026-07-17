@@ -4,18 +4,15 @@ import { computeStatusTransition, isTerminal, isCloseable, isStoppable, isRelayL
 import { SlurmJobStatus } from '../models';
 
 test('status-category predicates classify each status correctly', () => {
-    assert.deepEqual((['stopped', 'failed', 'completed'] as const).map(isTerminal), [true, true, true]);
+    assert.deepEqual((['stopped', 'failed'] as const).map(isTerminal), [true, true]);
     assert.equal(isTerminal('queued'), false);
 
     assert.equal(isCloseable('not_started'), true); // terminal + not_started
     assert.equal(isCloseable('stopped'), true);
-    assert.equal(isCloseable('interrupted'), true); // dismissed launch: removable + retryable
     assert.equal(isCloseable('awaiting_input'), false); // prompt still open
     assert.equal(isCloseable('queued'), false);
 
-    assert.equal(isStoppable('interrupted'), false); // nothing running
     assert.equal(isStoppable('awaiting_input'), false); // waiting on the user, not running
-    assert.equal(isTerminal('interrupted'), false); // retryable, not terminal
 
     assert.equal(isStoppable('connected'), true); // can stop a live session
     assert.equal(isStoppable('queued'), true);
@@ -42,7 +39,7 @@ test('unreachableStatus downgrades only monitorable-offline statuses; never a re
         assert.equal(unreachableStatus(s), undefined, `${s} must not downgrade`);
     }
     // Terminal / not-yet-launched / launch-prompt states are left alone.
-    for (const s of ['stopped', 'failed', 'completed', 'not_started', 'stopping', 'interrupted', 'awaiting_input'] as const) {
+    for (const s of ['stopped', 'failed', 'not_started', 'stopping', 'awaiting_input'] as const) {
         assert.equal(unreachableStatus(s), undefined, `${s} must not downgrade`);
     }
 });
@@ -53,7 +50,7 @@ test('isReattachable is non-terminal AND has persisted refs', () => {
     assert.equal(isReattachable('connected', true), true);
     assert.equal(isReattachable('ready_to_connect', false), false); // no refs → nothing to reattach to
     assert.equal(isReattachable('failed', true), false); // terminal
-    assert.equal(isReattachable('completed', true), false);
+    assert.equal(isReattachable('stopped', true), false); // terminal
     assert.equal(isReattachable('not_started', true), true); // non-terminal; refs-gate is the real guard
 });
 
@@ -87,8 +84,8 @@ test('RUNNING does NOT pull a connect-phase session back to preparing', () => {
 });
 
 test('terminal SLURM states stop monitoring with the right status', () => {
-    assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.COMPLETED), { next: 'completed', stopMonitoring: true });
-    // Wall-time (TIMEOUT) and cancellation both resolve to 'stopped' — the job is gone but the session is restartable.
+    // COMPLETED collapses into 'stopped', same as wall-time/cancellation — the job is gone but the session is restartable.
+    assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.COMPLETED), { next: 'stopped', stopMonitoring: true });
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.CANCELLED), { next: 'stopped', stopMonitoring: true });
     assert.deepEqual(computeStatusTransition('connected', SlurmJobStatus.TIMEOUT), { next: 'stopped', stopMonitoring: true });
 });
@@ -117,5 +114,5 @@ test('a stopping session is never resurrected: RUNNING/QUEUED hold, only a termi
     assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.QUEUED), {});
     assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.UNKNOWN), {});
     assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.CANCELLED), { next: 'stopped', stopMonitoring: true });
-    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.COMPLETED), { next: 'completed', stopMonitoring: true });
+    assert.deepEqual(computeStatusTransition('stopping', SlurmJobStatus.COMPLETED), { next: 'stopped', stopMonitoring: true });
 });

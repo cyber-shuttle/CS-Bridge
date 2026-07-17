@@ -38,12 +38,10 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     connecting: { name: 'loading', spin: true },
     connected: { name: 'plug' },
     unreachable: { name: 'warning' },
-    completed: { name: 'pass' },
     failed: { name: 'warning' },
-    stopped: { name: 'debug-stop' },
+    stopped: { name: 'debug-pause' },
     stopping: { name: 'loading', spin: true },
     awaiting_input: { name: 'terminal' },
-    interrupted: { name: 'debug-stop' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -97,8 +95,6 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
         case 'stopped': return <Row style={statusStyle}>{session.errorMessage ? `Stop failed: ${session.errorMessage}` : 'Stopped'}</Row>;
         case 'failed': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Failed: ${session.errorMessage}` : 'Failed'}</Text></Row>;
-        case 'interrupted': return <Row style={statusStyle}>Interrupted — input dismissed</Row>;
-        case 'completed': return <Row style={statusStyle}>Completed</Row>;
         default: return null;
     }
 }

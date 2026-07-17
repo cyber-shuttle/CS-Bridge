@@ -4,7 +4,7 @@ import type { SessionRunRecord } from '../models';
 import { mergeRun } from './sessionMetricsStore';
 
 const run = (jobId: string, endedAt: number, over: Partial<SessionRunRecord> = {}): SessionRunRecord =>
-    ({ sessionId: 's', cluster: 'delta', jobId, endedAt, finalStatus: 'completed', ...over });
+    ({ sessionId: 's', cluster: 'delta', jobId, endedAt, finalStatus: 'stopped', ...over });
 
 test('mergeRun skips a run already recorded (same cluster+jobId)', () => {
     assert.equal(mergeRun([run('1', 100)], run('1', 100)), null);

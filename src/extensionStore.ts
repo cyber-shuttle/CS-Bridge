@@ -51,8 +51,8 @@ export function initSessionStore(storagePath: string = CS_HOME): string {
     for (const s of sessions) {
         // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
         if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
-        // A prompt that outlived its window can't be answered anymore; surface it as interrupted (offers Retry).
-        if (s.status === 'awaiting_input') { s.status = 'interrupted'; }
+        // A launch prompt that outlived its window can't be answered anymore; the launch never happened, so revert to not_started.
+        if (s.status === 'awaiting_input') { s.status = 'not_started'; }
         if (!isUuid(s.id)) { deleteFile(recordPath(s.id)); s.id = uuidv7(); writeRecord(s); }
     }
     logger.info(`Loaded ${sessions.length} session(s) from ${sessionsDir}`);

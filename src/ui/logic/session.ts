@@ -46,18 +46,14 @@ export function elapsedRunMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt
     return Math.max(0, total > 0 ? Math.min(raw, total) : raw);
 }
 
-// Colour buckets for the status dot; anything unlisted falls through to the neutral grey default.
-const RED: SlurmSession['status'][] = ['stopped', 'interrupted'];
+// Colour buckets for the status dot; anything unlisted (idle/pending/stopped/stopping) falls through to neutral grey.
 const ORANGE: SlurmSession['status'][] = ['failed', 'unreachable'];
-const YELLOW: SlurmSession['status'][] = ['stopping'];
 const GREEN: SlurmSession['status'][] = ['connecting', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
 
 export function dotColor(status: SlurmSession['status']): string {
-    if (RED.includes(status)) { return 'var(--vscode-errorForeground)'; }
     if (ORANGE.includes(status)) { return 'var(--vscode-charts-orange)'; }
-    if (YELLOW.includes(status)) { return 'var(--vscode-charts-yellow)'; }
     if (GREEN.includes(status)) { return 'var(--vscode-charts-green)'; }
     return 'var(--vscode-descriptionForeground)';
 }
@@ -65,7 +61,6 @@ export function dotColor(status: SlurmSession['status']): string {
 export function sessionActions(session: ViewSession): SessionAction[] {
     const s = session.status;
     if (isTerminal(s)) { return [{ kind: 'restart', label: 'Restart', icon: 'debug-restart' }]; }
-    if (s === 'interrupted') { return [{ kind: 'restart', label: 'Retry', icon: 'debug-restart' }]; }
     if (s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
 
     const actions: SessionAction[] = [];
