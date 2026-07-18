@@ -5,7 +5,7 @@ import { uuidv7 } from 'uuidv7';
 import { Logger } from './logger';
 import { readJson, updateJson, deleteFile, isPidAlive } from './modules/fsSupport';
 import { SlurmSession } from './models';
-import { mergeFromDisk, toPersistedRecord } from './modules/sessionStore';
+import { mergeFromDisk, mergeRecord, toPersistedRecord } from './modules/sessionStore';
 import { deleteSessionMetrics } from './modules/sessionMetricsStore';
 
 const CS_HOME = path.join(os.homedir(), '.cybershuttle');
@@ -111,9 +111,27 @@ export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAli
 }
 
 // Cross-window sync: reconcile in-memory from disk in place (never swap identity, so monitor/connect refs stay valid).
+// Every open window watches this dir, so the callback fires on every record write in every window — read only the one
+// file that changed (undefined = deleted), never all of them, or an unrelated session's write stutters every window.
+// Changed ids are coalesced over a short window: an atomic temp+rename fires 2-3 raw events per write on macOS, and a
+// burst of writes shouldn't fan out to a burst of re-renders.
 export function watchSessions(callback: () => void): fs.FSWatcher {
-    return fs.watch(sessionsDir, (_event, filename) => {
-        if (filename && !isRecordFile(filename)) { return; }
-        if (mergeFromDisk(sessions, readAllRecords())) { callback(); }
+    const changed = new Set<string>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = (): void => {
+        timer = undefined;
+        let dirty = false;
+        for (const id of changed) { if (mergeRecord(sessions, id, readJson<SlurmSession>(recordPath(id)))) { dirty = true; } }
+        changed.clear();
+        if (dirty) { callback(); }
+    };
+    const watcher = fs.watch(sessionsDir, (_event, filename) => {
+        if (!filename) { if (mergeFromDisk(sessions, readAllRecords())) { callback(); } return; } // platform gave no name
+        if (!isRecordFile(filename)) { return; }
+        changed.add(filename.slice(0, -'.json'.length));
+        timer ??= setTimeout(flush, 50);
     });
+    const close = watcher.close.bind(watcher);
+    watcher.close = () => { if (timer) { clearTimeout(timer); timer = undefined; } close(); };
+    return watcher;
 }
