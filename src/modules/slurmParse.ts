@@ -3,8 +3,9 @@ import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, Tunn
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
 // linkspan's unix socket — the portless in-allocation channel (srun --overlap curl --unix-socket).
-const LINKSPAN_SOCKET_DIR = '/tmp/csbridge';
-export const linkspanSocketPath = (sessionId: string): string => `${LINKSPAN_SOCKET_DIR}/${sessionId}.sock`;
+// Placed directly in the sticky world-writable /tmp (not a shared csbridge/ subdir, which the first
+// user to run on a node would own and lock every other user out of — EACCES on bind).
+export const linkspanSocketPath = (sessionId: string): string => `/tmp/csbridge-${sessionId}.sock`;
 
 // A SLURM account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
 export const slurmAccount = (raw: string | undefined): string => (raw ?? '').trim().match(/^[\w.-]+$/)?.[0] ?? '';
@@ -41,7 +42,6 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         ``,
         `# --- Run linkspan ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
-        `mkdir -p ${LINKSPAN_SOCKET_DIR}`,
         // Bind the port csbridge pinned at launch so it knows the tunnel URL up front (no log/port discovery).
         `"$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --socket ${socketPath} --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
     ];

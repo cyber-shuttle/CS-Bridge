@@ -58,7 +58,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     assert.match(script, /^#SBATCH --partition=gpu$/m);
     assert.match(script, /^#SBATCH --account=acct1$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
-    assert.match(script, /--port 25000 --socket \/tmp\/csbridge\/sess-1\.sock --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
+    assert.match(script, /--port 25000 --socket \/tmp\/csbridge-sess-1\.sock --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
 });
 
 test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
