@@ -4,6 +4,12 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.0] - 2026-07-18
+
+### Fixed
+
+- **linkspan socket permission clash on shared compute nodes** — the in-allocation control socket now binds at `/tmp/csbridge-<id>.sock` directly in the sticky, world-writable `/tmp`, instead of a shared `/tmp/csbridge/` directory that the first user to launch on a node would own (mode 0755) and lock every other user out of, failing with `bind: permission denied`. (#105)
+
 ## [0.0.5] - 2026-07-16
 
 ### Added
