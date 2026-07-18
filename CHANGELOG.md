@@ -4,6 +4,12 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1] - 2026-07-18
+
+### Fixed
+
+- **Cross-window UI stutter when a session window opens** — the cross-window sync watcher re-read and re-parsed every session file on every record write, so opening a new remote window (or any session change) briefly hung every other open window. It now reads only the single record that changed, and coalesces the duplicate filesystem events macOS fires per write. (#107)
+
 ## [0.1.0] - 2026-07-18
 
 ### Fixed
