@@ -1,7 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
+import { parseAccounts, parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
 import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
+
+test('parseAccounts drops the header and de-duplicates per-partition associations', () => {
+    const out = 'Account|\npearc26-tutorial|\npearc26-tutorial|\ndelta-cpu|\n';
+    assert.deepEqual(parseAccounts(out), ['pearc26-tutorial', 'delta-cpu']);
+});
+
+test('parseAccounts returns [] when there are no associations', () => {
+    assert.deepEqual(parseAccounts(''), []);
+    assert.deepEqual(parseAccounts('Account|\n'), []);
+});
 
 test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
     assert.deepEqual(parseSacctStatus('FAILED|1:0|None|120'), { status: SlurmJobStatus.FAILED, elapsedSec: 120 });

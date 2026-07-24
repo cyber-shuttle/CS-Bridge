@@ -1,7 +1,7 @@
 import { Metric, SlurmClusterInfo, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
 import { Logger, errMsg } from '../logger';
 import { SshManager } from './sshSupport';
-import { linkspanSocketPath, parsePartitionLine, parseSacctStatus } from './slurmParse';
+import { linkspanSocketPath, parseAccounts, parsePartitionLine, parseSacctStatus } from './slurmParse';
 
 export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ status: SlurmJobStatus; elapsedSec: number }> {
     const command = `sacct -j ${slurmSession.jobId} -n -o State%20,ExitCode,Reason%40,ElapsedRaw --parsable2 2>/dev/null | head -1`;
@@ -32,11 +32,7 @@ export async function getSlurmClusterInfo(hostName: string, observer?: PromptObs
             'sacctmgr show associations where user=$USER format=Account -p', observer);
 
         if (accountResult.code === 0) {
-            clusterInfo.accounts = accountResult.stdout.trim()
-                .split('\n')
-                .slice(1) // skip the Account header row
-                .map(l => l.split('|')[0].trim())
-                .filter(Boolean);
+            clusterInfo.accounts = parseAccounts(accountResult.stdout);
         }
         else {
             throw new Error(`Failed to query associations (exit ${accountResult.code}): ${accountResult.stderr || 'Unknown error'}`);
