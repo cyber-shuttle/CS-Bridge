@@ -145,8 +145,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 this.editingId = null;
                 void this.pushState();
                 break;
-            case 'retryClusterInfo':
-                this.fetchClusterInfo(data.host ?? '');
+            case 'refreshClusterInfo':
+                this.fetchClusterInfo(data.host ?? '', true);
                 break;
             case 'saveSession': {
                 const s = this.requireSession(id, 'save', true);
@@ -293,8 +293,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         void this.pushState();
     }
 
-    private fetchClusterInfo(host: string): void {
-        if (this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
+    // force: the cached info is only as fresh as the last fetch; the form's Refresh re-queries a cluster that changed.
+    private fetchClusterInfo(host: string, force = false): void {
+        if (!force && this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
         this.logger.info(`Fetching slurm cluster info for host: ${host}`);
         this.setHostRuntime(host, { phase: 'loading' });
         // The auth box (if any) surfaces during the fetch: reflect it on the draft form, treat a dismiss as an interruption.
