@@ -10,7 +10,7 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 
 ## Features
 
-- **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed in the SSH Hosts view and ready to launch a session on.
+- **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed in the SSH Hosts view, ready to launch a session on or to open a login-node terminal from.
 - **SLURM without scripts** — set partition, CPUs, memory, GPUs, and walltime in a form; CS Bridge writes and submits the batch script.
 - **Session memory** — restart an expired job with its previous resource selection in one click.
 - **Utilization at a glance** — each finished run records CPU and memory efficiency; the Stats view keeps the history, and a per-run summary tab shows each run's detail, so you can see how well a session used its allocation.

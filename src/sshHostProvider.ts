@@ -15,6 +15,7 @@ export class SshHostProvider extends WebviewProvider {
         switch (data.command) {
             case 'ready': this.pushState(); break;
             case 'removeSshHost': void this.removeSshHost(data.name ?? ''); break;
+            case 'openTerminal': this.openTerminal(data.name ?? ''); break;
             default: this.logger.warn('Unknown command from hosts webview:', data);
         }
     }
@@ -23,6 +24,12 @@ export class SshHostProvider extends WebviewProvider {
         if (!this.view) { return; }
         const state: HostsState = { sshHosts: SshManager.getInstance().getMergedHosts() };
         this.view.webview.postMessage({ command: 'state', state });
+    }
+
+    // A login-node shell in this window. It prompts in the terminal (no askpass env) and on Unix rides the host's
+    // ControlMaster socket, so a connection this window already authenticated costs no second 2FA push.
+    private openTerminal(name: string): void {
+        vscode.window.createTerminal({ name, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(name), name] }).show();
     }
 
     // Title-bar action: re-read so hosts added externally (e.g. via Remote-SSH) appear without a window reload.
