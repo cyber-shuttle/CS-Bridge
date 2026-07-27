@@ -293,7 +293,6 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         void this.pushState();
     }
 
-    // force: the cached info is only as fresh as the last fetch; the form's Refresh re-queries a cluster that changed.
     private fetchClusterInfo(host: string, force = false): void {
         if (!force && this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
         this.logger.info(`Fetching slurm cluster info for host: ${host}`);

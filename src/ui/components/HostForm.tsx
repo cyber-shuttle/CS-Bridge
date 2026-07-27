@@ -47,7 +47,7 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
     const initialPart = initialParts.find(p => p.name === initial?.partName) ?? initialParts[0];
 
     const [tab, setTab] = useState<ResourceTab>(initialTab);
-    // initialPart, not initial.partName: a refresh can drop the saved partition, and a name absent from the list still submits.
+    // initialPart, not initial.partName: a partition the cluster dropped would stay selected and still submit.
     const [partName, setPartName] = useState(initialPart?.name ?? '');
     const [allocation, setAllocation] = useState(initial?.allocation ?? info.accounts[0] ?? '');
     const [cpu, setCpu] = useState(initial?.cpu ?? String(cpuOptions(initialPart)[0] ?? 1));

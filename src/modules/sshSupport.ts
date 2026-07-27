@@ -91,7 +91,6 @@ export class SshManager {
         );
     }
 
-    // Public so a user-facing terminal can ride the same socket instead of raising its own 2FA prompt.
     public buildControlMasterArgs(hostName: string): string[] {
         // Windows OpenSSH has no Unix-socket ControlMaster ("getsockname failed: Not a socket").
         if (process.platform === 'win32') {

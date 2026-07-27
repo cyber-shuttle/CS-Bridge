@@ -26,8 +26,7 @@ export class SshHostProvider extends WebviewProvider {
         this.view.webview.postMessage({ command: 'state', state });
     }
 
-    // A login-node shell in this window. It prompts in the terminal (no askpass env) and on Unix rides the host's
-    // ControlMaster socket, so a connection this window already authenticated costs no second 2FA push.
+    // Rides the host's ControlMaster socket (Unix), so a shell on an already-authenticated host costs no second 2FA push.
     private openTerminal(name: string): void {
         vscode.window.createTerminal({ name, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(name), name] }).show();
     }
