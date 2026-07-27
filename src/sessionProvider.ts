@@ -405,7 +405,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (isWallTimeExpired(session, Date.now())) {
             setStatus(session, 'stopped', '');
             await disposeTunnelClient(session.id);
-            vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Restart it to run again.');
+            vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Start it to run again.');
             void this.pushState();
             return;
         }
