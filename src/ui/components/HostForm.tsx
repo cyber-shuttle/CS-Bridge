@@ -47,7 +47,8 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
     const initialPart = initialParts.find(p => p.name === initial?.partName) ?? initialParts[0];
 
     const [tab, setTab] = useState<ResourceTab>(initialTab);
-    const [partName, setPartName] = useState(initial?.partName ?? initialPart?.name ?? '');
+    // initialPart, not initial.partName: a partition the cluster dropped would stay selected and still submit.
+    const [partName, setPartName] = useState(initialPart?.name ?? '');
     const [allocation, setAllocation] = useState(initial?.allocation ?? info.accounts[0] ?? '');
     const [cpu, setCpu] = useState(initial?.cpu ?? String(cpuOptions(initialPart)[0] ?? 1));
     const [memory, setMemory] = useState(initial?.memory ?? memoryOptions(initialPart)[0] ?? '8 GB');
@@ -141,7 +142,7 @@ export function HostForm({ host, runtime, initial, saveId, validating }: Props) 
             return (
                 <Stack gap={6} pad="8px">
                     <Text color="var(--vscode-errorForeground)">{runtime.message}</Text>
-                    <Button onClick={() => post({ command: 'retryClusterInfo', host })}>Retry</Button>
+                    <Button onClick={() => post({ command: 'refreshClusterInfo', host })}>Retry</Button>
                 </Stack>
             );
         case 'ready':

@@ -91,7 +91,7 @@ export class SshManager {
         );
     }
 
-    private buildControlMasterArgs(hostName: string): string[] {
+    public buildControlMasterArgs(hostName: string): string[] {
         // Windows OpenSSH has no Unix-socket ControlMaster ("getsockname failed: Not a socket").
         if (process.platform === 'win32') {
             return [];

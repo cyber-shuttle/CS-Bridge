@@ -20,7 +20,6 @@ const useNow = () => useContext(NowContext);
 
 const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
     start: 'prepareLaunchSession',
-    restart: 'prepareLaunchSession',
     stop: 'stopSessionExecution',
     switch: 'connectTunnel',
     connect: 'connectTunnel',

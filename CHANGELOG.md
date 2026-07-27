@@ -4,6 +4,22 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2] - 2026-07-27
+
+### Added
+
+- **Refresh cluster details** — a refresh icon on the session form re-queries the host's partitions, accounts and limits. Previously a host was fetched once per window, so a cluster that changed kept serving stale options until a reload. (#110)
+- **Terminal on an SSH host** — opens a login-node shell in the current window, riding the connection CS Bridge already holds so it costs no second 2FA prompt. (#110)
+
+### Changed
+
+- **One Start action** — a finished session shows **Start**, not **Restart**; every launch was already a fresh one. (#110)
+
+### Fixed
+
+- **Duplicate allocations in the picker** — `sacctmgr` prints one row per (account, partition) association, so an account repeated once per partition it covers. The list is deduped, and the parsing moved into a tested `parseAccounts`. (#109)
+- **A partition dropped from the cluster stayed selected** — the form kept the saved partition name even when the cluster no longer offered it, and submitted it as `--partition` anyway; it now falls back to the first valid partition. (#110)
+
 ## [0.1.1] - 2026-07-18
 
 ### Fixed

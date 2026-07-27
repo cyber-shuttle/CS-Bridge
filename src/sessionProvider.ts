@@ -145,8 +145,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 this.editingId = null;
                 void this.pushState();
                 break;
-            case 'retryClusterInfo':
-                this.fetchClusterInfo(data.host ?? '');
+            case 'refreshClusterInfo':
+                this.fetchClusterInfo(data.host ?? '', true);
                 break;
             case 'saveSession': {
                 const s = this.requireSession(id, 'save', true);
@@ -293,8 +293,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         void this.pushState();
     }
 
-    private fetchClusterInfo(host: string): void {
-        if (this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
+    private fetchClusterInfo(host: string, force = false): void {
+        if (!force && this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
         this.logger.info(`Fetching slurm cluster info for host: ${host}`);
         this.setHostRuntime(host, { phase: 'loading' });
         // The auth box (if any) surfaces during the fetch: reflect it on the draft form, treat a dismiss as an interruption.
@@ -404,7 +404,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (isWallTimeExpired(session, Date.now())) {
             setStatus(session, 'stopped', '');
             await disposeTunnelClient(session.id);
-            vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Restart it to run again.');
+            vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Start it to run again.');
             void this.pushState();
             return;
         }

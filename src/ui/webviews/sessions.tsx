@@ -16,7 +16,10 @@ function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId, va
             <Row gap={6}>
                 <Icon name={icon} style={muted ? { color: 'var(--vscode-descriptionForeground)' } : undefined} />
                 <Text weight={600}>{host}</Text>
-                <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
+                <Row gap={4} style={{ marginLeft: 'auto' }}>
+                    <ActionIcon name="refresh" title="Refresh cluster details" ariaLabel="Refresh cluster details" onClick={() => post({ command: 'refreshClusterInfo', host })} />
+                    <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
+                </Row>
             </Row>
             <HostForm host={host} runtime={runtime} initial={initial} saveId={saveId} validating={validating} />
         </Card>

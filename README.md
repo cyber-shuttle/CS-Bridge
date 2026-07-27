@@ -10,9 +10,9 @@ Run VS Code on HPC compute nodes over secure Microsoft Dev Tunnels. Pick an HPC 
 
 ## Features
 
-- **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed in the SSH Hosts view and ready to launch a session on.
+- **Hosts from `~/.ssh/config`** — every cluster you already SSH into, listed in the SSH Hosts view, ready to launch a session on or to open a login-node terminal from.
 - **SLURM without scripts** — set partition, CPUs, memory, GPUs, and walltime in a form; CS Bridge writes and submits the batch script.
-- **Session memory** — restart an expired job with its previous resource selection in one click.
+- **Session memory** — start an expired job again with its previous resource selection in one click.
 - **Utilization at a glance** — each finished run records CPU and memory efficiency; the Stats view keeps the history, and a per-run summary tab shows each run's detail, so you can see how well a session used its allocation.
 - **No inbound ports** — a Microsoft Dev Tunnel carries the transport; the cluster opens nothing new.
 - **OS-native SSH** — uses your system `ssh` binary and its own ControlMaster pool, not a bundled SSH client.
@@ -64,7 +64,7 @@ Full architecture in [CONTRIBUTING.md](CONTRIBUTING.md#architecture).
 
 **Training a model on a GPU cluster.** Click + to add session, pick the GPU cluster, choose a GPU partition and walltime, then **Start** -> **Connect**. The Python and Jupyter extensions behave as they do locally; `torch.cuda.is_available()` returns `True`.
 
-**Resuming after walltime expiry.** The expired session shows as **Stopped** in the sidebar. Click **Restart** -> CS Bridge resubmits with the same partition, account, and resources. Files on the shared filesystem are untouched.
+**Resuming after walltime expiry.** The expired session shows as **Stopped** in the sidebar. Click **Start** -> CS Bridge resubmits with the same partition, account, and resources. Files on the shared filesystem are untouched.
 
 **Several clusters at once.** Each cluster is a separate entry, and sessions on different clusters run side by side. Switch between them with a click -> no extra terminals, no SSH alias juggling.
 
@@ -86,15 +86,15 @@ To reset, remove both `~/.cybershuttle/` directories and the `Include` line in `
 3. **Job stuck in `PENDING`.** Cluster busy or request too large. Try smaller resources, or run `squeue -u $USER` on the cluster for the reason.
 4. **Session fails with "Slurm is not available".** The selected host has no `sinfo` on `PATH`. CS Bridge requires SLURM for now - see the [Roadmap](#roadmap).
 5. **Connect window disconnects.** If the tunnel or compute-node network drops, the session shows as **Unreachable**; click **Reconnect** to rebuild the relay. Check `View -> Output -> CS Bridge` for the failing step.
-6. **Session stuck on `Submitting…`.** linkspan may be downloading on first use. Wait, then check `~/.cybershuttle/logs/` on the remote. If it never moves, click **Stop**, then **Restart**.
-7. **Permission denied on the remote linkspan binary.** Run `chmod +x ~/.cybershuttle/bin/linkspan` on the remote, then **Restart**.
+6. **Session stuck on `Submitting…`.** linkspan may be downloading on first use. Wait, then check `~/.cybershuttle/logs/` on the remote. If it never moves, click **Stop**, then **Start**.
+7. **Permission denied on the remote linkspan binary.** Run `chmod +x ~/.cybershuttle/bin/linkspan` on the remote, then **Start**.
 
 ## FAQ
 
 1. **Do I install anything on the remote?** No. CS Bridge downloads `linkspan` into `~/.cybershuttle/bin/` on the cluster automatically on first connect (the remote needs outbound access to github.com).
 2. **Does it work without SLURM?** Not yet. The launch path runs `sinfo` and fails if SLURM is missing. Plain-SSH support is on the [Roadmap](#roadmap).
 3. **Are my local files copied?** No. You work against the cluster's filesystem directly. Local-workspace mounting is on the [Roadmap](#roadmap).
-4. **Walltime expired mid-work?** Click **Restart** to resubmit with the same selection, then **Connect**.
+4. **Walltime expired mid-work?** Click **Start** to resubmit with the same selection, then **Connect**.
 5. **Does CS Bridge require the Remote-SSH extension?** Not as a hard dependency, but the final attach uses VS Code's `vscode-remote://ssh-remote+...` URI, which Remote-SSH (or any compatible provider) handles via your OS `ssh` binary.
 6. **VS Code Insiders, Cursor, or other forks?** CS Bridge targets VS Code 1.98+. Forks with compatible remote-SSH support and Marketplace access usually work but aren't officially tested.
 7. **Where do tokens and state live?** Tokens are held by VS Code's built-in Microsoft authentication provider (OS keychain). Session metadata lives in per-session files under `~/.cybershuttle/sessions/` (one `<sessionId>.json` per session).

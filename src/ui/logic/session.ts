@@ -3,7 +3,7 @@ import { isTerminal, isCloseable, isStoppable, wallMs } from '@/modules/sessionM
 
 export { wallMs }; // shared with the monitor via the vscode-free sessionMachine
 
-type ActionKind = 'start' | 'restart' | 'stop' | 'switch' | 'connect' | 'current' | 'opening';
+type ActionKind = 'start' | 'stop' | 'switch' | 'connect' | 'current' | 'opening';
 
 export interface SessionAction {
     kind: ActionKind;
@@ -63,8 +63,7 @@ export function dotColor(status: SlurmSession['status']): string {
 
 export function sessionActions(session: ViewSession): SessionAction[] {
     const s = session.status;
-    if (isTerminal(s)) { return [{ kind: 'restart', label: 'Restart', icon: 'debug-restart' }]; }
-    if (s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
+    if (isTerminal(s) || s === 'not_started') { return [{ kind: 'start', label: 'Start', icon: 'play' }]; }
 
     const actions: SessionAction[] = [];
     if (isStoppable(s)) { actions.push(STOP); }
