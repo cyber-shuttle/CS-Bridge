@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as vscode from 'vscode';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release } from './fsSupport';
@@ -163,17 +163,19 @@ export class SshManager {
         const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (!batch) {
-            const isWin = process.platform === 'win32';
-            const wrapper = path.join(this.extensionUri.fsPath, 'scripts', isWin ? 'askpass.cmd' : 'askpass.sh');
-            if (!isWin) {
-                try { fs.chmodSync(wrapper, 0o755); }
-                catch { /* vsix ships +x */ }
-            }
+            const askpassJs = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js');
+            const askpassSh = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.sh');
+            try { fs.chmodSync(askpassSh, 0o755); }
+            catch { /* vsix ships +x */ }
+            // Win32-OpenSSH builds a command line, so SSH_ASKPASS can name the interpreter itself; every execlp-based
+            // ssh takes one file and runs its shebang. Never a .cmd: cmd.exe truncates the prompt at its first newline.
+            const direct = /OpenSSH_for_Windows/.test(spawnSync('ssh', ['-V'], { encoding: 'utf-8' }).stderr ?? '');
             Object.assign(env, {
-                SSH_ASKPASS: wrapper,
+                SSH_ASKPASS: direct ? `"${process.execPath}" "${askpassJs}"` : askpassSh,
                 SSH_ASKPASS_REQUIRE: 'force',
+                ELECTRON_RUN_AS_NODE: '1',
                 CS_ASKPASS_DIR: askpassDir,
-                CS_ASKPASS_JS: path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js'),
+                CS_ASKPASS_JS: askpassJs,
                 CS_NODE_BIN: process.execPath,
                 DISPLAY: ':0',
             });
