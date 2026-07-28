@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as vscode from 'vscode';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release } from './fsSupport';
@@ -164,16 +164,22 @@ export class SshManager {
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (!batch) {
             const isWin = process.platform === 'win32';
+            const askpassJs = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js');
             const wrapper = path.join(this.extensionUri.fsPath, 'scripts', isWin ? 'askpass.cmd' : 'askpass.sh');
             if (!isWin) {
                 try { fs.chmodSync(wrapper, 0o755); }
                 catch { /* vsix ships +x */ }
             }
+            // A .cmd runs via `cmd.exe /c`, which truncates an argument at its first newline, leaving only line one of
+            // a device-flow prompt. Microsoft's OpenSSH alone copies a quoted SSH_ASKPASS to CreateProcess verbatim, so
+            // it can name the interpreter itself; Git/MSYS builds execlp() that as a filename and keep the wrapper.
+            const direct = isWin && /OpenSSH_for_Windows/.test(spawnSync('ssh', ['-V'], { encoding: 'utf-8' }).stderr ?? '');
             Object.assign(env, {
-                SSH_ASKPASS: wrapper,
+                SSH_ASKPASS: direct ? `"${process.execPath}" "${askpassJs}"` : wrapper,
                 SSH_ASKPASS_REQUIRE: 'force',
+                ELECTRON_RUN_AS_NODE: '1', // no wrapper to set it on the direct form
                 CS_ASKPASS_DIR: askpassDir,
-                CS_ASKPASS_JS: path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js'),
+                CS_ASKPASS_JS: askpassJs,
                 CS_NODE_BIN: process.execPath,
                 DISPLAY: ':0',
             });
