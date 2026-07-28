@@ -4,6 +4,16 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3] - 2026-07-28
+
+### Fixed
+
+- **Multi-line SSH authentication prompts on Windows** — the authentication view showed only the first line of a keyboard-interactive prompt, so a CILogon device-flow login lost its sign-in link, device code and QR code and could not be completed at all. `SSH_ASKPASS` pointed at a `.cmd` wrapper, and Windows runs a `.cmd` through `cmd.exe /c`, which truncates its command line at the first newline — the prompt was discarded one process before the helper started. (#111)
+
+### Changed
+
+- **One askpass helper per ssh exec model** — the helper was chosen by `process.platform`, but what decides the calling convention is how ssh launches it: Windows OpenSSH builds a command line, while every `execlp`-based build — Unix and Git for Windows/MSYS2 alike — takes a single filename and runs it through its shebang. The platform check and `askpass.cmd` are gone, and Git for Windows users share the same helper as macOS. (#111)
+
 ## [0.1.2] - 2026-07-27
 
 ### Added
