@@ -40,7 +40,6 @@ export interface SessionConnectionInfo {
     sshTunnelId: string;
     region: string;
     sshTunnelForwardPort?: number;
-    sshPrivateKey?: string;
     apiTunnelId?: string;
     apiTunnelAccessToken?: string;
     apiPort?: number;
@@ -85,12 +84,6 @@ export interface SlurmPartitionInfo {
 export interface GresInfo {
     name: string;
     count: number;
-}
-
-export interface TunnelCredential {
-    provider: 'devtunnel';
-    authToken: string;
-    serverUrl?: string;
 }
 
 export interface AccountInfo {

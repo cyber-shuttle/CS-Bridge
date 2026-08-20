@@ -15,7 +15,7 @@ export interface LinkspanSshStatus {
     last_error?: string;
 }
 
-interface SshServerInfo { bind_port: number; password: string; id: string; private_key: string }
+interface SshServerInfo { bind_port: number; id: string }
 
 // GET and require a shape-checked JSON body — the tunnel edge answers 200 with an HTML page once the host is gone,
 // so a valid body (not resp.ok) is the real liveness signal.
@@ -49,14 +49,10 @@ export async function getMetrics(baseUrl: string, headers: Record<string, string
     return await get(baseUrl, headers, '/metrics', j => typeof j === 'object' && j !== null && !Array.isArray(j)) as Metric;
 }
 
-// POST /vscode/sessions — create a fresh sshd. Not idempotent; the caller guards re-creation.
-export async function createSshServer(baseUrl: string, headers: Record<string, string>): Promise<SshServerInfo> {
-    return await (await post(baseUrl, headers, '/vscode/sessions', { mount_user_home: false })).json() as SshServerInfo;
-}
-
-// POST /tunnels/devtunnels/forward — forward the sshd port on the tunnel. Idempotent on linkspan.
-export async function forwardPort(baseUrl: string, headers: Record<string, string>, req: { tunnelName: string; port: number; token: string }): Promise<void> {
-    await post(baseUrl, headers, '/tunnels/devtunnels/forward', req);
+// POST /vscode/sessions — create a fresh sshd authorized for our public key. Not idempotent; the caller guards
+// re-creation. The private half never leaves this machine, so linkspan returns nothing secret.
+export async function createSshServer(baseUrl: string, headers: Record<string, string>, authorizedKey: string): Promise<SshServerInfo> {
+    return await (await post(baseUrl, headers, '/vscode/sessions', { mount_user_home: false, authorized_key: authorizedKey })).json() as SshServerInfo;
 }
 
 // linkspan binds each sshd on ":<port>" and ids it "s-<port>", so both fields encode the (restart-stable) port.

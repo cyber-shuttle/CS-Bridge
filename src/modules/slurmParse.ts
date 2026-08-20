@@ -1,4 +1,4 @@
-import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession, TunnelCredential } from '../models';
+import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession } from '../models';
 
 // Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
@@ -19,7 +19,8 @@ export function parseAccounts(output: string): string[] {
     return [...new Set(names)];
 }
 
-export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCredential): string {
+// hostToken is scoped to hosting this one tunnel, so no Microsoft Entra bearer ever reaches the cluster.
+export function buildSlurmScript(session: SlurmSession, hostToken: string): string {
     const memSlurm = session.memory.replace(/\s+/g, '');
     const socketPath = linkspanSocketPath(session.id);
     const account = slurmAccount(session.allocation);
@@ -52,7 +53,7 @@ export function buildSlurmScript(session: SlurmSession, tunnelCred: TunnelCreden
         `# --- Run linkspan ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
         // Bind the port csbridge pinned at launch so it knows the tunnel URL up front (no log/port discovery).
-        `"$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --socket ${socketPath} --tunnel-auth-token '${tunnelCred.authToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
+        `"$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --socket ${socketPath} --tunnel-host-token '${hostToken}' --tunnel-id '${session.tunnelId ?? ''}' --tunnel-cluster '${session.tunnelCluster ?? ''}' -tunnel-enable`,
     ];
 
     return scriptLines.join('\n');

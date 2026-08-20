@@ -1,4 +1,4 @@
-import { AccountInfo, SlurmSession, TunnelCredential } from '../models';
+import { AccountInfo, SlurmSession } from '../models';
 import * as vscode from 'vscode';
 import { Logger } from '../logger';
 import { updateSession } from '../extensionStore';
@@ -10,10 +10,10 @@ import {
     TunnelRelayTunnelClient,
     ConnectionStatus,
 } from '@microsoft/dev-tunnels-connections';
-import { TunnelAccessScopes } from '@microsoft/dev-tunnels-contracts';
-import { getSessionPrivateKey, removeSshConfigEntry, writeSessionPrivateKey } from './sshSupport';
+import { Tunnel, TunnelAccessScopes } from '@microsoft/dev-tunnels-contracts';
+import { createSessionKeyPair, hasSessionKey, removeSshConfigEntry } from './sshSupport';
 import { csHostAlias } from './sshHostsStore';
-import { createSshServer, forwardPort, getSshServers, LinkspanSshStatus, sshdPort } from './linkspanSupport';
+import { createSshServer, getSshServers, LinkspanSshStatus, sshdPort } from './linkspanSupport';
 
 const DEV_TUNNELS_APP_ID = '46da2f7e-b5ef-422a-88d4-2a7f9de6a0b2';
 const DEV_TUNNELS_SCOPE = `${DEV_TUNNELS_APP_ID}/.default`;
@@ -42,10 +42,12 @@ export function linkspanEndpoint(session: SlurmSession): { baseUrl: string; head
     };
 }
 
-export async function ensureDevTunnel(session: SlurmSession): Promise<void> {
+// Returns the host-scoped token the allocation needs to run the relay. cs-bridge keeps the Entra bearer local and
+// registers every port itself, so the compute node only ever holds a token scoped to hosting this one tunnel.
+export async function ensureDevTunnel(session: SlurmSession): Promise<string> {
     const mgmt = buildTunnelManagementClient();
     const ci = session.connectionInfo ?? (session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '' });
-    const opts = { tokenScopes: [TunnelAccessScopes.Connect] };
+    const opts = { includePorts: true, tokenScopes: [TunnelAccessScopes.Host, TunnelAccessScopes.Connect] };
 
     const existing = session.tunnelId
         ? await mgmt.getTunnel({ tunnelId: session.tunnelId, clusterId: session.tunnelCluster }, opts)
@@ -59,6 +61,18 @@ export async function ensureDevTunnel(session: SlurmSession): Promise<void> {
     ci.region = tunnel.clusterId ?? ci.region;
     ci.apiTunnelAccessToken = tunnel.accessTokens?.[TunnelAccessScopes.Connect] ?? ci.apiTunnelAccessToken;
     updateSession(session);
+
+    if (ci.apiPort) { await ensureTunnelPort(mgmt, tunnel, ci.apiPort); }
+    const hostToken = tunnel.accessTokens?.[TunnelAccessScopes.Host];
+    if (!hostToken) { throw new Error('Dev Tunnel did not return a host-scoped access token.'); }
+    return hostToken;
+}
+
+// Registering a port is idempotent at the service; a conflict just means it is already there.
+async function ensureTunnelPort(mgmt: TunnelManagementHttpClient, tunnel: Tunnel, portNumber: number): Promise<void> {
+    if (tunnel.ports?.some(p => p.portNumber === portNumber)) { return; }
+    try { await mgmt.createTunnelPort(tunnel, { portNumber, protocol: 'auto' }, { tokenScopes: [TunnelAccessScopes.Host] }); }
+    catch (err) { logger.warn(`Could not register port ${portNumber} on tunnel ${tunnel.tunnelId}:`, err); }
 }
 
 export async function removeDevTunnel(session: SlurmSession): Promise<void> {
@@ -78,7 +92,7 @@ export async function removeDevTunnel(session: SlurmSession): Promise<void> {
 // reconcile to what it reports rather than trusting local port/forward state — self-healing a stale port after a
 // linkspan restart, or a forward stranded on a re-minted tunnel. Idempotent.
 export async function ensureRemoteSession(session: SlurmSession): Promise<void> {
-    await ensureDevTunnel(session); // re-mints apiTunnelId (+ token) over the MS API before we forward against it
+    await ensureDevTunnel(session); // re-mints apiTunnelId (+ token) over the MS API before we publish against it
     const ci = session.connectionInfo!; // ensureDevTunnel guarantees connectionInfo
     const { baseUrl, headers } = linkspanEndpoint(session);
 
@@ -93,23 +107,26 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
         throw err;
     }
     const port = sshd ? sshdPort(sshd) : 0;
-    if (port && (ci.sshPrivateKey ?? getSessionPrivateKey(session.id))) {
+    if (port && hasSessionKey(session.id)) {
         ci.sshPort = port;
     }
     else {
-        const created = await createSshServer(baseUrl, headers);
+        // Only our public key can authenticate, so a fresh sshd needs a fresh local pair.
+        const created = await createSshServer(baseUrl, headers, createSessionKeyPair(session.id));
         logger.info(`SSH server for session ${session.id} created on port ${created.bind_port}.`);
         ci.sshPort = created.bind_port;
-        ci.sshPrivateKey = created.private_key;
-        writeSessionPrivateKey(session.id, created.private_key); // persist so a reload at ready_to_connect can reconnect
         updateSession(session);
     }
 
-    // forwardPort is idempotent on linkspan; stamp sshTunnelId = apiTunnelId so the current port rides the current tunnel.
-    await forwardPort(baseUrl, headers, { tunnelName: ci.apiTunnelId!, port: ci.sshPort, token: await getDevTunnelAuthToken() });
+    // We hold the Entra bearer, so we register the port ourselves; stamp sshTunnelId = apiTunnelId so the current
+    // port rides the current tunnel.
+    const mgmt = buildTunnelManagementClient();
+    const tunnel = await mgmt.getTunnel({ tunnelId: ci.apiTunnelId!, clusterId: ci.region }, { includePorts: true });
+    if (!tunnel) { throw new Error(`Tunnel ${ci.apiTunnelId} disappeared while publishing the SSH port.`); }
+    await ensureTunnelPort(mgmt, tunnel, ci.sshPort);
     ci.sshTunnelId = ci.apiTunnelId!;
     updateSession(session);
-    logger.info(`SSH port ${ci.sshPort} forwarded on tunnel ${ci.apiTunnelId} for session ${session.id}.`);
+    logger.info(`SSH port ${ci.sshPort} published on tunnel ${ci.apiTunnelId} for session ${session.id}.`);
 }
 
 export function hasActiveTunnelClient(sessionId: string): boolean {
@@ -207,17 +224,6 @@ export async function disconnectSessionFromTunnel(session: SlurmSession): Promis
     session.connectionInfo = undefined;
     updateSession(session);
     logger.info(`Session ${session.id} disconnected from tunnel.`);
-}
-
-export async function getDevTunnelCredentials(): Promise<TunnelCredential> {
-    const token = await getDevTunnelAuthToken();
-    logger.info('Obtained Dev Tunnels auth token successfully.');
-
-    return {
-        provider: 'devtunnel',
-        authToken: token,
-        serverUrl: 'https://devtunnels.microsoft.com',
-    };
 }
 
 function getMicrosoftSession(options: vscode.AuthenticationGetSessionOptions & { createIfNone: true }): Thenable<vscode.AuthenticationSession>;

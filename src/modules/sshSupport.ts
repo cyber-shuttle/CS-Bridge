@@ -336,10 +336,9 @@ async function setServerInstallPath(hostAlias: string, dir: string | undefined):
     }
 }
 
-export async function addSshConfigEntry(session: SlurmSession, localPort: number, privateKey: string): Promise<string> {
+export async function addSshConfigEntry(session: SlurmSession, localPort: number): Promise<string> {
     const hostAlias = csHostAlias(session.cluster, session.name);
-    await removeSshConfigEntry(session.id, hostAlias);
-    writeSessionPrivateKey(session.id, privateKey);
+    await removeSshConfigEntry(session.id, hostAlias, false); // keep the key: it is this session's, generated locally
 
     const hostname = '127.0.0.1';
     const user = 'cs-ssh-user'; // any non-empty value works; the custom SSH server ignores the username
@@ -362,15 +361,24 @@ export async function addSshConfigEntry(session: SlurmSession, localPort: number
     return hostAlias;
 }
 
-export function writeSessionPrivateKey(sessionId: string, privateKey: string): void {
+// Mint this session's SSH key pair locally and return only the public half — the private key never leaves this
+// machine, so a compromised allocation cannot hand out credentials to it.
+export function createSessionKeyPair(sessionId: string): string {
     fs.mkdirSync(CS_SSH_KEYS_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(sessionKeyPath(sessionId), privateKey, { mode: 0o600 });
+    removeSessionPrivateKey(sessionId);
+    const keyPath = sessionKeyPath(sessionId);
+    const generated = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', keyPath], { encoding: 'utf-8' });
+    if (generated.error || generated.status !== 0) {
+        throw new Error(`Failed to generate SSH key: ${generated.error?.message ?? generated.stderr.trim()}`);
+    }
+    const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf-8').trim();
+    fs.unlinkSync(`${keyPath}.pub`);
+    return publicKey;
 }
 
-export function getSessionPrivateKey(sessionId: string): string | undefined {
-    try { return fs.readFileSync(sessionKeyPath(sessionId), 'utf-8'); }
-    catch { return undefined; }
-}
+export const sessionKeyFile = sessionKeyPath;
+
+export const hasSessionKey = (sessionId: string): boolean => fs.existsSync(sessionKeyPath(sessionId));
 
 function removeSessionPrivateKey(sessionId: string): void {
     const privateKeyPath = sessionKeyPath(sessionId);
@@ -384,7 +392,7 @@ function removeSessionPrivateKey(sessionId: string): void {
     }
 }
 
-export async function removeSshConfigEntry(sessionId: string, hostAlias: string): Promise<void> {
+export async function removeSshConfigEntry(sessionId: string, hostAlias: string, removeKey = true): Promise<void> {
     lock(CS_SSH_CONFIG_PATH);
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
@@ -399,7 +407,7 @@ export async function removeSshConfigEntry(sessionId: string, hostAlias: string)
             fs.writeFileSync(CS_SSH_CONFIG_PATH, cleaned);
         }
 
-        removeSessionPrivateKey(sessionId);
+        if (removeKey) { removeSessionPrivateKey(sessionId); }
     }
     catch (err) {
         logger.error(`Failed to clear SSH config entry for session ${sessionId}:`, err);

@@ -1,4 +1,4 @@
-import { Metric, SlurmJobStatus, SlurmSession, TunnelCredential, PromptObserver } from '../models';
+import { Metric, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
 import { updateSession, setStatus } from '../extensionStore';
@@ -8,7 +8,7 @@ import { getMetricsViaSrun, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus, StatusTransition } from './sessionMachine';
 import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
-import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, getDevTunnelCredentials, isTunnelClientConnected, linkspanEndpoint, removeDevTunnel } from './tunnelSupport';
+import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, isTunnelClientConnected, linkspanEndpoint, removeDevTunnel } from './tunnelSupport';
 import { getHealth, getMetrics } from './linkspanSupport';
 import { appendMetric, writeSessionStats, resetLive } from './sessionMetricsStore';
 
@@ -220,10 +220,6 @@ export class SessionMonitor {
 }
 
 export async function prepareLaunch(session: SlurmSession): Promise<void> {
-    let creds: TunnelCredential;
-    try { creds = await getDevTunnelCredentials(); }
-    catch (err) { throw new Error(`Failed to get tunnel credentials: ${errMsg(err)}`); }
-
     // Fresh launch: drop the prior run's connection info (dead sshd port/keys, old apiPort/tunnel refs) BEFORE re-minting,
     // so ensureDevTunnel builds clean state and the apiPort pinned below survives to the monitor. Must precede ensureDevTunnel.
     session.connectionInfo = undefined;
@@ -232,14 +228,15 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     // Fresh launch: drop the prior run's tunnel so its ports don't accumulate toward Microsoft's PortsPerTunnel (10) cap.
     await removeDevTunnel(session);
 
-    try { await ensureDevTunnel(session); }
+    let hostToken: string;
+    try { hostToken = await ensureDevTunnel(session); }
     catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
 
     // Pin linkspan's API port so csbridge knows the tunnel URL without scraping the log or enumerating ports.
     // ponytail: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
     session.connectionInfo!.apiPort = 20000 + Math.floor(Math.random() * 12000);
 
-    try { session.batchScript = buildSlurmScript(session, creds); }
+    try { session.batchScript = buildSlurmScript(session, hostToken); }
     catch (err) { throw new Error(`Failed to generate Slurm script: ${errMsg(err)}`); }
 
     session.errorMessage = '';

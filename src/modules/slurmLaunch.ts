@@ -71,7 +71,7 @@ export async function installLinkspan(session: SlurmSession, run: RemoteRunner, 
 
 // --test-only runs the site submit filter without queueing; the body never runs, so a blank credential is fine.
 export async function validateSlurmConfig(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
-    const scriptB64 = Buffer.from(buildSlurmScript(session, { provider: 'devtunnel', authToken: '' })).toString('base64');
+    const scriptB64 = Buffer.from(buildSlurmScript(session, '')).toString('base64');
     const result = await run.runRemoteCommand(session.cluster, `echo '${scriptB64}' | base64 -d | sbatch --test-only`);
     ensureSuccess(result, `Cluster ${session.cluster} rejected the session configuration`);
     log.info(`Cluster ${session.cluster} validated the session configuration: ${(result.stderr || result.stdout).trim()}`);
@@ -92,6 +92,7 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
     const jobIdMatch = output.match(/Submitted batch job (\d+)/);
     if (!jobIdMatch) { throw new Error(`Failed to parse job ID from sbatch output: ${output}`); }
 
+    session.batchScript = undefined; // holds the tunnel host token; done with it once sbatch has taken it
     session.jobId = jobIdMatch[1];
     session.status = 'queued';
     session.submittedAt = Date.now();
