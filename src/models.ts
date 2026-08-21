@@ -185,3 +185,10 @@ export interface WebviewMessage {
     allocation?: string;
     jobId?: string;
 }
+
+export interface CloudProviderState {
+    name: string;
+    secretKey: string
+    accessKey: string
+}
+
