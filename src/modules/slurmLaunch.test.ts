@@ -31,15 +31,17 @@ test('keepsInstalledLinkspan keeps only a real version that is ahead of the rele
     assert.equal(keepsInstalledLinkspan('0.15.11', '0.15.12'), false);
     // Numbers, not strings: 9 is not later than 15.
     assert.equal(keepsInstalledLinkspan('0.9.0', '0.15.0'), false);
-    // A pre-release is ahead of older releases and behind its own.
-    assert.equal(keepsInstalledLinkspan('0.16.0.pre', '0.15.12'), true);
-    assert.equal(keepsInstalledLinkspan('0.16.0.pre', '0.16.0'), false);
-    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.pre'), true);
-    assert.equal(keepsInstalledLinkspan('0.16.0.pre', '0.16.0.pre'), false);
-    // Only X.Y.Z[.pre] is a version; anything else must never outrank a release.
+    // A build ahead of a release outranks older releases and yields to its own.
+    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.15.12'), true);
+    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0'), false);
+    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.1ebf666'), true);
+    // Two builds are never the same version, so a different one always replaces.
+    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0.aaaaaaa'), false);
+    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0.1ebf666'), false);
+    // Only X.Y.Z[.commit] is a version; anything else must never outrank a release.
     assert.equal(keepsInstalledLinkspan('dev', '0.15.12'), false);
     assert.equal(keepsInstalledLinkspan('0.15.12-1-g1ee565a', '0.15.12'), false);
-    assert.equal(keepsInstalledLinkspan('0.15.13-dev', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('0.16.0.pre', '0.15.12'), false);
     assert.equal(keepsInstalledLinkspan('0.16', '0.15.12'), false);
     assert.equal(keepsInstalledLinkspan('', '0.15.12'), false);
     // No answer about the latest release is not a reason to replace a working binary.
