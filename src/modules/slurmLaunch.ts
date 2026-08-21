@@ -27,26 +27,42 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
     log.info(`Slurm is available on cluster ${session.cluster}`);
 }
 
+// Newest wins, and a tie goes to the release: a build made by hand carries a version
+// above the published one and is left alone, while a release that has caught up (same
+// tag or higher) replaces it. cs-control's installer follows the same rule, so neither
+// can undo the other. Only a plain version number can win — an unversioned build would
+// otherwise outrank every release forever.
+export function keepsInstalledLinkspan(local: string, latest: string): boolean {
+    if (!/^[0-9]+(\.[0-9]+)*$/.test(local)) { return false; }
+    if (latest === '') { return true; } // nothing to compare against; a working binary beats a guess
+    if (local === latest) { return false; }
+    const parts = (value: string) => value.split('.').map(Number);
+    const [a, b] = [parts(local), parts(latest)];
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const [x, y] = [a[i] ?? 0, b[i] ?? 0];
+        if (x !== y) { return x > y; }
+    }
+    return false;
+}
+
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
 export async function checkLinkspanInstallation(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
     const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | grep -oP '[^/]+$'`);
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 
-    if (remoteVersionResult.code !== 0) {
-        log.error(`Failed to check Linkspan latest version. Error: ${remoteVersionResult.stderr}`);
-        return false;
-    }
     if (localVersionResult.code !== 0) {
         log.error(`Failed to check Linkspan version on cluster ${session.cluster}. Error: ${localVersionResult.stderr}`);
         return false;
     }
 
-    const localVersion = localVersionResult.stdout.trim();
-    const remoteTag = remoteVersionResult.stdout.trim();
+    const localVersion = localVersionResult.stdout.trim().replace(/^v/, '');
+    // A failed lookup means no answer about the latest release, not that there isn't one:
+    // an installed binary is kept rather than replaced by a download that just failed.
+    const remoteTag = remoteVersionResult.code === 0 ? remoteVersionResult.stdout.trim() : '';
     const remoteVersion = remoteTag.startsWith('v') ? remoteTag.slice(1) : remoteTag;
 
-    if (localVersion !== '' && remoteVersion !== '' && localVersion === remoteVersion) {
-        log.info(`Linkspan is already installed and up to date on cluster ${session.cluster}`);
+    if (keepsInstalledLinkspan(localVersion, remoteVersion)) {
+        log.info(`Linkspan ${localVersion} on cluster ${session.cluster} is at or ahead of the latest release (${remoteVersion || 'unknown'}); keeping it`);
         return true;
     }
     log.info(`Linkspan is not installed or outdated on cluster ${session.cluster}. Local version: ${localVersion}, Latest version: ${remoteVersion}`);

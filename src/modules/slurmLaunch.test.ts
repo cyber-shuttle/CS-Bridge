@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
+import { checkSlurmAvailability, checkLinkspanInstallation, keepsInstalledLinkspan, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
 import { SlurmSession } from '../models';
 
 const noopLog = { info() {}, warn() {}, error() {} };
@@ -24,9 +24,28 @@ test('checkSlurmAvailability resolves when sinfo exits 0 and throws otherwise', 
         /Slurm is not available on cluster cl: down/);
 });
 
-test('checkLinkspanInstallation returns true only when local matches latest (v-prefix stripped)', async () => {
-    const up = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.3' }]);
-    assert.equal(await checkLinkspanInstallation(session(), up, noopLog), true);
+test('keepsInstalledLinkspan keeps only a real version that is ahead of the release', () => {
+    // Newest wins; a tie goes to the release.
+    assert.equal(keepsInstalledLinkspan('0.15.13', '0.15.12'), true);
+    assert.equal(keepsInstalledLinkspan('0.15.12', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('0.15.11', '0.15.12'), false);
+    // Numbers, not strings: 9 is not later than 15.
+    assert.equal(keepsInstalledLinkspan('0.9.0', '0.15.0'), false);
+    assert.equal(keepsInstalledLinkspan('0.16', '0.15.99'), true);
+    // An unversioned build must never outrank a release, and nothing installed loses.
+    assert.equal(keepsInstalledLinkspan('dev', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('0.15.13-dev', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('', '0.15.12'), false);
+    // No answer about the latest release is not a reason to replace a working binary.
+    assert.equal(keepsInstalledLinkspan('0.15.12', ''), true);
+});
+
+test('checkLinkspanInstallation keeps a build ahead of the release and replaces one behind it', async () => {
+    const ahead = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.4' }]);
+    assert.equal(await checkLinkspanInstallation(session(), ahead, noopLog), true);
+
+    const same = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.3' }]);
+    assert.equal(await checkLinkspanInstallation(session(), same, noopLog), false);
 
     const stale = runner([{ match: 'releases/latest', stdout: 'v1.2.4' }, { match: '--version', stdout: '1.2.3' }]);
     assert.equal(await checkLinkspanInstallation(session(), stale, noopLog), false);
