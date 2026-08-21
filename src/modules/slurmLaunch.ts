@@ -27,22 +27,24 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
     log.info(`Slurm is available on cluster ${session.cluster}`);
 }
 
+// A Linkspan version is X.Y.Z or X.Y.Z.pre and nothing else; anything else does not
+// count as a version, so an unversioned build cannot outrank every release forever.
+const VERSION = /^([0-9]+)\.([0-9]+)\.([0-9]+)(\.pre)?$/;
+
 // Newest wins, and a tie goes to the release: a build made by hand carries a version
 // above the published one and is left alone, while a release that has caught up (same
-// tag or higher) replaces it. cs-control's installer follows the same rule, so neither
-// can undo the other. Only a plain version number can win — an unversioned build would
-// otherwise outrank every release forever.
+// tag or higher) replaces it, and a release outranks its own pre-release. cs-control's
+// installer follows the same rule, so neither can undo the other.
 export function keepsInstalledLinkspan(local: string, latest: string): boolean {
-    if (!/^[0-9]+(\.[0-9]+)*$/.test(local)) { return false; }
-    if (latest === '') { return true; } // nothing to compare against; a working binary beats a guess
-    if (local === latest) { return false; }
-    const parts = (value: string) => value.split('.').map(Number);
-    const [a, b] = [parts(local), parts(latest)];
-    for (let i = 0; i < Math.max(a.length, b.length); i++) {
-        const [x, y] = [a[i] ?? 0, b[i] ?? 0];
+    const here = VERSION.exec(local);
+    if (!here) { return false; }
+    if (!VERSION.test(latest)) { return true; } // no answer about the release; a working binary beats a guess
+    const there = VERSION.exec(latest)!;
+    for (let i = 1; i <= 3; i++) {
+        const [x, y] = [Number(here[i]), Number(there[i])];
         if (x !== y) { return x > y; }
     }
-    return false;
+    return !here[4] && !!there[4]; // same numbers: only a release beats a pre-release
 }
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
