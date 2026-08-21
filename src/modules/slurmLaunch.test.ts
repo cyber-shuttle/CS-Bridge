@@ -34,10 +34,9 @@ test('keepsInstalledLinkspan keeps only a real version that is ahead of the rele
     // A build ahead of a release outranks older releases and yields to its own.
     assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.15.12'), true);
     assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0'), false);
-    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.1ebf666'), true);
-    // Two builds are never the same version, so a different one always replaces.
-    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0.aaaaaaa'), false);
-    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0.1ebf666'), false);
+    assert.equal(keepsInstalledLinkspan('0.17.0.1ebf666', '0.16.0'), true);
+    // A release never carries a commit, so one offered as the latest is not a release.
+    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.aaaaaaa'), true);
     // Only X.Y.Z[.commit] is a version; anything else must never outrank a release.
     assert.equal(keepsInstalledLinkspan('dev', '0.15.12'), false);
     assert.equal(keepsInstalledLinkspan('0.15.12-1-g1ee565a', '0.15.12'), false);

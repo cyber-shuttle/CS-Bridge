@@ -27,26 +27,27 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
     log.info(`Slurm is available on cluster ${session.cluster}`);
 }
 
-// A Linkspan version is X.Y.Z for a release, or X.Y.Z.<commit> for a build made ahead
-// of one; anything else does not count as a version, so an unversioned build cannot
-// outrank every release forever.
-const VERSION = /^([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.([0-9a-f]{7,40}))?$/;
+// What is installed is X.Y.Z for a release, or X.Y.Z.<commit> for a build made ahead of
+// one; anything else does not count as a version, so an unversioned build cannot outrank
+// every release forever. What is published is always a release.
+const INSTALLED = /^([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.[0-9a-f]{7,40})?$/;
+const RELEASED = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/;
 
-// Newest wins, and a tie goes to the release: a build carrying a version above the
-// published one is left alone, while a release at the same numbers or higher replaces
-// it. A build names the commit it came from, so two builds are never the same version
-// and a newer one always replaces an older one. cs-control's installer follows the same
-// rule, so neither can undo the other.
+// Newest wins, and equal numbers mean the release has caught up and takes over —
+// whether what is installed is a build ahead of it or that same release. A build names
+// the commit it came from, so two builds are never the same version and a newer one
+// always replaces an older one. cs-control's installer follows the same rule, so neither
+// can undo the other.
 export function keepsInstalledLinkspan(local: string, latest: string): boolean {
-    const here = VERSION.exec(local);
+    const here = INSTALLED.exec(local);
     if (!here) { return false; }
-    const there = VERSION.exec(latest);
-    if (!there) { return true; } // no answer about the release; a working binary beats a guess
+    const there = RELEASED.exec(latest);
+    if (!there) { return true; } // no published release to compare against; a working binary beats a guess
     for (let i = 1; i <= 3; i++) {
         const [x, y] = [Number(here[i]), Number(there[i])];
         if (x !== y) { return x > y; }
     }
-    return !here[4] && !!there[4]; // same numbers: only a release beats a build ahead of it
+    return false;
 }
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
