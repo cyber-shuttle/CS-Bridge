@@ -61,6 +61,7 @@ async function main() {
 			'src/ui/webviews/hosts.tsx',
 			'src/ui/webviews/stats.tsx',
 			'src/ui/webviews/summary.tsx',
+			'src/ui/webviews/cloud.tsx',
 		],
 		format: 'iife',
 		platform: 'browser',

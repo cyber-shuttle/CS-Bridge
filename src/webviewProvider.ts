@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { Logger, errMsg } from './logger';
 import { WebviewMessage } from './models';
 
-type ViewKind = 'sessions' | 'hosts' | 'stats' | 'summary';
+type ViewKind = 'sessions' | 'hosts' | 'stats' | 'summary' | 'cloud';
 
 // Base for the sidebar webview views: renders the view's bundle and routes messages to/from the webview.
 // Subclasses set viewKind and override the hooks below.

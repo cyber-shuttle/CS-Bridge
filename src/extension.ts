@@ -9,6 +9,7 @@ import { StatsProvider } from './statsProvider';
 import { SshManager } from './modules/sshSupport';
 import { RemoteSessionController } from './remoteSessionController';
 import { consumePendingSummary } from './summaryPanel';
+import { CloudProvider } from './cloudProivder';
 
 export async function activate(context: vscode.ExtensionContext) {
     const logger = Logger.getInstance();
@@ -38,11 +39,13 @@ export async function activate(context: vscode.ExtensionContext) {
     const sessionProvider = new SessionProvider(context.extensionUri, id);
     const sshHostProvider = new SshHostProvider(context.extensionUri);
     const statsProvider = new StatsProvider(context.extensionUri);
+    const cloudProvider = new CloudProvider(context.extensionUri);
     context.subscriptions.push(
         sessionProvider,
         vscode.window.registerWebviewViewProvider(SessionProvider.viewType, sessionProvider),
         vscode.window.registerWebviewViewProvider(SshHostProvider.viewType, sshHostProvider),
         vscode.window.registerWebviewViewProvider(StatsProvider.viewType, statsProvider),
+        vscode.window.registerWebviewViewProvider(CloudProvider.viewType, cloudProvider),
         vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sshHostProvider.addSshHost()),
@@ -50,6 +53,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.refreshStats', () => statsProvider.refresh()),
         vscode.commands.registerCommand('csbridge.clearRunHistory', () => statsProvider.clearHistory()),
         vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
+        vscode.commands.registerCommand('csbridge.addAWSToken', () => cloudProvider.addAWSToken()),
     );
 
     void sessionProvider.reattachLiveSessions();
