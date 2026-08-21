@@ -30,14 +30,14 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
 // What is installed is X.Y.Z for a release, or X.Y.Z.<commit> for a build made ahead of
 // one; anything else does not count as a version, so an unversioned build cannot outrank
 // every release forever. What is published is always a release.
-const INSTALLED = /^([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.[0-9a-f]{7,40})?$/;
+const INSTALLED = /^([0-9]+)\.([0-9]+)\.([0-9]+)(\.[0-9a-f]{7,40})?$/;
 const RELEASED = /^([0-9]+)\.([0-9]+)\.([0-9]+)$/;
 
-// Newest wins, and equal numbers mean the release has caught up and takes over —
-// whether what is installed is a build ahead of it or that same release. A build names
-// the commit it came from, so two builds are never the same version and a newer one
-// always replaces an older one. cs-control's installer follows the same rule, so neither
-// can undo the other.
+// Newest wins. Equal numbers mean the published release is either already installed —
+// nothing to fetch — or has caught up with a build made ahead of it, which is what the
+// commit in that build's version says it is. A build names the commit it came from, so
+// two builds are never the same version and a newer one always replaces an older one.
+// cs-control's installer follows the same rule, so neither can undo the other.
 export function keepsInstalledLinkspan(local: string, latest: string): boolean {
     const here = INSTALLED.exec(local);
     if (!here) { return false; }
@@ -47,7 +47,7 @@ export function keepsInstalledLinkspan(local: string, latest: string): boolean {
         const [x, y] = [Number(here[i]), Number(there[i])];
         if (x !== y) { return x > y; }
     }
-    return false;
+    return !here[4]; // the same release is already installed; a build ahead of it yields
 }
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
