@@ -45,7 +45,7 @@ export function keepsInstalledLinkspan(local: string, latest: string): boolean {
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
 export async function checkLinkspanInstallation(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
-    const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | grep -oP '[^/]+$'`);
+    const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | sed 's#.*/##'`);
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 
     if (localVersionResult.code !== 0) {
@@ -65,20 +65,41 @@ export async function checkLinkspanInstallation(session: SlurmSession, run: Remo
     return false;
 }
 
+// uname to the release asset. cs-control maps the same three machines in
+// provisionScript and refuses anything else by name; an unmapped arch would
+// otherwise build a URL that 404s, which reads as a network fault rather than
+// as a machine Linkspan is not released for.
+const RELEASE_ARCH: Readonly<Record<string, string>> = { x86_64: 'x86_64', aarch64: 'arm64', arm64: 'arm64' };
+
 export async function installLinkspan(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
     const archResult = await run.runRemoteCommand(session.cluster, 'uname -m');
     ensureSuccess(archResult, 'Failed to detect remote architecture');
-    let arch = archResult.stdout.trim();
-    if (arch === 'aarch64') { arch = 'arm64'; }
-    log.info(`Detected architecture on cluster ${session.cluster}: ${arch}`);
+    const machine = archResult.stdout.trim();
+    const arch = RELEASE_ARCH[machine];
+    if (!arch) {
+        throw new Error(`Cluster ${session.cluster} reports architecture ${machine}, which Linkspan is not released for`);
+    }
+    log.info(`Detected architecture on cluster ${session.cluster}: ${machine}`);
 
     const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/linkspan_Linux_${arch}.tar.gz`;
     log.info(`Downloading Linkspan from ${downloadUrl} for architecture ${arch}`);
-    const installResult = await run.runRemoteCommand(session.cluster,
-        `mkdir -p ~/.cybershuttle/bin && curl -fsSL "${downloadUrl}" | tar -xz -C ~/.cybershuttle/bin linkspan && chmod +x ~/.cybershuttle/bin/linkspan`);
+    // Staged and moved, so an interrupted download never becomes the binary a job
+    // execs -- cs-control's provisionScript installs the same way. The directory
+    // and the binary stay owner-only: nothing else on a shared login node needs them.
+    const install = [
+        'set -eu',
+        'bin=$HOME/.cybershuttle/bin',
+        'install -d -m 700 "$bin"',
+        'staged=$bin/.linkspan.$$',
+        'trap \'rm -f "$staged"\' EXIT',
+        `curl -fsSL "${downloadUrl}" | tar -xzO linkspan > "$staged"`,
+        '[ -s "$staged" ]',
+        'chmod 700 "$staged"',
+        'mv -f "$staged" "$bin/linkspan"',
+    ].join('\n');
+    const installResult = await run.runRemoteCommand(session.cluster, install);
     ensureSuccess(installResult, `Failed to install Linkspan on cluster ${session.cluster}`);
     log.info(`Linkspan installed successfully on cluster ${session.cluster}`);
-    log.info('Installation output:', installResult.stdout);
 }
 
 // --test-only runs the site submit filter without queueing; the body never runs, so a blank credential is fine.
@@ -93,7 +114,7 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
     if (!session.batchScript) { throw new Error(`Session ${session.name}: missing batch script`); }
 
     const scriptB64 = Buffer.from(session.batchScript).toString('base64');
-    const submitCommand = `mkdir -p ~/.cybershuttle/logs && echo '${scriptB64}' | base64 -d | sbatch`;
+    const submitCommand = `echo '${scriptB64}' | base64 -d | sbatch`;
     log.info(`Submitting job to Slurm with command: ${submitCommand}`);
 
     const submitResult = await run.runRemoteCommand(session.cluster, submitCommand);

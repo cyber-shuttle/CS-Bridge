@@ -42,7 +42,7 @@ export function buildSlurmScript(session: SlurmSession, hostToken: string): stri
         ``,
         `# --- Set up log files using $HOME ---`,
         `LOG_DIR="$HOME/.cybershuttle/logs"`,
-        `mkdir -p "$LOG_DIR"`,
+        `install -d -m 700 "$LOG_DIR"`,
         `exec > "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.out" 2> "$LOG_DIR/linkspan-session-$SLURM_JOB_ID.err"`,
         ``,
         `# The compute node has no logind, so the inherited /run/user/$UID (XDG_RUNTIME_DIR) is absent there;`,
@@ -77,16 +77,51 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     // ElapsedRaw is SLURM's authoritative run-time in whole seconds (no timezone/clock guessing).
     const elapsedSec = /^\d+$/.test(elapsedRaw.trim()) ? parseInt(elapsedRaw.trim(), 10) : 0;
 
-    let status = SlurmJobStatus.UNKNOWN;
-    if (state.includes('PENDING')) { status = SlurmJobStatus.QUEUED; } // sacct's wire token is PENDING; we call it QUEUED
-    else if (state.includes('CANCELLED')) { status = SlurmJobStatus.CANCELLED; }
-    else if (state.includes('FAILED')) { status = SlurmJobStatus.FAILED; }
-    else if (state.includes('TIMEOUT')) { status = SlurmJobStatus.TIMEOUT; }
-    else if (state.includes('OUT_OF_MEMORY')) { status = SlurmJobStatus.OUT_OF_MEMORY; }
-    else if (state.includes('COMPLETED')) { status = SlurmJobStatus.COMPLETED; }
-    else if (state.includes('RUNNING')) { status = SlurmJobStatus.RUNNING; }
+    return { status: classifySchedulerState(state), elapsedSec };
+}
 
-    return { status, elapsedSec };
+// The scheduler's vocabulary, parsed in one place so it cannot drift — the same
+// table cs-control keeps in classifySchedulerState. A state absent from here is
+// UNKNOWN, which the monitor holds on rather than treating as job death, so a
+// state we simply failed to list would strand a session until its wall time.
+//
+// SUSPENDED and STOPPED still hold an allocation, so they are a pause rather
+// than an ending; they read as QUEUED because the session is not running and
+// not over.
+const SCHEDULER_STATES: Readonly<Record<string, SlurmJobStatus>> = {
+    PENDING: SlurmJobStatus.QUEUED,
+    REQUEUED: SlurmJobStatus.QUEUED,
+    REQUEUE_FED: SlurmJobStatus.QUEUED,
+    REQUEUE_HOLD: SlurmJobStatus.QUEUED,
+    SUSPENDED: SlurmJobStatus.QUEUED,
+    STOPPED: SlurmJobStatus.QUEUED,
+
+    RUNNING: SlurmJobStatus.RUNNING,
+    CONFIGURING: SlurmJobStatus.RUNNING,
+    COMPLETING: SlurmJobStatus.RUNNING,
+    RESIZING: SlurmJobStatus.RUNNING,
+    SIGNALING: SlurmJobStatus.RUNNING,
+    STAGE_OUT: SlurmJobStatus.RUNNING,
+
+    COMPLETED: SlurmJobStatus.COMPLETED,
+    CANCELLED: SlurmJobStatus.CANCELLED,
+    TIMEOUT: SlurmJobStatus.TIMEOUT,
+
+    BOOT_FAIL: SlurmJobStatus.FAILED,
+    DEADLINE: SlurmJobStatus.FAILED,
+    FAILED: SlurmJobStatus.FAILED,
+    NODE_FAIL: SlurmJobStatus.FAILED,
+    OUT_OF_MEMORY: SlurmJobStatus.OUT_OF_MEMORY,
+    PREEMPTED: SlurmJobStatus.FAILED,
+    REVOKED: SlurmJobStatus.FAILED,
+    SPECIAL_EXIT: SlurmJobStatus.FAILED,
+};
+
+// sacct decorates a state with the reason ("CANCELLED by 1001") and marks a
+// truncated one with a trailing "+", so only the first token is the state.
+export function classifySchedulerState(raw: string): SlurmJobStatus {
+    const token = raw.trim().split(/\s+/)[0] ?? '';
+    return SCHEDULER_STATES[token.replace(/\+$/, '').toUpperCase()] ?? SlurmJobStatus.UNKNOWN;
 }
 
 // With `--units=K`, sacct emits every memory field (MaxRSS, ReqMem) in KiB, so a value is just its leading number —

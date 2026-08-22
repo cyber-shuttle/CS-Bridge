@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAccounts, parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
+import { buildSlurmScript, classifySchedulerState, parseAccounts, parsePartitionLine, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
 import { SlurmJobStatus, SlurmSession } from '../models';
 
 test('parseAccounts drops the header and de-duplicates per-partition associations', () => {
@@ -148,4 +148,36 @@ test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launch
     // linkspan must inherit the cleaned env, so the unset has to precede its invocation.
     assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('--tunnel-host-token'),
         'unset precedes linkspan invocation');
+});
+
+// This table is the twin of cs-control's classifySchedulerState (internal/control/reconcile.go).
+// The two must agree: they watch the same scheduler for the same allocations, and a state only
+// one of them knows is a state one of them silently holds on. Change both together.
+test('classifies every scheduler state cs-control classifies', () => {
+    const expected: Record<string, SlurmJobStatus> = {
+        PENDING: SlurmJobStatus.QUEUED, REQUEUED: SlurmJobStatus.QUEUED, REQUEUE_FED: SlurmJobStatus.QUEUED,
+        REQUEUE_HOLD: SlurmJobStatus.QUEUED, SUSPENDED: SlurmJobStatus.QUEUED, STOPPED: SlurmJobStatus.QUEUED,
+        RUNNING: SlurmJobStatus.RUNNING, CONFIGURING: SlurmJobStatus.RUNNING, COMPLETING: SlurmJobStatus.RUNNING,
+        RESIZING: SlurmJobStatus.RUNNING, SIGNALING: SlurmJobStatus.RUNNING, STAGE_OUT: SlurmJobStatus.RUNNING,
+        COMPLETED: SlurmJobStatus.COMPLETED, CANCELLED: SlurmJobStatus.CANCELLED, TIMEOUT: SlurmJobStatus.TIMEOUT,
+        BOOT_FAIL: SlurmJobStatus.FAILED, DEADLINE: SlurmJobStatus.FAILED, FAILED: SlurmJobStatus.FAILED,
+        NODE_FAIL: SlurmJobStatus.FAILED, OUT_OF_MEMORY: SlurmJobStatus.OUT_OF_MEMORY,
+        PREEMPTED: SlurmJobStatus.FAILED, REVOKED: SlurmJobStatus.FAILED, SPECIAL_EXIT: SlurmJobStatus.FAILED,
+    };
+    for (const [state, want] of Object.entries(expected)) {
+        assert.equal(classifySchedulerState(state), want, `${state} must not be held as UNKNOWN`);
+    }
+});
+
+test('reads the state out of sacct decoration: a reason suffix and a truncation marker', () => {
+    assert.equal(classifySchedulerState('CANCELLED by 1001'), SlurmJobStatus.CANCELLED);
+    assert.equal(classifySchedulerState('COMPLETING+'), SlurmJobStatus.RUNNING);
+    assert.equal(classifySchedulerState('  running  '), SlurmJobStatus.RUNNING);
+});
+
+// UNKNOWN is the absence of an observation, not a state: the monitor holds rather than
+// terminalizing, and the wall-time deadline is what eventually settles the session.
+test('an unrecognised scheduler word stays UNKNOWN', () => {
+    assert.equal(classifySchedulerState('WAT'), SlurmJobStatus.UNKNOWN);
+    assert.equal(classifySchedulerState(''), SlurmJobStatus.UNKNOWN);
 });
