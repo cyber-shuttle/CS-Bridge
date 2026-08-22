@@ -30,7 +30,7 @@ export async function consumePendingSummary(context: vscode.ExtensionContext, ex
 
 export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, runSnapshot?: RunSnapshot): void {
     const panel = vscode.window.createWebviewPanel(
-        'csbridge.summary', `Session ${session.name} summary: `,
+        'csbridge.summary', `Session ${session.name} summary`,
         vscode.ViewColumn.One, { enableScripts: true },
     );
     // Re-read the session each post: it may still be 'stopping' at open and flip to 'stopped' while the tab is up.
