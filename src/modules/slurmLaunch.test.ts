@@ -79,3 +79,28 @@ test('submitJobToSlurm sets jobId + queued on success and throws on missing scri
         () => submitJobToSlurm(session({ batchScript: 'x' }), runner([{ match: 'sbatch', stdout: 'no id here' }]), noopLog),
         /Failed to parse job ID/);
 });
+
+// cs-control's provisionScript refuses an unmapped machine by name (error=architecture).
+// Building a release URL from it instead would 404 and read as a network fault.
+test('installLinkspan refuses a machine linkspan is not released for', async () => {
+    await assert.rejects(
+        () => installLinkspan(session(), runner([{ match: 'uname', stdout: 'ppc64le' }]), noopLog),
+        /architecture ppc64le, which Linkspan is not released for/);
+});
+
+// An interrupted download must not leave a truncated binary where the next launch execs it.
+test('installLinkspan stages the download and moves it into place', async () => {
+    const calls: string[] = [];
+    const run: RemoteRunner = {
+        async runRemoteCommand(_h, command) {
+            calls.push(command);
+            return { stdout: command.includes('uname') ? 'x86_64' : 'ok', stderr: '', code: 0 };
+        },
+    };
+    await installLinkspan(session(), run, noopLog);
+    const install = calls.find(c => c.includes('curl')) ?? '';
+    assert.match(install, /staged=/, 'download must land on a staging path');
+    assert.match(install, /mv -f "\$staged"/, 'the staged file must be moved into place, not written in place');
+    assert.doesNotMatch(install, /tar -xz -C/, 'must not untar straight onto the destination');
+    assert.match(install, /install -d -m 700/, 'the bin directory should be owner-only');
+});

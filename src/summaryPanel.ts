@@ -44,9 +44,9 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
         void panel.webview.postMessage({ command: 'state', state });
     };
     const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });
-    const runsSub = watchSessionMetrics(() => post());
+    // One watcher covers both: run records and live samples land in the same store.
+    const metricsSub = watchSessionMetrics(() => post());
     const sessSub = watchSessions(() => post());
-    const metricsSub = watchSessionMetrics(() => post()); // live view: refresh sparklines as samples land
     panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
-    panel.onDidDispose(() => { msgSub.dispose(); runsSub.close(); sessSub.close(); metricsSub.close(); });
+    panel.onDidDispose(() => { msgSub.dispose(); sessSub.close(); metricsSub.close(); });
 }
