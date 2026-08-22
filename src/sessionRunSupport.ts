@@ -1,7 +1,7 @@
 import { Logger } from './logger';
 import { SshManager } from './modules/sshSupport';
 import { parseSacctUtil } from './modules/slurmParse';
-import { readAllRuns, readSessionRuns, readSessionMetrics, readSessionStats, appendRun, clearAllRuns, watchSessionMetrics } from './modules/sessionMetricsStore';
+import { readSessionRuns, readSessionMetrics, readSessionStats, appendRun } from './modules/sessionMetricsStore';
 import { Stats, SessionRunRecord, SlurmSession } from './models';
 
 const logger = Logger.getInstance();
@@ -9,10 +9,6 @@ const SACCT = 'sacct -P -n --units=K --format=JobID,AllocCPUs,ReqMem,ElapsedRaw,
 // slurmdbd flushes step usage a beat after the job ends, so re-query until MaxRSS lands before freezing the record.
 const METRIC_RETRIES = 2;
 const METRIC_RETRY_MS = 3000;
-
-export const getSessionRuns = (): SessionRunRecord[] => readAllRuns();
-export const clearSessionRuns = (): void => clearAllRuns();
-export const watchRuns = watchSessionMetrics;
 
 const isSameRun = (r: SessionRunRecord, s: SlurmSession) => r.cluster === s.cluster && r.jobId === s.jobId;
 

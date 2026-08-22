@@ -1,5 +1,5 @@
 import type { SlurmSession, ViewSession } from '@/models';
-import { isTerminal, isCloseable, isStoppable, wallMs } from '@/modules/sessionMachine';
+import { isTerminal, isStoppable, wallMs } from '@/modules/sessionMachine';
 
 export { wallMs }; // shared with the monitor via the vscode-free sessionMachine
 
@@ -9,12 +9,6 @@ export interface SessionAction {
     kind: ActionKind;
     label: string;
     icon: string;
-}
-
-interface SessionDescriptor {
-    statusColor: string;
-    canClose: boolean;
-    actions: SessionAction[];
 }
 
 /** ms → "1h 30m" above an hour, "0m 45s" below. Clamps negatives to zero. */
@@ -81,12 +75,4 @@ export function sessionActions(session: ViewSession): SessionAction[] {
         actions.push({ kind: 'connect', label: s === 'ready_to_connect' ? 'Connect' : 'Reconnect', icon: 'arrow-swap' });
     }
     return actions;
-}
-
-export function statusDescriptor(session: ViewSession): SessionDescriptor {
-    return {
-        statusColor: dotColor(session.status),
-        canClose: isCloseable(session.status),
-        actions: sessionActions(session),
-    };
 }

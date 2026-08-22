@@ -6,7 +6,6 @@ export interface SlurmSession extends Session {
     gpuClass: string;
     cpus: number;
     memory: string;
-    jobDirectory: string;
     allocation: string;
     batchScript?: string;
     tunnelId?: string;
@@ -85,10 +84,6 @@ export interface SlurmPartitionInfo {
 export interface GresInfo {
     name: string;
     count: number;
-}
-
-export interface AccountInfo {
-    label: string | null;
 }
 
 export enum SlurmJobStatus {

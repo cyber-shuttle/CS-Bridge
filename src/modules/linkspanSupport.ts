@@ -9,10 +9,7 @@ const TIMEOUT_MS = 4500; // linkspan shares one relay + a 2-CPU node with live S
 export interface LinkspanSshStatus {
     id: string;
     state: string; // "running" while the listener is up; "restarting"/"failed" otherwise
-    active: boolean; // true only while accepting connections
     addr?: string; // ":<port>" the sshd is bound to
-    restarts: number;
-    last_error?: string;
 }
 
 interface SshServerInfo { bind_port: number; id: string }
@@ -51,7 +48,7 @@ export async function getMetrics(baseUrl: string, headers: Record<string, string
 
 // POST /vscode/sessions — create a fresh sshd authorized for our public key. Not idempotent; the caller guards re-creation.
 export async function createSshServer(baseUrl: string, headers: Record<string, string>, authorizedKey: string): Promise<SshServerInfo> {
-    return await (await post(baseUrl, headers, '/vscode/sessions', { mount_user_home: false, authorized_key: authorizedKey })).json() as SshServerInfo;
+    return await (await post(baseUrl, headers, '/vscode/sessions', { authorized_key: authorizedKey })).json() as SshServerInfo;
 }
 
 // linkspan binds each sshd on ":<port>" and ids it "s-<port>", so both fields encode the (restart-stable) port.

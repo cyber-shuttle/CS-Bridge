@@ -1,4 +1,4 @@
-import { AccountInfo, SlurmSession } from '../models';
+import { SlurmSession } from '../models';
 import * as vscode from 'vscode';
 import { Logger } from '../logger';
 import { updateSession } from '../extensionStore';
@@ -239,12 +239,11 @@ export async function switchDevTunnelAccount(): Promise<void> {
     logger.info(`Dev Tunnels: switched to ${session.account.label}`);
 }
 
-export async function getMicrosoftAccountInfo(): Promise<AccountInfo> {
+export async function getMicrosoftAccountLabel(): Promise<string | null> {
     try {
-        const session = await getMicrosoftSession({ silent: true });
-        return { label: session?.account.label ?? null };
+        return (await getMicrosoftSession({ silent: true }))?.account.label ?? null;
     }
     catch {
-        return { label: null };
+        return null;
     }
 }

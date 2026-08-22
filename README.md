@@ -48,11 +48,11 @@ When you click **Start**:
 
 1. CS Bridge generates a SLURM batch script and submits it with `sbatch`. The script runs `linkspan` on the allocated compute node.
 2. CS Bridge polls `sacct` for job status and waits for `linkspan` to come live.
-3. `linkspan` starts a REST API and an SSH server on the compute node, exposing both over a Dev Tunnel. The session is now ready to connect.
+3. `linkspan` starts its HTTP API and an SSH server on the compute node, exposing both over the Dev Tunnel CS Bridge created. The session is now ready to connect.
 
 When you click **Connect**:
 
-1. CS Bridge reaches `linkspan`'s REST API over the Dev Tunnel (HTTPS) and relays the compute-node SSH server to localhost with the Microsoft Dev Tunnels SDK.
+1. CS Bridge reaches `linkspan`'s HTTP API over the Dev Tunnel (HTTPS) and relays the compute-node SSH server to localhost with the Microsoft Dev Tunnels SDK.
 2. CS Bridge opens a new window with URI `vscode-remote://ssh-remote+<cluster>-<last 6 of session name>/{HOME}` (e.g. `delta-493119`).
 3. VS Code's remote-SSH plugin intercepts this window, connects to the relayed SSH server via the OS-native `ssh` client, installs VS Code Server, and attaches the window to the compute node.
 
@@ -76,7 +76,7 @@ CS Bridge prepends `Include ~/.cybershuttle/ssh_config` to your `~/.ssh/config` 
 The Microsoft account token is held by VS Code's built-in authentication provider (OS keychain).
 
 **Remote:** `~/.cybershuttle/bin/linkspan` (downloaded on first connect).
-`~/.cybershuttle/logs/linkspan-session-<jobid>.{out,err}` (linkspan output CS Bridge tails to find the tunnel).
+`~/.cybershuttle/logs/linkspan-session-<jobid>.{out,err}` (linkspan output, for troubleshooting).
 To reset, remove both `~/.cybershuttle/` directories and the `Include` line in `~/.ssh/config`.
 
 ## Troubleshooting

@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { uuidv7 } from 'uuidv7';
 import { Logger } from './logger';
 import { readJson, updateJson, deleteFile, isPidAlive } from './modules/fsSupport';
 import { SlurmSession } from './models';
@@ -14,7 +13,6 @@ const logger = Logger.getInstance();
 let sessions: SlurmSession[] = [];
 let sessionsDir = '';
 
-const isUuid = (id: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 const recordPath = (id: string): string => path.join(sessionsDir, `${id}.json`);
 const isRecordFile = (name: string): boolean => name.endsWith('.json');
 
@@ -33,27 +31,15 @@ function writeRecord(session: SlurmSession): void {
         err => logger.error(`Failed to save session ${session.id}`, err));
 }
 
-// One-time migration of the legacy sessions.json array.
-function migrateLegacyFile(): void {
-    const legacy = path.join(CS_HOME, 'sessions.json');
-    let arr: unknown;
-    try { arr = JSON.parse(fs.readFileSync(legacy, 'utf-8')); }
-    catch { return; }
-    if (Array.isArray(arr)) { for (const s of arr as SlurmSession[]) { writeRecord(s); } }
-    deleteFile(legacy);
-}
-
-export function initSessionStore(storagePath: string = CS_HOME): string {
-    sessionsDir = path.join(storagePath, 'sessions');
+export function initSessionStore(): string {
+    sessionsDir = path.join(CS_HOME, 'sessions');
     fs.mkdirSync(sessionsDir, { recursive: true });
-    migrateLegacyFile();
     sessions = readAllRecords();
     for (const s of sessions) {
         // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
         if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
         // A launch prompt that outlived its window can't be answered anymore; the launch never happened, so revert to not_started.
         if (s.status === 'awaiting_input') { s.status = 'not_started'; }
-        if (!isUuid(s.id)) { deleteFile(recordPath(s.id)); s.id = uuidv7(); writeRecord(s); }
     }
     logger.info(`Loaded ${sessions.length} session(s) from ${sessionsDir}`);
     return sessionsDir;

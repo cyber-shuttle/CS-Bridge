@@ -8,7 +8,7 @@ import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, setStatus, watchSessions, liveAndCleanup } from './extensionStore';
 import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
-import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountInfo, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountLabel, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { slurmAccount } from './modules/slurmParse';
@@ -75,7 +75,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             // Skip a 'stopping' session: a remote Stop handed it off for the summary consumer to finish; monitoring would fight it.
             if (s.status !== 'stopping' && s.jobId && !isTerminal(s.status)) { this.monitor.startMonitoring(s); }
         }
-        if ((await getMicrosoftAccountInfo()).label === null) { return; } // don't force a sign-in popup at startup
+        if (await getMicrosoftAccountLabel() === null) { return; } // don't force a sign-in popup at startup
         for (const s of getAllSessions()) {
             // Relaying an expired (or stopping) session would only flash "connecting…" then fail back; leave it be.
             if (s.status !== 'stopping' && isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
@@ -121,7 +121,6 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     cluster: host,
                     status: 'not_started',
                     jobId: '',
-                    jobDirectory: '',
                     submittedAt: now,
                     errorMessage: '',
                     workingDirectory: runtime?.phase === 'ready' ? runtime.info.homeDir : undefined,
@@ -315,8 +314,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         const view = this.view;
         if (!view) { return; }
         try {
-            const account = await getMicrosoftAccountInfo();
-            view.description = account.label ?? 'Not Signed In';
+            view.description = await getMicrosoftAccountLabel() ?? 'Not Signed In';
             const state: SessionsState = {
                 isRemote: this.remoteSessionId !== undefined,
                 sessions: this.scopedSessions()

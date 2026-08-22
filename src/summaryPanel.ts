@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import { getSession, watchSessions } from './extensionStore';
-import { getSessionRuns, watchRuns } from './sessionRunSupport';
 import { renderHtml } from './webviewProvider';
-import { readSessionMetrics, readSessionStats, watchSessionMetrics } from './modules/sessionMetricsStore';
+import { readAllRuns, readSessionMetrics, readSessionStats, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { Metric, Stats, SlurmSession, SummaryState } from './models';
 
 // A finished run's fixed snapshot (from the Stats view), shown instead of the possibly-relaunched live session.
@@ -38,14 +37,14 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
     const post = () => {
         const s = getSession(session.id) ?? session;
         // Past run from Stats: its fixed snapshot. Live: current samples + latest sacct copy (run record or in-run file).
-        const run = runSnapshot ? undefined : getSessionRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
+        const run = runSnapshot ? undefined : readAllRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
         const metrics = runSnapshot ? runSnapshot.metrics : readSessionMetrics(s.id);
         const stats = runSnapshot ? runSnapshot.stats : (run?.stats ?? readSessionStats(s.id));
         const state: SummaryState = { session: s, metrics, stats };
         void panel.webview.postMessage({ command: 'state', state });
     };
     const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });
-    const runsSub = watchRuns(() => post());
+    const runsSub = watchSessionMetrics(() => post());
     const sessSub = watchSessions(() => post());
     const metricsSub = watchSessionMetrics(() => post()); // live view: refresh sparklines as samples land
     panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');

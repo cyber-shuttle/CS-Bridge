@@ -2,8 +2,8 @@ import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
 import type { CSSProperties, VNode } from 'preact';
 import { METRICS_HISTORY_LEN, type ViewSession } from '@/models';
-import { statusDescriptor, remainingMs, fmtTime, wallMs, elapsedLabel, type SessionAction } from '@/ui/logic/session';
-import { isRelayLive } from '@/modules/sessionMachine';
+import { dotColor, sessionActions, remainingMs, fmtTime, wallMs, elapsedLabel, type SessionAction } from '@/ui/logic/session';
+import { isRelayLive, isCloseable } from '@/modules/sessionMachine';
 import { Row, Stack, Text, Card, ActionIcon, Button, Spinner, Chip } from '@/ui/components/base';
 import { Sparkline } from '@/ui/components/Sparkline';
 import { metricGraphs, graphTitle } from '@/ui/components/MetricGraphs';
@@ -101,7 +101,9 @@ function StatusText({ session }: { session: ViewSession }) {
 }
 
 export function SessionCard({ session, readonly }: Props) {
-    const { statusColor, canClose, actions } = statusDescriptor(session);
+    const statusColor = dotColor(session.status);
+    const canClose = isCloseable(session.status);
+    const actions = sessionActions(session);
     const status = STATUS_ICON[session.status];
 
     const act = (a: SessionAction) => {
@@ -117,7 +119,6 @@ export function SessionCard({ session, readonly }: Props) {
                 <Text weight={600}>{session.cluster}</Text>
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
-                {session.jobDirectory ? <Text muted size={11} ellipsis>{session.jobDirectory}</Text> : null}
                 {!readonly && canClose
                     ? (
                             <Row gap={4} style={{ marginLeft: 'auto' }}>
