@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseAccounts, parsePartitionLine, buildSlurmScript, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
-import { SlurmJobStatus, SlurmSession, TunnelCredential } from '../models';
+import { SlurmJobStatus, SlurmSession } from '../models';
 
 test('parseAccounts drops the header and de-duplicates per-partition associations', () => {
     const out = 'Account|\npearc26-tutorial|\npearc26-tutorial|\ndelta-cpu|\n';
@@ -60,15 +60,14 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
         gpuClass: 'gpu:a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
         connectionInfo: { apiPort: 25000, sshPort: 0, sshTunnelId: '', region: '' },
     } as SlurmSession;
-    const cred = { provider: 'devtunnel', authToken: 'tok' } as TunnelCredential;
-    const script = buildSlurmScript(session, cred);
+    const script = buildSlurmScript(session, 'tok');
     assert.match(script, /^#SBATCH --nodes=1$/m);
     assert.match(script, /^#SBATCH --cpus-per-task=4$/m);
     assert.match(script, /^#SBATCH --mem=8GB$/m);
     assert.match(script, /^#SBATCH --partition=gpu$/m);
     assert.match(script, /^#SBATCH --account=acct1$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
-    assert.match(script, /--port 25000 --socket \/tmp\/csbridge-sess-1\.sock --tunnel-auth-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
+    assert.match(script, /--port 25000 --socket \/tmp\/csbridge-sess-1\.sock --tunnel-host-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
 });
 
 test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
@@ -76,15 +75,14 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
         cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
         gpuClass: '', gpuCount: 0,
     } as SlurmSession;
-    const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
+    const script = buildSlurmScript(session, 't');
     assert.doesNotMatch(script, /--gres=/);
 });
 
 test('buildSlurmScript omits --account for a blank or non-token allocation', () => {
-    const cred = { provider: 'devtunnel', authToken: 't' } as TunnelCredential;
     for (const allocation of ['', '(No Allocation)']) {
         const session = { cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'debug', allocation, gpuClass: '', gpuCount: 0 } as SlurmSession;
-        assert.doesNotMatch(buildSlurmScript(session, cred), /--account/);
+        assert.doesNotMatch(buildSlurmScript(session, 't'), /--account/);
     }
 });
 
@@ -141,13 +139,13 @@ test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launch
         cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
         gpuClass: '', gpuCount: 0,
     } as SlurmSession;
-    const script = buildSlurmScript(session, { provider: 'devtunnel', authToken: 't' } as TunnelCredential);
+    const script = buildSlurmScript(session, 't');
 
     // The compute node has no logind, so the inherited /run/user/<uid> XDG_RUNTIME_DIR is absent there;
     // unset it (and TMPDIR) so the VS Code server falls back to its node-local /tmp default.
     assert.match(script, /^unset XDG_RUNTIME_DIR TMPDIR$/m);
 
     // linkspan must inherit the cleaned env, so the unset has to precede its invocation.
-    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('--tunnel-auth-token'),
+    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('--tunnel-host-token'),
         'unset precedes linkspan invocation');
 });

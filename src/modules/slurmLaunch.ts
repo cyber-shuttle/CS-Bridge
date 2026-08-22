@@ -27,26 +27,38 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
     log.info(`Slurm is available on cluster ${session.cluster}`);
 }
 
+// Newest wins, ties go to the release. A release is X.Y.Z; a build ahead of one is X.Y.Z.<commit>, so it yields
+// once that release ships and never ties another build. Anything else is not a version. cs-control matches this.
+const INSTALLED = /^(\d+)\.(\d+)\.(\d+)(\.[0-9a-f]{7,40})?$/;
+const RELEASED = /^(\d+)\.(\d+)\.(\d+)$/;
+
+export function keepsInstalledLinkspan(local: string, latest: string): boolean {
+    const here = INSTALLED.exec(local);
+    if (!here) { return false; }
+    const there = RELEASED.exec(latest);
+    if (!there) { return true; } // no answer about the latest; a working binary beats a guess
+    for (let i = 1; i <= 3; i++) {
+        if (Number(here[i]) !== Number(there[i])) { return Number(here[i]) > Number(there[i]); }
+    }
+    return !here[4];
+}
+
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
 export async function checkLinkspanInstallation(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
     const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | grep -oP '[^/]+$'`);
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 
-    if (remoteVersionResult.code !== 0) {
-        log.error(`Failed to check Linkspan latest version. Error: ${remoteVersionResult.stderr}`);
-        return false;
-    }
     if (localVersionResult.code !== 0) {
         log.error(`Failed to check Linkspan version on cluster ${session.cluster}. Error: ${localVersionResult.stderr}`);
         return false;
     }
 
-    const localVersion = localVersionResult.stdout.trim();
-    const remoteTag = remoteVersionResult.stdout.trim();
-    const remoteVersion = remoteTag.startsWith('v') ? remoteTag.slice(1) : remoteTag;
+    const localVersion = localVersionResult.stdout.trim().replace(/^v/, '');
+    // A failed lookup is no answer about the latest release, not proof there is none: keep what is installed.
+    const remoteVersion = (remoteVersionResult.code === 0 ? remoteVersionResult.stdout.trim() : '').replace(/^v/, '');
 
-    if (localVersion !== '' && remoteVersion !== '' && localVersion === remoteVersion) {
-        log.info(`Linkspan is already installed and up to date on cluster ${session.cluster}`);
+    if (keepsInstalledLinkspan(localVersion, remoteVersion)) {
+        log.info(`Linkspan ${localVersion} on cluster ${session.cluster} is at or ahead of the latest release (${remoteVersion || 'unknown'}); keeping it`);
         return true;
     }
     log.info(`Linkspan is not installed or outdated on cluster ${session.cluster}. Local version: ${localVersion}, Latest version: ${remoteVersion}`);
@@ -71,7 +83,7 @@ export async function installLinkspan(session: SlurmSession, run: RemoteRunner, 
 
 // --test-only runs the site submit filter without queueing; the body never runs, so a blank credential is fine.
 export async function validateSlurmConfig(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
-    const scriptB64 = Buffer.from(buildSlurmScript(session, { provider: 'devtunnel', authToken: '' })).toString('base64');
+    const scriptB64 = Buffer.from(buildSlurmScript(session, '')).toString('base64');
     const result = await run.runRemoteCommand(session.cluster, `echo '${scriptB64}' | base64 -d | sbatch --test-only`);
     ensureSuccess(result, `Cluster ${session.cluster} rejected the session configuration`);
     log.info(`Cluster ${session.cluster} validated the session configuration: ${(result.stderr || result.stdout).trim()}`);
@@ -92,6 +104,7 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
     const jobIdMatch = output.match(/Submitted batch job (\d+)/);
     if (!jobIdMatch) { throw new Error(`Failed to parse job ID from sbatch output: ${output}`); }
 
+    session.batchScript = undefined; // held the tunnel host token; sbatch has it now
     session.jobId = jobIdMatch[1];
     session.status = 'queued';
     session.submittedAt = Date.now();

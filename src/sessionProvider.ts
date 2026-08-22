@@ -3,7 +3,7 @@ import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
 import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
 import { WebviewProvider, confirmModal } from './webviewProvider';
-import { removeSshConfigEntry, addSshConfigEntry, getSessionPrivateKey, SshManager } from './modules/sshSupport';
+import { removeSshConfigEntry, addSshConfigEntry, hasSessionKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, setStatus, watchSessions, liveAndCleanup } from './extensionStore';
@@ -358,9 +358,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 await disposeTunnelClient(session.id);
                 return false;
             }
-            const privateKey = session.connectionInfo?.sshPrivateKey ?? getSessionPrivateKey(session.id);
-            if (!privateKey) { throw new Error('SSH private key not found for session'); }
-            const hostAlias = await addSshConfigEntry(session, localPort, privateKey);
+            if (!hasSessionKey(session.id)) { throw new Error('SSH private key not found for session'); }
+            const hostAlias = await addSshConfigEntry(session, localPort);
             this.logger.info(`SSH config entry ready for session ${session.id} (ssh ${hostAlias})`);
             setStatus(session, 'connected');
             return true;

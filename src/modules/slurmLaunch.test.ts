@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
+import { checkLinkspanInstallation, keepsInstalledLinkspan, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
 import { SlurmSession } from '../models';
 
 const noopLog = { info() {}, warn() {}, error() {} };
@@ -17,22 +17,29 @@ function runner(rules: Array<{ match: string; stdout?: string; stderr?: string; 
     };
 }
 
-test('checkSlurmAvailability resolves when sinfo exits 0 and throws otherwise', async () => {
-    await checkSlurmAvailability(session(), runner([{ match: 'sinfo', code: 0 }]), noopLog);
-    await assert.rejects(
-        () => checkSlurmAvailability(session(), runner([{ match: 'sinfo', code: 1, stderr: 'down' }]), noopLog),
-        /Slurm is not available on cluster cl: down/);
+test('keepsInstalledLinkspan keeps only a real version that is ahead of the release', () => {
+    assert.equal(keepsInstalledLinkspan('0.15.13', '0.15.12'), true);
+    assert.equal(keepsInstalledLinkspan('0.15.12', '0.15.12'), true); // already installed
+    assert.equal(keepsInstalledLinkspan('0.15.11', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('0.9.0', '0.15.0'), false); // numbers, not strings
+    // A build ahead of a release outranks older releases and yields to its own.
+    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.15.12'), true);
+    assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0'), false);
+    assert.equal(keepsInstalledLinkspan('0.17.0.1ebf666', '0.16.0'), true);
+    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.aaaaaaa'), true); // a release never carries a commit
+    // Only X.Y.Z[.commit] is a version; anything else must never outrank a release.
+    assert.equal(keepsInstalledLinkspan('dev', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('0.15.12-1-g1ee565a', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('', '0.15.12'), false);
+    assert.equal(keepsInstalledLinkspan('0.15.12', ''), true); // no answer about the latest keeps what works
 });
 
-test('checkLinkspanInstallation returns true only when local matches latest (v-prefix stripped)', async () => {
-    const up = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.3' }]);
-    assert.equal(await checkLinkspanInstallation(session(), up, noopLog), true);
+test('checkLinkspanInstallation passes the installed and latest versions the right way round', async () => {
+    const ahead = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.4' }]);
+    assert.equal(await checkLinkspanInstallation(session(), ahead, noopLog), true);
 
     const stale = runner([{ match: 'releases/latest', stdout: 'v1.2.4' }, { match: '--version', stdout: '1.2.3' }]);
     assert.equal(await checkLinkspanInstallation(session(), stale, noopLog), false);
-
-    const missing = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '' }]);
-    assert.equal(await checkLinkspanInstallation(session(), missing, noopLog), false);
 });
 
 test('installLinkspan normalizes aarch64 and throws on a failed install', async () => {
