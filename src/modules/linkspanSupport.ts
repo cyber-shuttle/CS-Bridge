@@ -49,8 +49,7 @@ export async function getMetrics(baseUrl: string, headers: Record<string, string
     return await get(baseUrl, headers, '/metrics', j => typeof j === 'object' && j !== null && !Array.isArray(j)) as Metric;
 }
 
-// POST /vscode/sessions — create a fresh sshd authorized for our public key. Not idempotent; the caller guards
-// re-creation. The private half never leaves this machine, so linkspan returns nothing secret.
+// POST /vscode/sessions — create a fresh sshd authorized for our public key. Not idempotent; the caller guards re-creation.
 export async function createSshServer(baseUrl: string, headers: Record<string, string>, authorizedKey: string): Promise<SshServerInfo> {
     return await (await post(baseUrl, headers, '/vscode/sessions', { mount_user_home: false, authorized_key: authorizedKey })).json() as SshServerInfo;
 }

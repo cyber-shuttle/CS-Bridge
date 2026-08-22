@@ -31,12 +31,7 @@ export function mergeFromDisk(mem: SlurmSession[], disk: SlurmSession[]): boolea
     return changed;
 }
 
-// Persisted record: secrets trimmed, windowPids kept from disk so a write can't clobber another window's pids.
+// Persisted record: secrets trimmed (batchScript carries the tunnel host token), windowPids kept from disk so a write can't clobber another window's pids.
 export function toPersistedRecord(session: SlurmSession, diskWindowPids?: number[]): SlurmSession {
-    return {
-        ...session,
-        batchScript: undefined, // carries the tunnel host token until sbatch takes it; never write it to disk
-        connectionInfo: persistableConnectionInfo(session.connectionInfo),
-        windowPids: diskWindowPids ?? session.windowPids,
-    };
+    return { ...session, batchScript: undefined, connectionInfo: persistableConnectionInfo(session.connectionInfo), windowPids: diskWindowPids ?? session.windowPids };
 }

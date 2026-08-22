@@ -42,8 +42,7 @@ export function linkspanEndpoint(session: SlurmSession): { baseUrl: string; head
     };
 }
 
-// Returns the host-scoped token the allocation needs to run the relay. cs-bridge keeps the Entra bearer local and
-// registers every port itself, so the compute node only ever holds a token scoped to hosting this one tunnel.
+// Returns the relay token: we keep the Entra bearer local and register the ports, so the node only ever holds a token scoped to hosting this one tunnel.
 export async function ensureDevTunnel(session: SlurmSession): Promise<string> {
     const mgmt = buildTunnelManagementClient();
     const ci = session.connectionInfo ?? (session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '' });
@@ -111,15 +110,13 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
         ci.sshPort = port;
     }
     else {
-        // Only our public key can authenticate, so a fresh sshd needs a fresh local pair.
         const created = await createSshServer(baseUrl, headers, createSessionKeyPair(session.id));
         logger.info(`SSH server for session ${session.id} created on port ${created.bind_port}.`);
         ci.sshPort = created.bind_port;
         updateSession(session);
     }
 
-    // We hold the Entra bearer, so we register the port ourselves; stamp sshTunnelId = apiTunnelId so the current
-    // port rides the current tunnel.
+    // We hold the Entra bearer, so we register the port; sshTunnelId = apiTunnelId rides it on the current tunnel.
     const mgmt = buildTunnelManagementClient();
     const tunnel = await mgmt.getTunnel({ tunnelId: ci.apiTunnelId!, clusterId: ci.region }, { includePorts: true });
     if (!tunnel) { throw new Error(`Tunnel ${ci.apiTunnelId} disappeared while publishing the SSH port.`); }

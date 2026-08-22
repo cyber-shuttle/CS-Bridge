@@ -361,22 +361,17 @@ export async function addSshConfigEntry(session: SlurmSession, localPort: number
     return hostAlias;
 }
 
-// Mint this session's SSH key pair locally and return only the public half — the private key never leaves this
-// machine, so a compromised allocation cannot hand out credentials to it.
+// Mint the session key pair locally and return only the public half; the private key never leaves this machine.
 export function createSessionKeyPair(sessionId: string): string {
     fs.mkdirSync(CS_SSH_KEYS_DIR, { recursive: true, mode: 0o700 });
     removeSessionPrivateKey(sessionId);
     const keyPath = sessionKeyPath(sessionId);
     const generated = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', keyPath], { encoding: 'utf-8' });
-    if (generated.error || generated.status !== 0) {
-        throw new Error(`Failed to generate SSH key: ${generated.error?.message ?? generated.stderr.trim()}`);
-    }
+    if (generated.error || generated.status !== 0) { throw new Error(`Failed to generate SSH key: ${generated.error?.message ?? generated.stderr.trim()}`); }
     const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf-8').trim();
     fs.unlinkSync(`${keyPath}.pub`);
     return publicKey;
 }
-
-export const sessionKeyFile = sessionKeyPath;
 
 export const hasSessionKey = (sessionId: string): boolean => fs.existsSync(sessionKeyPath(sessionId));
 

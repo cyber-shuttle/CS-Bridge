@@ -19,7 +19,6 @@ export function parseAccounts(output: string): string[] {
     return [...new Set(names)];
 }
 
-// hostToken is scoped to hosting this one tunnel, so no Microsoft Entra bearer ever reaches the cluster.
 export function buildSlurmScript(session: SlurmSession, hostToken: string): string {
     const memSlurm = session.memory.replace(/\s+/g, '');
     const socketPath = linkspanSocketPath(session.id);

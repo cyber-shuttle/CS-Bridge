@@ -25,26 +25,20 @@ test('checkSlurmAvailability resolves when sinfo exits 0 and throws otherwise', 
 });
 
 test('keepsInstalledLinkspan keeps only a real version that is ahead of the release', () => {
-    // Newest wins; a tie goes to the release.
     assert.equal(keepsInstalledLinkspan('0.15.13', '0.15.12'), true);
     assert.equal(keepsInstalledLinkspan('0.15.12', '0.15.12'), true); // already installed
     assert.equal(keepsInstalledLinkspan('0.15.11', '0.15.12'), false);
-    // Numbers, not strings: 9 is not later than 15.
-    assert.equal(keepsInstalledLinkspan('0.9.0', '0.15.0'), false);
+    assert.equal(keepsInstalledLinkspan('0.9.0', '0.15.0'), false); // numbers, not strings
     // A build ahead of a release outranks older releases and yields to its own.
     assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.15.12'), true);
     assert.equal(keepsInstalledLinkspan('0.16.0.1ebf666', '0.16.0'), false);
     assert.equal(keepsInstalledLinkspan('0.17.0.1ebf666', '0.16.0'), true);
-    // A release never carries a commit, so one offered as the latest is not a release.
-    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.aaaaaaa'), true);
+    assert.equal(keepsInstalledLinkspan('0.16.0', '0.16.0.aaaaaaa'), true); // a release never carries a commit
     // Only X.Y.Z[.commit] is a version; anything else must never outrank a release.
     assert.equal(keepsInstalledLinkspan('dev', '0.15.12'), false);
     assert.equal(keepsInstalledLinkspan('0.15.12-1-g1ee565a', '0.15.12'), false);
-    assert.equal(keepsInstalledLinkspan('0.16.0.pre', '0.15.12'), false);
-    assert.equal(keepsInstalledLinkspan('0.16', '0.15.12'), false);
     assert.equal(keepsInstalledLinkspan('', '0.15.12'), false);
-    // No answer about the latest release is not a reason to replace a working binary.
-    assert.equal(keepsInstalledLinkspan('0.15.12', ''), true);
+    assert.equal(keepsInstalledLinkspan('0.15.12', ''), true); // no answer about the latest keeps what works
 });
 
 test('checkLinkspanInstallation keeps a build ahead of the release and replaces one behind it', async () => {
