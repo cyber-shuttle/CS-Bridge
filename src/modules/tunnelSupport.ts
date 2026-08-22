@@ -67,11 +67,10 @@ export async function ensureDevTunnel(session: SlurmSession): Promise<string> {
     return hostToken;
 }
 
-// Registering a port is idempotent at the service; a conflict just means it is already there.
+// Nothing reaches the allocation on a port the tunnel does not carry, so a failure here is the session's failure.
 async function ensureTunnelPort(mgmt: TunnelManagementHttpClient, tunnel: Tunnel, portNumber: number): Promise<void> {
     if (tunnel.ports?.some(p => p.portNumber === portNumber)) { return; }
-    try { await mgmt.createTunnelPort(tunnel, { portNumber, protocol: 'auto' }, { tokenScopes: [TunnelAccessScopes.Host] }); }
-    catch (err) { logger.warn(`Could not register port ${portNumber} on tunnel ${tunnel.tunnelId}:`, err); }
+    await mgmt.createTunnelPort(tunnel, { portNumber, protocol: 'auto' }, { tokenScopes: [TunnelAccessScopes.Host] });
 }
 
 export async function removeDevTunnel(session: SlurmSession): Promise<void> {

@@ -13,7 +13,10 @@ test('persistableConnectionInfo keeps reattach refs + apiPort and drops secrets/
     });
 });
 
-test('persistableConnectionInfo returns undefined without an sshTunnelId (nothing to reattach to)', () => {
+test('persistableConnectionInfo returns undefined only when there is nothing to reattach to', () => {
     assert.equal(persistableConnectionInfo(undefined), undefined);
     assert.equal(persistableConnectionInfo({ sshTunnelId: '', sshPort: 0, region: '' }), undefined);
+    // Preparing on the tunnel: no sshd yet, but the pinned apiPort must survive a reload.
+    assert.deepEqual(persistableConnectionInfo({ sshTunnelId: '', sshPort: 0, region: 'usw3', apiPort: 25000 }),
+        { sshTunnelId: '', sshPort: 0, region: 'usw3', apiPort: 25000 });
 });

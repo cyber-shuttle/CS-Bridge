@@ -46,7 +46,8 @@ export interface SessionConnectionInfo {
 }
 
 export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): SessionConnectionInfo | undefined {
-    if (!ci?.sshTunnelId) { return undefined; }
+    // A session preparing on the tunnel has an apiPort but no sshd yet; drop it and a reload orphans it.
+    if (!ci?.sshTunnelId && !ci?.apiPort) { return undefined; }
     // apiPort persists so a reattached session health-pings the tunnel instead of polling the login node; the token is re-minted.
     const { sshTunnelId, sshPort, region, apiPort } = ci;
     return { sshTunnelId, sshPort, region, apiPort };
