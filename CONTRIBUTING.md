@@ -41,34 +41,20 @@ Local VS Code                              Remote HPC Cluster
 
 ## Source Layout
 
-```text
-src/
-├── extension.ts                       # Entry point — registers the sidebar webview provider
-├── sessionProvider.ts                 # Main webview provider (~450 lines): all user actions
-├── extensionStore.ts                  # Sessions persistence + cross-window file watcher
-├── models.ts                          # SlurmSession + session status types
-├── logger.ts                          # Output-channel logger
-├── webviews/
-│   └── sessionWebview.ts              # Webview HTML/CSP generation
-└── modules/
-    ├── sshSupport.ts                  # SSH ControlMaster pool, askpass IPC, SLURM script construction
-    ├── sessionSupport.ts              # Launch flow, linkspan deployment, status monitor
-    ├── slurmSupport.ts                # sacct job-status polling
-    ├── tunnelSupport.ts               # Microsoft Dev Tunnels integration
-    ├── linkspanSupport.ts             # linkspan's HTTP client (health, metrics, vscode sessions)
-    └── fsSupport.ts                   # Filesystem helpers (sessions file lock)
+Four layers, and nothing reaches past its neighbour:
 
-resources/
-├── webviews/
-│   ├── js/sessions.js                 # Plain JS sidebar UI (~31KB; not compiled)
-│   └── css/{common,info,sessions}.css # Webview styling
-├── codicons/                          # Bundled VS Code codicons
-├── csbridge.svg                       # Activity bar icon
-└── csbridge.png                       # Marketplace icon
+- **`src/*.ts`** — the VS Code surface. `extension.ts` registers everything; one provider per contributed
+  view (`sessionProvider`, `sshHostProvider`, `statsProvider`) plus `summaryPanel`, and `webviewProvider`
+  renders the HTML/CSP the four bundles load into.
+- **`src/modules/*.ts`** — the logic, free of the `vscode` API so it unit-tests directly. SSH
+  (`sshSupport`, `sshShell`, `sshHostsStore`, `sshCommandParser`), Slurm (`slurmLaunch`, `slurmParse`,
+  `slurmSupport`), linkspan's HTTP client (`linkspanSupport`), the Dev Tunnel (`tunnelSupport`), the
+  session state machine (`sessionMachine`) and the on-disk stores.
+- **`src/ui/`** — Preact webviews, bundled per view by esbuild. `logic/` is pure and tested; `components/`
+  renders; `platform/` is the only thing that talks to the webview host.
+- **`resources/`, `scripts/`** — icons and codicons, and the `SSH_ASKPASS` helpers.
 
-scripts/
-└── askpass.{js,sh,cmd}                # SSH_ASKPASS helpers (cross-platform)
-```
+Tests sit beside what they test as `*.test.ts` and run on `node --test`.
 
 Authentication uses `vscode.authentication.getSession('microsoft', ...)` — there is no custom OAuth server.
 

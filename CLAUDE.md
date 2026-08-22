@@ -59,7 +59,7 @@ src/
   webviewProvider.ts    # abstract WebviewProvider base: webview wiring + nonce-CSP HTML shell (renderHtml) for all views
   sessionProvider.ts    # Sessions view: message dispatch, view state, owns the SessionMonitor + user dialogs
   sshHostProvider.ts    # SSH Hosts view: add/refresh/remove hosts; "Connect" hands off via csbridge.newSessionOnHost
-  statsProvider.ts      # Stats view: skeleton ("Coming Soon")
+  statsProvider.ts      # Stats view: past runs, their sacct stats, clear-history
   extensionStore.ts     # per-session record persistence + file lock + cross-window fs.watch + windowPids + liveAndCleanup
   models.ts             # SlurmSession + status union, cluster/tunnel types, persistableConnectionInfo()
   logger.ts             # output-channel Logger singleton + errMsg() helper
@@ -77,7 +77,7 @@ src/
     linkspanSupport.ts   # (V) linkspan's HTTP client: getHealth, getMetrics, getSshServers, createSshServer
     fsSupport.ts         # (V) isPidAlive (kill -0) + cross-process file lock/release (SharedArrayBuffer + Atomics)
   ui/                                      # webview UI — Preact + TypeScript, bundled per-view by esbuild
-    webviews/{sessions,hosts,stats}.tsx    # the three view roots (render() into #root)
+    webviews/{sessions,hosts,stats,summary}.tsx  # the four bundle roots (render() into #root)
     platform/vscode.ts   # acquireVsCodeApi bridge: post() + useWebviewState() ('ready' on mount, re-render on 'state')
     components/           # SessionCard.tsx, HostForm.tsx, base/* (Preact wrappers over @vscode-elements/elements)
     logic/                # (V, tested) pure view logic: session.ts (status→dot/actions/labels), cluster.ts (resource options)
@@ -102,9 +102,9 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   `base/*` are thin wrappers over `@vscode-elements/elements` web components.
 
 - **Session status model.** Statuses: `not_started · submitting · queued · preparing · ready_to_connect · connecting ·
-  connected · disconnected · stopping · stopped · failed · completed`. The category predicates that gate behavior live
+  connected · stopping · stopped · failed · unreachable · awaiting_input`. The category predicates that gate behavior live
   in the vscode-free `sessionMachine.ts` as the single source of truth, shared by the provider, the monitor, and the
-  webview: `isTerminal` (stopped/failed/completed), `isCloseable` (terminal + not_started), `isStoppable`
+  webview: `isTerminal` (stopped/failed), `isCloseable` (terminal + not_started), `isStoppable`
   (everything non-terminal except not_started and the in-flight `stopping`), `isRelayLive`
   (ready_to_connect/connecting/connected). `computeStatusTransition(current, slurmStatus)` is the pure poll-loop
   transition table.
@@ -170,7 +170,8 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   `csbridge.hostsView` / `csbridge.statsView` (`when: !csbridge.remote`).
 - Commands (all `category: "CS Bridge"`, hidden from the palette, shown only as view-title icons): `csbridge.newSession`
   (`$(add)`) + `csbridge.switchAccount` (`$(account)`) on the Sessions title; `csbridge.addHost` (`$(add)`) +
-  `csbridge.refreshHosts` (`$(refresh)`) on the SSH Hosts title. The account/refresh icons sit at `navigation@0`,
+  `csbridge.refreshHosts` (`$(refresh)`) on the SSH Hosts title; `csbridge.refreshStats` (`$(refresh)`) +
+  `csbridge.clearRunHistory` (`$(clear-all)`) on the Stats title. The account/refresh icons sit at `navigation@0`,
   the `+` at `navigation@1`. `csbridge.newSessionOnHost` is registered programmatically (internal handoff, not in the manifest).
 - `activationEvents: ["onStartupFinished"]`, `extensionKind: ["ui"]`.
 
