@@ -60,8 +60,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
         gpuClass: 'gpu:a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
         connectionInfo: { apiPort: 25000, sshPort: 0, sshTunnelId: '', region: '' },
     } as SlurmSession;
-    const cred = 'tok';
-    const script = buildSlurmScript(session, cred);
+    const script = buildSlurmScript(session, 'tok');
     assert.match(script, /^#SBATCH --nodes=1$/m);
     assert.match(script, /^#SBATCH --cpus-per-task=4$/m);
     assert.match(script, /^#SBATCH --mem=8GB$/m);
@@ -81,10 +80,9 @@ test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
 });
 
 test('buildSlurmScript omits --account for a blank or non-token allocation', () => {
-    const cred = 't';
     for (const allocation of ['', '(No Allocation)']) {
         const session = { cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'debug', allocation, gpuClass: '', gpuCount: 0 } as SlurmSession;
-        assert.doesNotMatch(buildSlurmScript(session, cred), /--account/);
+        assert.doesNotMatch(buildSlurmScript(session, 't'), /--account/);
     }
 });
 

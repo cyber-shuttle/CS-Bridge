@@ -42,7 +42,7 @@ test('mergeRecord appends an unknown id and removes on a deleted (undefined) rec
 });
 
 test('toPersistedRecord strips secrets and keeps the given windowPids', () => {
-    const rec = toPersistedRecord(sess('a', { status: 'connected', windowPids: [1], connectionInfo: ci({}) }), [42]);
+    const rec = toPersistedRecord(sess('a', { status: 'connected', windowPids: [1], connectionInfo: ci() }), [42]);
     assert.equal(rec.status, 'connected');
     assert.deepEqual(rec.windowPids, [42]); // disk windowPids preserved (owned by mutateWindowPids)
 });

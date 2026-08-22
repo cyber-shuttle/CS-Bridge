@@ -10,7 +10,7 @@ import {
     TunnelRelayTunnelClient,
     ConnectionStatus,
 } from '@microsoft/dev-tunnels-connections';
-import { Tunnel, TunnelAccessScopes } from '@microsoft/dev-tunnels-contracts';
+import { TunnelAccessScopes } from '@microsoft/dev-tunnels-contracts';
 import { createSessionKeyPair, hasSessionKey, removeSshConfigEntry } from './sshSupport';
 import { csHostAlias } from './sshHostsStore';
 import { createSshServer, getSshServers, LinkspanSshStatus, sshdPort } from './linkspanSupport';
@@ -42,8 +42,9 @@ export function linkspanEndpoint(session: SlurmSession): { baseUrl: string; head
     };
 }
 
-// Returns the relay token: we keep the Entra bearer local and register the ports, so the node only ever holds a token scoped to hosting this one tunnel.
-export async function ensureDevTunnel(session: SlurmSession): Promise<string> {
+// Makes the tunnel carry apiPort plus any extra ports, and returns the relay token: we keep the Entra bearer local
+// and register every port ourselves, so the node only ever holds a token scoped to hosting this one tunnel.
+export async function ensureDevTunnel(session: SlurmSession, ...ports: number[]): Promise<string> {
     const mgmt = buildTunnelManagementClient();
     const ci = session.connectionInfo ?? (session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '' });
     const opts = { includePorts: true, tokenScopes: [TunnelAccessScopes.Host, TunnelAccessScopes.Connect] };
@@ -61,16 +62,14 @@ export async function ensureDevTunnel(session: SlurmSession): Promise<string> {
     ci.apiTunnelAccessToken = tunnel.accessTokens?.[TunnelAccessScopes.Connect] ?? ci.apiTunnelAccessToken;
     updateSession(session);
 
-    if (ci.apiPort) { await ensureTunnelPort(mgmt, tunnel, ci.apiPort); }
+    // Nothing reaches the allocation on a port the tunnel does not carry, and a failure here is the session's failure.
+    for (const portNumber of [ci.apiPort, ...ports]) {
+        if (!portNumber || tunnel.ports?.some(p => p.portNumber === portNumber)) { continue; }
+        await mgmt.createTunnelPort(tunnel, { portNumber, protocol: 'auto' }, { tokenScopes: [TunnelAccessScopes.Host] });
+    }
     const hostToken = tunnel.accessTokens?.[TunnelAccessScopes.Host];
     if (!hostToken) { throw new Error('Dev Tunnel did not return a host-scoped access token.'); }
     return hostToken;
-}
-
-// Nothing reaches the allocation on a port the tunnel does not carry, so a failure here is the session's failure.
-async function ensureTunnelPort(mgmt: TunnelManagementHttpClient, tunnel: Tunnel, portNumber: number): Promise<void> {
-    if (tunnel.ports?.some(p => p.portNumber === portNumber)) { return; }
-    await mgmt.createTunnelPort(tunnel, { portNumber, protocol: 'auto' }, { tokenScopes: [TunnelAccessScopes.Host] });
 }
 
 export async function removeDevTunnel(session: SlurmSession): Promise<void> {
@@ -115,11 +114,7 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
         updateSession(session);
     }
 
-    // We hold the Entra bearer, so we register the port; sshTunnelId = apiTunnelId rides it on the current tunnel.
-    const mgmt = buildTunnelManagementClient();
-    const tunnel = await mgmt.getTunnel({ tunnelId: ci.apiTunnelId!, clusterId: ci.region }, { includePorts: true });
-    if (!tunnel) { throw new Error(`Tunnel ${ci.apiTunnelId} disappeared while publishing the SSH port.`); }
-    await ensureTunnelPort(mgmt, tunnel, ci.sshPort);
+    await ensureDevTunnel(session, ci.sshPort); // the tunnel must carry the sshd port before ssh is pointed at it
     ci.sshTunnelId = ci.apiTunnelId!;
     updateSession(session);
     logger.info(`SSH port ${ci.sshPort} published on tunnel ${ci.apiTunnelId} for session ${session.id}.`);

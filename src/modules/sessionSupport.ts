@@ -220,9 +220,8 @@ export class SessionMonitor {
 }
 
 export async function prepareLaunch(session: SlurmSession): Promise<void> {
-    // Fresh launch: drop the prior run's connection info (dead sshd port/keys, old apiPort/tunnel refs) and pin this
-    // run's API port in the same breath. The port must be on the tunnel before the job's devtunnel host connects, and
-    // ensureDevTunnel registers whatever apiPort it finds — so it has to be set before that call, not after it.
+    // Fresh connection info with this run's API port pinned before ensureDevTunnel: that call is what puts the port
+    // on the tunnel, and the job's devtunnel host has to find it already there.
     // ponytail: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
     session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '', apiPort: 20000 + Math.floor(Math.random() * 12000) };
     resetLive(session.id); // clear the prior run's live samples + stats, keep the run history
