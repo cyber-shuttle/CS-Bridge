@@ -60,7 +60,7 @@ src/
   sessionProvider.ts    # Sessions view: message dispatch, view state, owns the SessionMonitor + user dialogs
   sshHostProvider.ts    # SSH Hosts view: add/refresh/remove hosts; "Connect" hands off via csbridge.newSessionOnHost
   statsProvider.ts      # Stats view: skeleton ("Coming Soon")
-  extensionStore.ts     # sessions.json persistence + file lock + cross-window fs.watch + windowPids + liveAndCleanup
+  extensionStore.ts     # per-session record persistence + file lock + cross-window fs.watch + windowPids + liveAndCleanup
   models.ts             # SlurmSession + status union, cluster/tunnel types, persistableConnectionInfo()
   logger.ts             # output-channel Logger singleton + errMsg() helper
   modules/                                 # capability layer; (V) = vscode-free & unit-testable, (C) = vscode-coupled
@@ -74,7 +74,7 @@ src/
     sessionMachine.ts    # (V) status domain: computeStatusTransition + isTerminal/isCloseable/isStoppable/isRelayLive
     sshHostsStore.ts     # (V) ssh-config parse/edit (user + system hosts), buildSshConfigBlock + SSH_RESILIENCE_OPTIONS
     sshCommandParser.ts  # (V) parse an `ssh …` command line into a Host config entry (shell-quote + posix-getopt)
-    linkspanSupport.ts   # (V) checkLinkspanHealth (GET /health over the tunnel, 2s timeout)
+    linkspanSupport.ts   # (V) linkspan's HTTP client: getHealth, getMetrics, getSshServers, createSshServer
     fsSupport.ts         # (V) isPidAlive (kill -0) + cross-process file lock/release (SharedArrayBuffer + Atomics)
   ui/                                      # webview UI — Preact + TypeScript, bundled per-view by esbuild
     webviews/{sessions,hosts,stats}.tsx    # the three view roots (render() into #root)
@@ -121,7 +121,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   first poll), `stopMonitoring(id)` / `dispose()` tear them down; there is no central loop over all sessions. Each
   loop is lock-free (a per-session reentrancy guard replaces the old shared `AsyncLock`, safe because every tick mutates
   only its own session and `updateSession` is synchronous). Per tick, `tick()` picks the poll source by status: for
-  running phases (`preparing` + relay-live) it pings the tunnel (`checkLinkspanHealth` / `prepareRemote`), falling back
+  running phases (`preparing` + relay-live) it pings the tunnel (`getMetrics` / `prepareRemote`), falling back
   to a `getSlurmJobStatus` sacct cross-check only after `HEALTH_GIVEUP` failures; for pre-running states it polls sacct
   and applies `computeStatusTransition`. It owns poll-driven transitions; `SessionProvider` owns user-action transitions
   (`submitting`/`connecting`/`connected`/`stopping`) and all dialogs.
@@ -144,7 +144,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   `activeTunnelClients`, freed by `disposeTunnelClient`/`disposeAllTunnelClients`). Microsoft auth uses
   `vscode.authentication.getSession('microsoft', [DEV_TUNNELS_SCOPE])`.
 
-- **Persistence** (`extensionStore.ts`). Sessions live in `~/.cybershuttle/sessions.json`, guarded by the
+- **Persistence** (`extensionStore.ts`). Sessions live one JSON record per id under `~/.cybershuttle/sessions/`, guarded by the
   `fsSupport` cross-process lock; a `fs.watch` on the dir syncs state across windows. `persistableConnectionInfo`
   writes only the reattach refs (`sshTunnelId`/`sshPort`/`region`) — secrets and the ephemeral local port stay
   in-memory. `windowPids` is owned by the atomic `mutateWindowPids`; `liveAndCleanup` prunes dead pids and computes
@@ -180,9 +180,10 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   via `curl -fsSL …/releases/latest/download/linkspan_Linux_<arch>.tar.gz | tar -xz` when missing/outdated.
 - **OpenSSH** (`ssh`) — system binary; every remote command rides one persistent per-host login shell it spawns
   (ControlMaster layered on as a cross-window bonus on Unix). Not bundled.
-- **`~/.cybershuttle/`** — `sessions.json`, `ssh_config` (cshost-* aliases, Include'd into `~/.ssh/config`),
+- **`~/.cybershuttle/`** — `sessions/<id>.json`, `ssh_config` (cshost-* aliases, Include'd into `~/.ssh/config`),
   `ssh_keys/` (per-session 0600 keys), `ssh_control/` (hashed ControlMaster sockets); on the remote: `bin/linkspan`
-  and `logs/linkspan-session-<jobid>.{out,err}` (tailed during connect to discover the server port).
+  and `logs/linkspan-session-<jobid>.{out,err}`. The API port is pinned at launch, so nothing tails those logs to
+  discover it.
 
 ## Unimplemented (do not document as features)
 

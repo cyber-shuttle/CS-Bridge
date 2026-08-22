@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SlurmSession, ViewSession } from '@/models';
-import { wallMs, fmtTime, remainingMs, elapsedRunMs, elapsedLabel, dotColor, sessionActions, statusDescriptor } from './session';
+import { wallMs, fmtTime, remainingMs, elapsedRunMs, elapsedLabel, dotColor, sessionActions } from './session';
 
 test('wallMs parses HH:MM:SS to milliseconds', () => {
     assert.equal(wallMs('01:30:00'), 5_400_000);
@@ -75,9 +75,4 @@ test('connected session: Current when this window, else Switch/Connect by window
     assert.deepEqual([openingBtn.kind, openingBtn.label], ['opening', 'Opening…']);
     const connectingBtn = sessionActions(sess('connecting'))[1];
     assert.deepEqual([connectingBtn.kind, connectingBtn.label], ['opening', 'Connecting…']);
-});
-
-test('statusDescriptor reports closeability', () => {
-    assert.equal(statusDescriptor(sess('stopped')).canClose, true);
-    assert.equal(statusDescriptor(sess('preparing')).canClose, false);
 });

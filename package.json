@@ -172,7 +172,7 @@
 		"lint:fix": "eslint src --fix",
 		"test": "node --import tsx --test src/modules/*.test.ts src/ui/logic/*.test.ts",
 		"package": "npx @vscode/vsce package",
-		"install-ext": "code --install-extension csbridge-0.0.2.vsix",
+		"install-ext": "code --install-extension $npm_package_name-$npm_package_version.vsix",
 		"dev": "npm install && npm run package && npm run install-ext"
 	},
 	"devDependencies": {

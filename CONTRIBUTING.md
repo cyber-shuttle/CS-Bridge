@@ -34,7 +34,7 @@ Local VS Code                              Remote HPC Cluster
 3. **SLURM Required**: `checkSlurmAvailability` runs `sinfo` on the host; if it fails, the launch is aborted. Plain-SSH support is on the roadmap.
 4. **Job Submission**: Generates and submits a SLURM batch script that runs **linkspan** on the allocated compute node (`modules/sessionSupport.ts`, `modules/sshSupport.ts`).
 5. **Tunneling**: `linkspan` starts an SSH server on the compute node and opens a Microsoft Dev Tunnel.
-6. **Connection Loop**: The extension polls job status via `sacct` and tails `linkspan`'s logs from `~/.cybershuttle/logs/` on the remote to discover the tunnel ID and SSH port (`modules/slurmSupport.ts`, `modules/sessionSupport.ts`).
+6. **Connection Loop**: The extension polls job status via `sacct` and polls `linkspan` over the tunnel it created, whose id and API port it pinned at launch (`modules/slurmSupport.ts`, `modules/sessionSupport.ts`).
 7. **Tunnel Forwarding**: The Microsoft Dev Tunnels SDK (`@microsoft/dev-tunnels-management`) forwards the remote SSH port to a local port (`127.0.0.1:N`) inside the extension process.
 8. **SSH Config Plumbing**: An entry for `cshost-<sessionId>` is appended to `~/.cybershuttle/ssh_config` pointing at `127.0.0.1:N` with the per-session key. CS-Bridge ensures `Include ~/.cybershuttle/ssh_config` is at the top of `~/.ssh/config` so the system SSH client picks the alias up.
 9. **Connect**: The user clicks **Connect**; the extension issues `vscode.openFolder(vscode-remote://ssh-remote+cshost-<sessionId>/…)`. VS Code's remote-SSH URI handler invokes the OS `ssh` binary against the alias and attaches a new window to the compute node.
@@ -55,7 +55,7 @@ src/
     ├── sessionSupport.ts              # Launch flow, linkspan deployment, status monitor
     ├── slurmSupport.ts                # sacct job-status polling
     ├── tunnelSupport.ts               # Microsoft Dev Tunnels integration
-    ├── linkspanSupport.ts             # linkspan YAML config generation
+    ├── linkspanSupport.ts             # linkspan's HTTP client (health, metrics, vscode sessions)
     └── fsSupport.ts                   # Filesystem helpers (sessions file lock)
 
 resources/

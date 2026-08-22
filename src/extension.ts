@@ -80,7 +80,6 @@ function currentWindowSessionId(): string | undefined {
     const prefix = 'ssh-remote+';
     if (!auth.startsWith(prefix)) { return undefined; }
     const suffix = auth.slice(prefix.length);
-    if (suffix.startsWith('cshost-')) { return suffix.slice('cshost-'.length); } // legacy: alias was the session id
     // The alias carries no id, so reconstruct each session's and match. Safe here: extensionKind:ui runs this window's
     // extension host locally, so it can read the local session store (already initialized above).
     return getAllSessions().find(s => csHostAlias(s.cluster, s.name) === suffix)?.id;
