@@ -4,6 +4,20 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.4] - 2026-08-22
+
+Requires linkspan 0.16.0.
+
+### Changed
+
+- **The compute node no longer holds a Microsoft Entra bearer** — CS Bridge creates the Dev Tunnel, registers its ports and deletes it itself, and the job receives only a token scoped to hosting that one tunnel (`--tunnel-host-token`). The batch script carries that token, so it is no longer written to disk. (#113)
+- **The session SSH key pair is minted locally and stays local** — `POST /vscode/sessions` now sends only the public half, so a compromised allocation cannot hand out credentials to itself and linkspan returns nothing secret. (#113)
+- **Linkspan installs follow newest-wins** — a build ahead of the published release (`X.Y.Z.<commit>`) is left alone, a release that catches up takes over, and an already-installed release is not re-fetched. A failed lookup of the latest release keeps what is installed rather than replacing a working binary. (#113)
+
+### Fixed
+
+- **A window reload while a session was preparing orphaned it** — only connection info carrying an `sshTunnelId` was persisted, and that is set once the remote sshd exists; a session still bringing up linkspan therefore lost the API port it was pinned to, and fell back to polling the login node forever instead of the tunnel. (#113)
+
 ## [0.1.3] - 2026-07-28
 
 ### Fixed
