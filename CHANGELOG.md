@@ -4,6 +4,25 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5] - 2026-08-22
+
+Requires linkspan 0.17.0.
+
+### Changed
+
+- **Stopped sending and declaring fields linkspan no longer has** — `POST /vscode/sessions` no longer sends `mount_user_home`, the last remnant of the remote filesystem mounting linkspan no longer does, and a session status no longer declares `active`, `restarts` or `last_error`. Only `id`, `state` and `addr` were ever read. (#114)
+- **Dropped the one-time legacy session migration** — the old `~/.cybershuttle/sessions.json` array was folded into per-id records, and the id rewrite and `cshost-<id>` workspace-authority form repaired ids written in that format. All three are one-time repairs, and the migration deleted its own input. (#114)
+- **Removed surface with no caller** — `SlurmSession.jobDirectory` (written as `''`, rendered behind a guard that is never true), the `statusDescriptor` wrapper over three predicates, the `AccountInfo` wrapper over a nullable string, three re-exports that renamed store functions, and unused `Chip`/`Card` props. The logger's level enum and gate never filtered anything. (#114)
+
+### Fixed
+
+- **`summaryPanel` subscribed to the run watcher twice** — one subscription came in under a re-exported alias, hiding the duplicate. (#114)
+- **`install-ext` pinned a stale vsix** — it installed `csbridge-0.0.2.vsix` regardless of the packaged version, and now reads the name and version from the package. (#114)
+
+### Docs
+
+- Corrected descriptions of mechanisms that no longer exist: nothing tails linkspan's logs to discover the API port (it is pinned at launch), `linkspanSupport` is an HTTP client rather than a YAML generator, `checkLinkspanHealth` does not exist, and sessions are per-id records rather than one array file. (#114)
+
 ## [0.1.4] - 2026-08-22
 
 Requires linkspan 0.16.0.
