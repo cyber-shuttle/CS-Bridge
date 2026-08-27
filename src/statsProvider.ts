@@ -5,6 +5,9 @@ import { getSessionRuns, clearSessionRuns, watchRuns } from './sessionRunSupport
 import { getSession } from './extensionStore';
 import { openSummaryPanel } from './summaryPanel';
 
+// cpu util
+// amount of memeory
+// nvidia smi 
 export class StatsProvider extends WebviewProvider {
     public static readonly viewType = 'csbridge.statsView';
     protected readonly viewKind = 'stats' as const;
