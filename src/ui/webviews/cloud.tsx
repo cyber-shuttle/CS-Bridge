@@ -23,6 +23,15 @@ function Root() {
       >
         Launch EC2 Instance
       </Button>
+    
+      <Button
+        onClick={() => {
+          post({ command: "rm-key-pair" });
+        }}
+        // disabled={state.accessKey == "" && state.secretKey === ""}
+      >
+        Remove Key Pair
+      </Button>
     </Stack>
   ) : null;
 }
