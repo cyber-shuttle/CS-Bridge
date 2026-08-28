@@ -1,10 +1,16 @@
 import * as vscode from "vscode";
 import { CloudProviderState, WebviewMessage } from "./models";
 import { WebviewProvider } from "./webviewProvider";
-import { writeFileSync, unlinkSync } from "fs";
+import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import { EC2Client, CreateKeyPairCommand, DeleteKeyPairCommand, EC2ServiceException } from "@aws-sdk/client-ec2";
+import {
+    EC2Client,
+    CreateKeyPairCommand,
+    DeleteKeyPairCommand,
+    EC2ServiceException,
+    DescribeInstanceStatusCommand,
+} from "@aws-sdk/client-ec2";
 
 // Webview provider for the Cloud Provider view .
 export class CloudProvider extends WebviewProvider {
@@ -12,16 +18,19 @@ export class CloudProvider extends WebviewProvider {
     protected readonly viewKind = "cloud" as const;
     protected readonly KEY_NAME = "cs-aws-generated-key";
 
-    protected readonly PRIVATE_KEY_PATH = path.join(homedir(), this.KEY_NAME);
+    protected readonly PRIVATE_KEY_PATH = path.join(
+        homedir(),
+        ".cybershuttle",
+        this.KEY_NAME,
+    );
 
     private state: CloudProviderState = {
         name: "aws",
         accessKey: "",
         secretKey: "",
         sessionToken: "",
-        instanceStatus: "",
-        instanceID: "",
         region: "us-east-1",
+        instances: [],
     };
     private client: EC2Client | null = null;
 
@@ -31,11 +40,11 @@ export class CloudProvider extends WebviewProvider {
                 this.pushState();
                 break;
             case "launch":
-                this.generateSSHKeyPair()
+                // this.generateSSHKeyPair();
                 // this.launchEC2Instance();
                 break;
             case "rm-key-pair":
-                this.remmoveKeyPair(this.PRIVATE_KEY_PATH)
+                this.remmoveKeyPair(this.PRIVATE_KEY_PATH);
             default:
                 this.logger.warn("Unknown command from cloud webview:", data);
         }
@@ -85,7 +94,7 @@ export class CloudProvider extends WebviewProvider {
             sessionToken: sessionToken,
         };
         this.pushState();
-        this.initEC2Client()
+        this.initEC2Client();
     }
 
     // add options for ec2 instance later
@@ -126,42 +135,57 @@ export class CloudProvider extends WebviewProvider {
             },
         });
     }
-    // TODO: Check if exisiting keypair exists
-    // TODO: move key to exisiting .cybershuttle dir 
     private async generateSSHKeyPair(): Promise<void> {
         try {
-            console.log(`Creating key pair: ${this.KEY_NAME}...`);
-            const keyPairResponse = await this.client?.send(
-                new CreateKeyPairCommand({
-                    KeyName: this.KEY_NAME,
-                    KeyType: "ed25519",
-                }),
-            );
+            if (!existsSync(this.PRIVATE_KEY_PATH)) {
+                console.log(`Creating key pair: ${this.KEY_NAME}...`);
+                const keyPairResponse = await this.client?.send(
+                    new CreateKeyPairCommand({
+                        KeyName: this.KEY_NAME,
+                        KeyType: "ed25519",
+                    }),
+                );
 
-            const privateKey = keyPairResponse?.KeyMaterial;
-            if (privateKey !== undefined) {
-                writeFileSync(this.PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
-                console.log(`Private key safely written to ${this.PRIVATE_KEY_PATH}`);
+                const privateKey = keyPairResponse?.KeyMaterial;
+                if (privateKey !== undefined) {
+                    writeFileSync(this.PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
+                    console.log(`Private key safely written to ${this.PRIVATE_KEY_PATH}`);
+                } else {
+                    console.log("Error: Response from key pair generation is undefined");
+                }
             } else {
-                console.log("Error: Response from key pair generation is undefined");
+                console.log(
+                    "Dectecting Keys Exists. ...Skipping Key Pair generation. ",
+                );
             }
         } catch (error) {
             if (error instanceof Error) {
                 switch (error.name) {
                     case "InvalidKeyPair.Duplicate":
-                        console.error(`Error: A key pair named "${this.KEY_NAME}" already exists.`);
+                        console.error(
+                            `Error: A key pair named "${this.KEY_NAME}" already exists.`,
+                        );
                         break;
                     case "DryRunOperation":
-                        console.info("Dry run successful. You have permissions to create this key pair.");
+                        console.info(
+                            "Dry run successful. You have permissions to create this key pair.",
+                        );
                         break;
                     case "UnauthorizedOperation":
-                        console.error("Error: You are not authorized to create key pairs. Check IAM policies.");
+                        console.error(
+                            "Error: You are not authorized to create key pairs. Check IAM policies.",
+                        );
                         break;
                     case "MissingParameter":
-                        console.error("Error: The KeyName parameter is missing from the request.");
+                        console.error(
+                            "Error: The KeyName parameter is missing from the request.",
+                        );
                         break;
                     default:
-                        console.error(`Unexpected AWS Service Error (${error.name}):`, error.message);
+                        console.error(
+                            `Unexpected AWS Service Error (${error.name}):`,
+                            error.message,
+                        );
                 }
             } else {
                 console.error("An unknown error occurred:", error);
@@ -169,15 +193,13 @@ export class CloudProvider extends WebviewProvider {
         }
     }
 
-    // TODO: Remove local private key
     public async remmoveKeyPair(keyName: string): Promise<void> {
         try {
-
-            console.log("Removing Key Pair from AWS")
-            const command = new DeleteKeyPairCommand({ KeyName: keyName })
-            await this.client?.send(command)
-
-
+            console.log("Removing Key Pair from AWS");
+            const command = new DeleteKeyPairCommand({ KeyName: keyName });
+            await this.client?.send(command);
+            console.log("Removing local copy of key");
+            unlinkSync(this.PRIVATE_KEY_PATH);
         } catch (error) {
             if (error instanceof EC2ServiceException) {
                 switch (error.name) {
@@ -185,7 +207,9 @@ export class CloudProvider extends WebviewProvider {
                         console.error("The key pair does not exist.");
                         break;
                     case "UnauthorizedOperation":
-                        console.error("You do not have permission to delete this key pair.");
+                        console.error(
+                            "You do not have permission to delete this key pair.",
+                        );
                         break;
                     default:
                         console.error(`AWS Error [${error.name}]: ${error.message}`);
@@ -193,14 +217,18 @@ export class CloudProvider extends WebviewProvider {
             } else {
                 console.error(`Undhandled Error ${error}`);
             }
-
         }
-
-        console.log("Removing local copy of key")
-        unlinkSync(this.PRIVATE_KEY_PATH)
     }
     // Stop Instace from webview
     public async stopInstance(): Promise<void> { }
     // Poll status of instance
-    public async instanceStatus(): Promise<void> { }
+    public async instanceStatus(): Promise<void> {
+        try {
+            const command = new DescribeInstanceStatusCommand({
+                IncludeAllInstances: true,
+            });
+        } catch (error) {
+            console.error("Error fetching instance statuses:", error);
+        }
+    }
 }

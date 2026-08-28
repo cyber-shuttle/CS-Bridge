@@ -195,13 +195,20 @@ export interface WebviewMessage {
     jobId?: string;
 }
 
+export interface AWSInstanceInfo {
+    name: string | undefined
+    instanceID: string | undefined;
+    state: string | undefined;
+    instanceType: string | undefined;
+    // publicIp: string | undefined;
+}
+
 export interface CloudProviderState {
     name: string;
     secretKey: string
     accessKey: string
     sessionToken: string
-    instanceID: string
-    instanceStatus: string
+    instances: AWSInstanceInfo[]
     region: string
 }
 
