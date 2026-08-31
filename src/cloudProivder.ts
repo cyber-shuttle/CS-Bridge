@@ -12,6 +12,7 @@ import {
     paginateDescribeInstances,
     AuthorizeSecurityGroupIngressCommand,
     CreateSecurityGroupCommand,
+    DescribeSecurityGroupsCommand,
 } from "@aws-sdk/client-ec2";
 
 // Webview provider for the Cloud Provider view .
@@ -20,6 +21,7 @@ export class CloudProvider extends WebviewProvider {
     protected readonly viewKind = "cloud" as const;
     protected readonly KEY_NAME = "cs-aws-generated-key";
     private client: EC2Client | null = null;
+    private readonly securityGroupName = "CS-Brige VSCode Ext SSH Access"
 
     protected readonly PRIVATE_KEY_PATH = path.join(
         homedir(),
@@ -184,14 +186,46 @@ export class CloudProvider extends WebviewProvider {
             }
         }
     }
+    // Get Existing Security For CS-Brige
+    public async getSSHSecurityGroup(): Promise<string> {
+        if (this.client === null) {
+
+            throw new Error("EC2 Client is not initialized")
+        }
+        const params = {
+            Filters: [
+                {
+                    Name: "group-name",
+                    Values: [this.securityGroupName]
+                }
+            ]
+        };
+
+        try {
+            const command = new DescribeSecurityGroupsCommand(params);
+            const data = await this.client.send(command);
+
+            const securityGroups = data.SecurityGroups;
+            if (this.securityGroupName.length === 0) {
+                return ""
+            } else {
+                return securityGroups?.at(0)?.GroupName ?? ""
+            }
+
+        } catch (error) {
+            console.error("Failed to get Security Groups:", error);
+        }
+        return ""
+
+    }
     // Create Security For SSH Access
-    public async creatSSHSecurityGroup(): Promise<string | undefined> {
+    public async creatSSHSecurityGroup(): Promise<string> {
         if (this.client === null) {
             throw new Error("EC2 Client is not initialized")
         }
         try {
             const createCommand = new CreateSecurityGroupCommand({
-                GroupName: "CS-Brige VSCode Ext SSH Access",
+                GroupName: this.securityGroupName,
                 Description: "Security group - CS-Bridge SSH access",
             });
 
@@ -218,11 +252,12 @@ export class CloudProvider extends WebviewProvider {
 
             await this.client.send(sshGroupCommand);
             console.log("Inbound SSH rule attached to the new group.");
-            return groupID
+            return groupID ?? ""
 
 
         } catch (error) {
             console.error("Creating SSH Sec Group failed:", error);
+            return ""
         }
     }
     // Stop Instace from webview
