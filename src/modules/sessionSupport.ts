@@ -21,8 +21,8 @@ const HEALTH_GIVEUP = 6;
 // Lets an authoritative sacct verdict win first when reachable (it can lag ~HEALTH_GIVEUP polls in the relay-live path).
 const WALL_TIME_GRACE_MS = 30_000;
 
-// One independent poll loop per active session, created on startMonitoring and torn down on stop. No shared lock:
-// each loop only mutates its own session and updateSession is synchronous, so per-session ticks never race.
+// One independent poll loop per active session. No shared lock: each loop mutates
+// only its own session and updateSession is synchronous, so ticks never race.
 export class SessionMonitor {
     private sessions = new Map<string, SlurmSession>();
     private tickers = new Map<string, ReturnType<typeof setInterval>>();
@@ -62,15 +62,15 @@ export class SessionMonitor {
         }
     }
 
-    // Shared running-session poll policy: probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall
-    // back to an authoritative sacct cross-check for job death. The probe differs by phase (bring-up vs relay ping).
+    // Probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall back
+    // to an authoritative sacct cross-check. The probe differs by phase.
     private async pingOrCrossCheck(session: SlurmSession, probe: () => Promise<void>): Promise<void> {
         if (this.healthFails(session.id) < HEALTH_GIVEUP) { await probe(); }
         else { await this.crossCheckSlurmForDeath(session); }
     }
 
-    // Step 1: drive a running session to ready_to_connect. Awaited under tick()'s reentrancy guard, so it can't overlap
-    // its own next fire — no separate in-flight guard needed. The caller has already checked status === 'preparing'.
+    // Drives a running session to ready_to_connect. Awaited under tick()'s reentrancy
+    // guard, so it needs no in-flight guard of its own.
     private async prepareRemote(session: SlurmSession): Promise<void> {
         try {
             await ensureDevTunnel(session); // re-mint tunnel id + Connect token (also valid after a reload dropped them)
@@ -84,8 +84,8 @@ export class SessionMonitor {
             }
         }
         catch (err) {
-            // linkspan not up yet (health still failing) or a tunnel API blip — transient, not job death; hold 'preparing' and retry.
-            // Count it so the monitor cross-checks sacct for job death after HEALTH_GIVEUP tries.
+            // Linkspan not up yet, or a tunnel API blip: transient rather than job death, so
+            // hold 'preparing' and count it toward the sacct cross-check.
             this.bumpHealthFails(session.id);
             this.warn(session, `linkspan unreachable (will retry): ${errMsg(err)}`);
             session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
@@ -105,11 +105,10 @@ export class SessionMonitor {
                 return;
             }
 
-            // Slurm kills the job at its wall time. Stop the moment we pass it AND the link is already gone (relay
-            // dropped, or never connected) — that's the job dying on schedule, no reason to grind through health-ping
-            // retries first. Only hold the grace while the relay still looks connected: our clock may be ahead of the
-            // cluster's, or Slurm's KillWait may be running the job a little past --time, and we don't want to tear down
-            // a session that still works. Skip an in-flight stop.
+            // Slurm kills the job at its wall time, so a passed deadline with the link
+            // already gone is the job dying on schedule. The grace applies only while the
+            // relay still looks connected: our clock may be ahead of the cluster's, or
+            // KillWait may be running the job a little past --time.
             const now = Date.now();
             if (session.status !== 'stopping' && isWallTimeExpired(session, now)
                 && (!isTunnelClientConnected(session.id) || isWallTimeExpired(session, now - WALL_TIME_GRACE_MS))) {
@@ -118,9 +117,9 @@ export class SessionMonitor {
                 return;
             }
 
-            // Job is running but Step 1 isn't up yet: drive the bring-up over the tunnel (prepareRemote), not Slurm,
-            // cross-checking sacct for job death only after HEALTH_GIVEUP prepare failures — so a running session never
-            // SSH-polls the login node. prepareRemote advances to ready_to_connect once linkspan answers.
+            // Job running but not yet up: drive bring-up over the tunnel rather than Slurm,
+            // cross-checking sacct only after HEALTH_GIVEUP failures, so a running session
+            // never SSH-polls the login node.
             if (session.status === 'preparing' && session.tunnelId && (session.connectionInfo?.apiPort ?? 0) > 0) {
                 await this.pingOrCrossCheck(session, () => this.prepareRemote(session));
                 return;
