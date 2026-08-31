@@ -7,7 +7,7 @@ Thank you for your interest in contributing to CS-Bridge. This document covers t
 ```text
 Local VS Code                              Remote HPC Cluster
 ┌──────────────────────────┐               ┌──────────────────────────┐
-│  CS-Bridge sidebar       │── OS ssh ────▶│  SLURM login node        │
+│  CS-Bridge sidebar       │── OS ssh ────▶│  Slurm login node        │
 │  (webview UI)            │               │  (sbatch, sacct, sinfo)  │
 │                          │               │                          │
 │  SSH ControlMaster pool  │               │  Compute Node:           │
@@ -30,9 +30,9 @@ Local VS Code                              Remote HPC Cluster
 ## How a Session Works
 
 1. **Host Selection**: The user selects an SSH host from `~/.ssh/config` and configures resources (CPUs, memory, GPU, wall time).
-2. **Cluster Capabilities**: The extension queries SLURM partitions, accounts, and limits over SSH, running `sinfo` and `sacctmgr` directly (`modules/slurmSupport.ts`).
-3. **SLURM Required**: `checkSlurmAvailability` runs `sinfo` on the host; if it fails, the launch is aborted. Plain-SSH support is on the roadmap.
-4. **Job Submission**: Generates and submits a SLURM batch script that runs **linkspan** on the allocated compute node (`modules/sessionSupport.ts`, `modules/sshSupport.ts`).
+2. **Cluster Capabilities**: The extension queries Slurm partitions, accounts, and limits over SSH, running `sinfo` and `sacctmgr` directly (`modules/slurmSupport.ts`).
+3. **Slurm Required**: `checkSlurmAvailability` runs `sinfo` on the host; if it fails, the launch is aborted. Plain-SSH support is on the roadmap.
+4. **Job Submission**: Generates and submits a Slurm batch script that runs **Linkspan** on the allocated compute node (`modules/sessionSupport.ts`, `modules/sshSupport.ts`).
 5. **Tunneling**: `linkspan` starts an SSH server on the compute node and opens a Microsoft Dev Tunnel.
 6. **Connection Loop**: The extension polls job status via `sacct` and polls `linkspan` over the tunnel it created, whose id and API port it pinned at launch (`modules/slurmSupport.ts`, `modules/sessionSupport.ts`).
 7. **Tunnel Forwarding**: The Microsoft Dev Tunnels SDK (`@microsoft/dev-tunnels-management`) forwards the remote SSH port to a local port (`127.0.0.1:N`) inside the extension process.

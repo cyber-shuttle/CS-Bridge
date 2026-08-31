@@ -47,7 +47,7 @@ function ScriptPreviewOverlay({ state }: { state: SessionsState }) {
     if (!s) { return null; }
     return (
         <Stack gap={8} pad="12px" style={{ position: 'fixed', inset: 0, background: 'var(--vscode-editor-background)', zIndex: 10 }}>
-            <Text weight={600}>SLURM Job Script Preview</Text>
+            <Text weight={600}>Slurm Job Script Preview</Text>
             <Text muted>Host: {s.cluster}</Text>
             <Text block style={{ flex: 1, overflow: 'auto', whiteSpace: 'pre', fontFamily: 'var(--vscode-editor-font-family)', fontSize: '12px', background: 'var(--vscode-textCodeBlock-background)', padding: '8px', borderRadius: '4px' }}>{s.batchScript ?? ''}</Text>
             <Row gap={8} justify="flex-end">

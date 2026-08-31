@@ -8,7 +8,7 @@ import { Metric, Stats, SlurmSession, SummaryState } from './models';
 interface RunSnapshot { stats?: Stats; metrics?: Metric[] }
 
 const PENDING_KEY = 'csbridge.pendingSummaries';
-// ponytail: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.
+// Trade-off: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.
 const MAX_PENDING = 8;
 
 // Records "show a summary for <id> after the next local activation". Awaited by the caller so the write flushes before remote.close reloads the window.

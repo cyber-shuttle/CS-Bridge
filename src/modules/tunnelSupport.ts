@@ -78,7 +78,7 @@ export async function removeDevTunnel(session: SlurmSession): Promise<void> {
         await buildTunnelManagementClient().deleteTunnel({ tunnelId: session.tunnelId, clusterId: session.tunnelCluster });
     }
     catch (err) {
-        logger.warn(`Failed to delete dev tunnel ${session.tunnelId}:`, err);
+        logger.warn(`Failed to delete Dev Tunnel ${session.tunnelId}:`, err);
     }
     session.tunnelId = undefined;
     session.tunnelCluster = undefined;

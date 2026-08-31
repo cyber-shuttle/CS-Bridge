@@ -1,13 +1,13 @@
 import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession } from '../models';
 
-// Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
+// Pure Slurm text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
 // linkspan's unix socket — the portless in-allocation channel (srun --overlap curl --unix-socket).
 // Placed directly in the sticky world-writable /tmp (not a shared csbridge/ subdir, which the first
 // user to run on a node would own and lock every other user out of — EACCES on bind).
 export const linkspanSocketPath = (sessionId: string): string => `/tmp/csbridge-${sessionId}.sock`;
 
-// A SLURM account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
+// A Slurm account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
 export const slurmAccount = (raw: string | undefined): string => (raw ?? '').trim().match(/^[\w.-]+$/)?.[0] ?? '';
 
 // Distinct accounts from `sacctmgr show associations ... format=Account -p`; it prints one
@@ -74,7 +74,7 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     TIMEOUT|0:0|None|3600
     */
     const [state, , , elapsedRaw] = fields;
-    // ElapsedRaw is SLURM's authoritative run-time in whole seconds (no timezone/clock guessing).
+    // ElapsedRaw is Slurm's authoritative run-time in whole seconds (no timezone/clock guessing).
     const elapsedSec = /^\d+$/.test(elapsedRaw.trim()) ? parseInt(elapsedRaw.trim(), 10) : 0;
 
     return { status: classifySchedulerState(state), elapsedSec };
@@ -131,7 +131,7 @@ function parseKib(s: string | undefined): number | undefined {
     return Number.isFinite(n) ? n : undefined;
 }
 
-// SLURM "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
+// Slurm "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
 function hmsSeconds(s: string | undefined): number | undefined {
     const t = s?.trim();
     if (!t) { return undefined; }

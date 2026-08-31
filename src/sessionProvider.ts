@@ -294,14 +294,14 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
 
     private fetchClusterInfo(host: string, force = false): void {
         if (!force && this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
-        this.logger.info(`Fetching slurm cluster info for host: ${host}`);
+        this.logger.info(`Fetching Slurm cluster info for host: ${host}`);
         this.setHostRuntime(host, { phase: 'loading' });
         // The auth box (if any) surfaces during the fetch: reflect it on the draft form, treat a dismiss as an interruption.
         const observer: PromptObserver = e => this.setHostRuntime(host, { phase: e === 'opened' ? 'awaiting' : 'loading' });
         getSlurmClusterInfo(host, observer)
             .then(info => this.setHostRuntime(host, { phase: 'ready', info }))
             .catch((error) => {
-                this.logger.error('Error fetching slurm cluster info:', error);
+                this.logger.error('Error fetching Slurm cluster info:', error);
                 this.setHostRuntime(host, { phase: 'error', message: error instanceof PromptCancelledError ? 'Interrupted — input dismissed' : errMsg(error) });
             });
     }

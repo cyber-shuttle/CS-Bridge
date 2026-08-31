@@ -185,7 +185,7 @@ export class SshManager {
             ? ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
             : ['-o', 'NumberOfPasswordPrompts=3'];
 
-        // `bash -l` gives the same PATH (SLURM binaries) a login shell has; the channel is held open and fed commands.
+        // `bash -l` gives the same PATH (Slurm binaries) a login shell has; the channel is held open and fed commands.
         const proc = spawn('ssh', [
             ...this.buildControlMasterArgs(hostName),
             ...connectArgs,

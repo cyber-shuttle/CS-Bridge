@@ -58,7 +58,7 @@ export class SessionMonitor {
             else { this.healthFailedCounts.delete(session.id); }
         }
         catch (err) {
-            this.warn(session, `healthcheck (slurm): unreachable (will retry): ${errMsg(err)}`);
+            this.warn(session, `healthcheck (Slurm): unreachable (will retry): ${errMsg(err)}`);
         }
     }
 
@@ -105,10 +105,10 @@ export class SessionMonitor {
                 return;
             }
 
-            // SLURM kills the job at its wall time. Stop the moment we pass it AND the link is already gone (relay
+            // Slurm kills the job at its wall time. Stop the moment we pass it AND the link is already gone (relay
             // dropped, or never connected) — that's the job dying on schedule, no reason to grind through health-ping
             // retries first. Only hold the grace while the relay still looks connected: our clock may be ahead of the
-            // cluster's, or SLURM's KillWait may be running the job a little past --time, and we don't want to tear down
+            // cluster's, or Slurm's KillWait may be running the job a little past --time, and we don't want to tear down
             // a session that still works. Skip an in-flight stop.
             const now = Date.now();
             if (session.status !== 'stopping' && isWallTimeExpired(session, now)
@@ -149,9 +149,9 @@ export class SessionMonitor {
             }
 
             const { status: slurmStatus, elapsedSec } = await getSlurmJobStatus(session);
-            this.log(session, `healthcheck (slurm): status=${slurmStatus}`);
+            this.log(session, `healthcheck (Slurm): status=${slurmStatus}`);
 
-            // Anchor the wall-time countdown to SLURM's reported elapsed run-time, not the poll time.
+            // Anchor the wall-time countdown to Slurm's reported elapsed run-time, not the poll time.
             if (slurmStatus === SlurmJobStatus.RUNNING && !session.startedAt) {
                 session.startedAt = Date.now() - elapsedSec * 1000;
                 updateSession(session);
@@ -222,7 +222,7 @@ export class SessionMonitor {
 export async function prepareLaunch(session: SlurmSession): Promise<void> {
     // Fresh connection info with this run's API port pinned before ensureDevTunnel: that call is what puts the port
     // on the tunnel, and the job's devtunnel host has to find it already there.
-    // ponytail: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
+    // Trade-off: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
     session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '', apiPort: 20000 + Math.floor(Math.random() * 12000) };
     resetLive(session.id); // clear the prior run's live samples + stats, keep the run history
 
@@ -231,7 +231,7 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
 
     let hostToken: string;
     try { hostToken = await ensureDevTunnel(session); }
-    catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
+    catch (err) { throw new Error(`Failed to create Dev Tunnel: ${errMsg(err)}`); }
 
     try { session.batchScript = buildSlurmScript(session, hostToken); }
     catch (err) { throw new Error(`Failed to generate Slurm script: ${errMsg(err)}`); }

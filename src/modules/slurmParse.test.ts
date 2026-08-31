@@ -13,7 +13,7 @@ test('parseAccounts returns [] when there are no associations', () => {
     assert.deepEqual(parseAccounts('Account|\n'), []);
 });
 
-test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
+test('parseSacctStatus classifies each Slurm state and reads ElapsedRaw', () => {
     assert.deepEqual(parseSacctStatus('FAILED|1:0|None|120'), { status: SlurmJobStatus.FAILED, elapsedSec: 120 });
     assert.deepEqual(parseSacctStatus('CANCELLED by 1001|0:0|None|0'), { status: SlurmJobStatus.CANCELLED, elapsedSec: 0 });
     assert.deepEqual(parseSacctStatus('RUNNING|0:0|None|345'), { status: SlurmJobStatus.RUNNING, elapsedSec: 345 });
