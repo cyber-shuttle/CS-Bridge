@@ -30,7 +30,8 @@ export class CloudProvider extends WebviewProvider {
         secretKey: "",
         sessionToken: "",
         region: "us-east-1",
-        instances: [],
+        // add test data to see how UI looks
+        instances: [{ instanceID: "12313", instanceType: "M5", name: "test1", state: "running" }, { instanceID: "asdfq", instanceType: "M5a", name: "test2", state: "running" }],
     };
     private client: EC2Client | null = null;
 
