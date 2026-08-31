@@ -29,7 +29,7 @@ function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
                     {/* zoom 0.85 matches the Sessions-view action buttons (e.g. Connect). */}
                     <Row gap={6} justify="flex-end" pad="2px 0 0" style={{ zoom: 0.85 }}>
                         <Button icon="terminal" onClick={() => post({ command: 'openTerminal', name: instance.instanceID })}>Terminal</Button>
-                        <Button icon="trash" onClick={() => post({ command: 'removeSshHost', name: instance.instanceID })}>Delete</Button>
+                        <Button icon="trash" onClick={() => post({ command: 'removeSshHost', name: instance.instanceID })}>Stop</Button>
                     </Row>
                 </Stack>
             ) : null}
@@ -38,9 +38,9 @@ function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
 }
 
 function InstanceList({ state }: { state: CloudProviderState }) {
-    const hosts = [...state.instances].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-    if (hosts.length === 0) { return <Text muted style={{ margin: '4px 0' }}>No Instances yet.</Text>; }
-    return <>{hosts.map(host => <InstanceItem key={host.name} instance={host} />)}</>;
+    const instances = [...state.instances].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+    if (instances.length === 0) { return <Text muted style={{ margin: '4px 0' }}>No Instances yet.</Text>; }
+    return <>{instances.map(host => <InstanceItem key={host.name} instance={host} />)}</>;
 }
 
 function Root() {
