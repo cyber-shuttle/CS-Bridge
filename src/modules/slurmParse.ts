@@ -1,13 +1,13 @@
 import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession } from '../models';
 
-// Pure SLURM text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
+// Pure Slurm text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
 
-// linkspan's unix socket — the portless in-allocation channel (srun --overlap curl --unix-socket).
-// Placed directly in the sticky world-writable /tmp (not a shared csbridge/ subdir, which the first
-// user to run on a node would own and lock every other user out of — EACCES on bind).
+// Linkspan's unix socket, the portless in-allocation channel. It sits directly in
+// the sticky world-writable /tmp: a shared csbridge/ subdir would be owned by the
+// first user on the node and every other user would fail to bind.
 export const linkspanSocketPath = (sessionId: string): string => `/tmp/csbridge-${sessionId}.sock`;
 
-// A SLURM account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
+// A Slurm account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
 export const slurmAccount = (raw: string | undefined): string => (raw ?? '').trim().match(/^[\w.-]+$/)?.[0] ?? '';
 
 // Distinct accounts from `sacctmgr show associations ... format=Account -p`; it prints one
@@ -74,20 +74,16 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     TIMEOUT|0:0|None|3600
     */
     const [state, , , elapsedRaw] = fields;
-    // ElapsedRaw is SLURM's authoritative run-time in whole seconds (no timezone/clock guessing).
+    // ElapsedRaw is Slurm's authoritative run-time in whole seconds (no timezone/clock guessing).
     const elapsedSec = /^\d+$/.test(elapsedRaw.trim()) ? parseInt(elapsedRaw.trim(), 10) : 0;
 
     return { status: classifySchedulerState(state), elapsedSec };
 }
 
-// The scheduler's vocabulary, parsed in one place so it cannot drift — the same
-// table cs-control keeps in classifySchedulerState. A state absent from here is
-// UNKNOWN, which the monitor holds on rather than treating as job death, so a
-// state we simply failed to list would strand a session until its wall time.
-//
-// SUSPENDED and STOPPED still hold an allocation, so they are a pause rather
-// than an ending; they read as QUEUED because the session is not running and
-// not over.
+// The scheduler's vocabulary in one place, mirroring cs-control's own table. An
+// absent state reads as UNKNOWN, which the monitor holds rather than treating as
+// job death, so an unlisted state strands a session until its wall time.
+// SUSPENDED and STOPPED still hold an allocation, so they read as QUEUED.
 const SCHEDULER_STATES: Readonly<Record<string, SlurmJobStatus>> = {
     PENDING: SlurmJobStatus.QUEUED,
     REQUEUED: SlurmJobStatus.QUEUED,
@@ -131,7 +127,7 @@ function parseKib(s: string | undefined): number | undefined {
     return Number.isFinite(n) ? n : undefined;
 }
 
-// SLURM "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
+// Slurm "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
 function hmsSeconds(s: string | undefined): number | undefined {
     const t = s?.trim();
     if (!t) { return undefined; }
@@ -147,9 +143,9 @@ export function humanKib(kib: number): string {
     return `${Math.round(kib)} KB`;
 }
 
-// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU). Usage (MaxRSS,
-// TotalCPU) lives on the .batch step — where the workload runs; reading the .extern or our own srun poll steps would
-// mask it with their tiny/zero values.
+// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU).
+// Usage lives on the .batch step where the workload runs; .extern and our own srun
+// poll steps would mask it with their near-zero values.
 export function parseSacctUtil(output: string): Stats {
     const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
     if (rows.length === 0) { return {}; }

@@ -13,7 +13,7 @@ test('parseAccounts returns [] when there are no associations', () => {
     assert.deepEqual(parseAccounts('Account|\n'), []);
 });
 
-test('parseSacctStatus classifies each SLURM state and reads ElapsedRaw', () => {
+test('parseSacctStatus classifies each Slurm state and reads ElapsedRaw', () => {
     assert.deepEqual(parseSacctStatus('FAILED|1:0|None|120'), { status: SlurmJobStatus.FAILED, elapsedSec: 120 });
     assert.deepEqual(parseSacctStatus('CANCELLED by 1001|0:0|None|0'), { status: SlurmJobStatus.CANCELLED, elapsedSec: 0 });
     assert.deepEqual(parseSacctStatus('RUNNING|0:0|None|345'), { status: SlurmJobStatus.RUNNING, elapsedSec: 345 });
@@ -70,18 +70,21 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     assert.match(script, /--port 25000 --socket \/tmp\/csbridge-sess-1\.sock --tunnel-host-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
 });
 
+// The allocation every script test starts from; each names only what it varies.
+const scriptSession = (overrides: Partial<SlurmSession> = {}): SlurmSession => ({
+    cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
+    gpuClass: '', gpuCount: 0, ...overrides,
+} as SlurmSession);
+
 test('buildSlurmScript omits the GPU directive when no GPU is selected', () => {
-    const session = {
-        cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
-        gpuClass: '', gpuCount: 0,
-    } as SlurmSession;
+    const session = scriptSession();
     const script = buildSlurmScript(session, 't');
     assert.doesNotMatch(script, /--gres=/);
 });
 
 test('buildSlurmScript omits --account for a blank or non-token allocation', () => {
     for (const allocation of ['', '(No Allocation)']) {
-        const session = { cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'debug', allocation, gpuClass: '', gpuCount: 0 } as SlurmSession;
+        const session = scriptSession({ queue: 'debug', allocation });
         assert.doesNotMatch(buildSlurmScript(session, 't'), /--account/);
     }
 });
@@ -135,10 +138,7 @@ test('parseSacctUtil returns an empty object for no output', () => {
 });
 
 test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launching linkspan', () => {
-    const session = {
-        cpus: 2, memory: '4 GB', wallTime: '01:00:00', queue: 'cpu', allocation: 'acct1',
-        gpuClass: '', gpuCount: 0,
-    } as SlurmSession;
+    const session = scriptSession();
     const script = buildSlurmScript(session, 't');
 
     // The compute node has no logind, so the inherited /run/user/<uid> XDG_RUNTIME_DIR is absent there;

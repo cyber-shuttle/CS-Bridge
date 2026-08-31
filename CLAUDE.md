@@ -1,12 +1,12 @@
 # CS-Bridge (CyberShuttle VS Code Extension)
 
-VS Code extension for remote HPC development. From the sidebar you add an SSH host (a login node with SLURM),
+VS Code extension for remote HPC development. From the sidebar you add an SSH host (a login node with Slurm),
 create a **session** describing the resources you want, and start it. CS-Bridge submits an `sbatch` job that runs the
-**linkspan** agent on the allocated compute node, opens a **Microsoft Dev Tunnel** to it, forwards the compute-node
+**Linkspan** agent on the allocated compute node, opens a **Microsoft Dev Tunnel** to it, forwards the compute-node
 SSH server to a local port **in-process**, writes a per-session `cshost-<id>` entry to `~/.cybershuttle/ssh_config`,
 and opens a `vscode-remote://ssh-remote+cshost-<id>/…` window. The OS-native `ssh` binary is the actual transport —
 CS-Bridge does not bundle, depend on, or call into Remote-SSH; it just emits the `ssh-remote+` URI for whatever URI
-handler is installed (typically `ms-vscode-remote.remote-ssh`). For its *own* remote commands (SLURM queries, linkspan
+handler is installed (typically `ms-vscode-remote.remote-ssh`). For its *own* remote commands (Slurm queries, linkspan
 install, sbatch) CS-Bridge holds one persistent `ssh` login shell per host in-process and multiplexes every command
 over it (see SSH transport below).
 
@@ -68,9 +68,9 @@ src/
     sshShell.ts          # (V) pure shell protocol: buildShellCommand/extractCommandResult (marker-framed stdout/stderr/exit demux) + READY_MARKER
     tunnelSupport.ts     # (C) Dev Tunnels SDK: tunnel CRUD, remote sshd create + port forward, in-process relay client, MS auth
     sessionSupport.ts    # (C) lifecycle composition (prepareLaunch/launchSession/stopSession) + SessionMonitor
-    slurmSupport.ts      # (V*) SLURM-over-SSH queries: getSlurmJobStatus/Output, getSlurmClusterInfo  (*imports Logger)
+    slurmSupport.ts      # (V*) Slurm-over-SSH queries: getSlurmJobStatus/Output, getSlurmClusterInfo  (*imports Logger)
     slurmLaunch.ts       # (V) launch steps over an injected RemoteRunner + LogSink (slurm check / linkspan install / sbatch submit)
-    slurmParse.ts        # (V) pure SLURM text: buildSlurmScript, parseSacctStatus, parsePartitionLine
+    slurmParse.ts        # (V) pure Slurm text: buildSlurmScript, parseSacctStatus, parsePartitionLine
     sessionMachine.ts    # (V) status domain: computeStatusTransition + isTerminal/isCloseable/isStoppable/isRelayLive
     sshHostsStore.ts     # (V) ssh-config parse/edit (user + system hosts), buildSshConfigBlock + SSH_RESILIENCE_OPTIONS
     sshCommandParser.ts  # (V) parse an `ssh …` command line into a Host config entry (shell-quote + posix-getopt)
@@ -110,7 +110,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   transition table.
 
 - **Two-step connect.** *Step 1 (remote)*: bring up the compute-node sshd and expose it on the Dev Tunnel —
-  `ensureRemoteSession` → `createSshServer` (POST to the linkspan API) + `forwardSshPortOnTunnel`; driven once per
+  `ensureRemoteSession` → `createSshServer` (POST to the Linkspan API) + `forwardSshPortOnTunnel`; driven once per
   session by `SessionMonitor.prepareRemote` (→ `ready_to_connect`). *Step 2 (local)*:
   `SessionProvider._connectSessionToTunnel` → `connectSessionToTunnel` opens an in-process `TunnelRelayTunnelClient`,
   writes the `cshost-<id>` ssh_config entry, and opens the `vscode-remote://ssh-remote+cshost-<id>/…` window (→ `connected`).
@@ -177,7 +177,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
 
 ## External processes / files
 
-- **linkspan** — runs on the compute node at `~/.cybershuttle/bin/linkspan`; `slurmLaunch.installLinkspan` deploys it
+- **Linkspan** — runs on the compute node at `~/.cybershuttle/bin/linkspan`; `slurmLaunch.installLinkspan` deploys it
   via `curl -fsSL …/releases/latest/download/linkspan_Linux_<arch>.tar.gz | tar -xz` when missing/outdated.
 - **OpenSSH** (`ssh`) — system binary; every remote command rides one persistent per-host login shell it spawns
   (ControlMaster layered on as a cross-window bonus on Unix). Not bundled.
@@ -189,7 +189,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
 ## Unimplemented (do not document as features)
 
 - **FRP tunnel provider** — only `devtunnel` works end-to-end; there is no FRP code.
-- **Filesystem sync** (FUSE/mutagen/sshfs), the **Stats** view (skeleton), a **plain-SSH (non-SLURM) launch** path,
+- **Filesystem sync** (FUSE/mutagen/sshfs), the **Stats** view (skeleton), a **plain-SSH (non-Slurm) launch** path,
   and any admin/telemetry server — no code exists. See README Roadmap.
 
 ## Gotchas
@@ -206,7 +206,7 @@ resources/               # csbridge.svg/.png (activity-bar + command icons)
   is unset) to avoid leaking compute-node daemons.
 - The webview `.tsx` rendering has no automated tests — only `ui/logic/*` and the `(V)` modules are unit-tested; UI
   changes need a manual pass in the Extension Development Host.
-- The SLURM job state `CANCELLED` (and `scancel`) are SLURM's own terms and are kept; they map to our `'stopped'`
+- The Slurm job state `CANCELLED` (and `scancel`) are Slurm's own terms and are kept; they map to our `'stopped'`
   session status. Everything in *our* vocabulary is "stop", not "cancel".
 
 ## Code Discipline

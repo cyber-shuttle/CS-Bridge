@@ -2,7 +2,7 @@
 // marker so its stdout, stderr, and exit code can be demuxed from the shell's continuous output streams.
 
 // Printed once at connect to skip profile/MOTD noise before the first command. A fixed token; remote profile
-// output colliding with it is effectively impossible. ponytail: bump to a random per-shell token if it ever does.
+// output colliding with it is effectively impossible. Trade-off: bump to a random per-shell token if it ever does.
 export const READY_MARKER = '__CS_SHELL_READY__';
 
 const marker = (rid: string): string => `__CSE_${rid}__`;

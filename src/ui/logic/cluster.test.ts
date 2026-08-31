@@ -30,7 +30,7 @@ test('gpuOptions only yields counts/types on the gpu tab', () => {
     assert.deepEqual(gpuOptions(cpuPart, 'gpu'), { counts: [], types: [] });
 });
 
-test('gpuString assembles the SLURM gres value', () => {
+test('gpuString assembles the Slurm gres value', () => {
     assert.equal(gpuString('a100', 2), 'a100:2');
     assert.equal(gpuString('', 2), '2');
     assert.equal(gpuString('a100', 0), 'None');

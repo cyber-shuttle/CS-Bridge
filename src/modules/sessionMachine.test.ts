@@ -55,7 +55,7 @@ test('isReattachable is non-terminal AND has persisted refs', () => {
 });
 
 test('isWallTimeExpired: a started session past startedAt+wallTime is expired; otherwise not', () => {
-    // SLURM kills a job at its --time limit, so a passed deadline is authoritative even when sacct is unreachable.
+    // Slurm kills a job at its --time limit, so a passed deadline is authoritative even when sacct is unreachable.
     const wall = '00:30:00'; // 1_800_000 ms
     assert.equal(isWallTimeExpired({ wallTime: wall, startedAt: 1_000 }, 1_000 + 1_800_000 + 1), true);
     assert.equal(isWallTimeExpired({ wallTime: wall, startedAt: 1_000 }, 1_000 + 1_800_000), true); // exactly at the deadline
@@ -83,7 +83,7 @@ test('RUNNING does NOT pull a connect-phase session back to preparing', () => {
     }
 });
 
-test('terminal SLURM states stop monitoring with the right status', () => {
+test('terminal Slurm states stop monitoring with the right status', () => {
     // COMPLETED collapses into 'stopped', same as wall-time/cancellation — the job is gone but the session is restartable.
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.COMPLETED), { next: 'stopped', stopMonitoring: true });
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.CANCELLED), { next: 'stopped', stopMonitoring: true });

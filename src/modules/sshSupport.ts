@@ -159,33 +159,35 @@ export class SshManager {
         });
     }
 
+    // Win32-OpenSSH builds a command line, so SSH_ASKPASS can name the interpreter itself;
+    // every execlp-based ssh takes one file and runs its shebang. Never a .cmd: cmd.exe
+    // truncates the prompt at its first newline.
+    private askpassEnvironment(askpassDir: string): NodeJS.ProcessEnv {
+        const askpassJs = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js');
+        const askpassSh = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.sh');
+        try { fs.chmodSync(askpassSh, 0o755); }
+        catch { /* vsix ships +x */ }
+        const direct = /OpenSSH_for_Windows/.test(spawnSync('ssh', ['-V'], { encoding: 'utf-8' }).stderr ?? '');
+        return {
+            SSH_ASKPASS: direct ? `"${process.execPath}" "${askpassJs}"` : askpassSh,
+            SSH_ASKPASS_REQUIRE: 'force',
+            ELECTRON_RUN_AS_NODE: '1',
+            CS_ASKPASS_DIR: askpassDir,
+            CS_ASKPASS_JS: askpassJs,
+            CS_NODE_BIN: process.execPath,
+            DISPLAY: ':0',
+        };
+    }
+
     private spawnShell(hostName: string, batch: boolean, observer?: PromptObserver): HostShell {
         const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
-        const env: NodeJS.ProcessEnv = { ...process.env };
-        if (!batch) {
-            const askpassJs = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.js');
-            const askpassSh = path.join(this.extensionUri.fsPath, 'scripts', 'askpass.sh');
-            try { fs.chmodSync(askpassSh, 0o755); }
-            catch { /* vsix ships +x */ }
-            // Win32-OpenSSH builds a command line, so SSH_ASKPASS can name the interpreter itself; every execlp-based
-            // ssh takes one file and runs its shebang. Never a .cmd: cmd.exe truncates the prompt at its first newline.
-            const direct = /OpenSSH_for_Windows/.test(spawnSync('ssh', ['-V'], { encoding: 'utf-8' }).stderr ?? '');
-            Object.assign(env, {
-                SSH_ASKPASS: direct ? `"${process.execPath}" "${askpassJs}"` : askpassSh,
-                SSH_ASKPASS_REQUIRE: 'force',
-                ELECTRON_RUN_AS_NODE: '1',
-                CS_ASKPASS_DIR: askpassDir,
-                CS_ASKPASS_JS: askpassJs,
-                CS_NODE_BIN: process.execPath,
-                DISPLAY: ':0',
-            });
-        }
+        const env: NodeJS.ProcessEnv = { ...process.env, ...(batch ? {} : this.askpassEnvironment(askpassDir)) };
 
         const connectArgs = batch
             ? ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10']
             : ['-o', 'NumberOfPasswordPrompts=3'];
 
-        // `bash -l` gives the same PATH (SLURM binaries) a login shell has; the channel is held open and fed commands.
+        // `bash -l` gives the same PATH (Slurm binaries) a login shell has; the channel is held open and fed commands.
         const proc = spawn('ssh', [
             ...this.buildControlMasterArgs(hostName),
             ...connectArgs,

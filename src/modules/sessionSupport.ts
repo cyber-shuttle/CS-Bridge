@@ -21,8 +21,8 @@ const HEALTH_GIVEUP = 6;
 // Lets an authoritative sacct verdict win first when reachable (it can lag ~HEALTH_GIVEUP polls in the relay-live path).
 const WALL_TIME_GRACE_MS = 30_000;
 
-// One independent poll loop per active session, created on startMonitoring and torn down on stop. No shared lock:
-// each loop only mutates its own session and updateSession is synchronous, so per-session ticks never race.
+// One independent poll loop per active session. No shared lock: each loop mutates
+// only its own session and updateSession is synchronous, so ticks never race.
 export class SessionMonitor {
     private sessions = new Map<string, SlurmSession>();
     private tickers = new Map<string, ReturnType<typeof setInterval>>();
@@ -58,19 +58,19 @@ export class SessionMonitor {
             else { this.healthFailedCounts.delete(session.id); }
         }
         catch (err) {
-            this.warn(session, `healthcheck (slurm): unreachable (will retry): ${errMsg(err)}`);
+            this.warn(session, `healthcheck (Slurm): unreachable (will retry): ${errMsg(err)}`);
         }
     }
 
-    // Shared running-session poll policy: probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall
-    // back to an authoritative sacct cross-check for job death. The probe differs by phase (bring-up vs relay ping).
+    // Probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall back
+    // to an authoritative sacct cross-check. The probe differs by phase.
     private async pingOrCrossCheck(session: SlurmSession, probe: () => Promise<void>): Promise<void> {
         if (this.healthFails(session.id) < HEALTH_GIVEUP) { await probe(); }
         else { await this.crossCheckSlurmForDeath(session); }
     }
 
-    // Step 1: drive a running session to ready_to_connect. Awaited under tick()'s reentrancy guard, so it can't overlap
-    // its own next fire — no separate in-flight guard needed. The caller has already checked status === 'preparing'.
+    // Drives a running session to ready_to_connect. Awaited under tick()'s reentrancy
+    // guard, so it needs no in-flight guard of its own.
     private async prepareRemote(session: SlurmSession): Promise<void> {
         try {
             await ensureDevTunnel(session); // re-mint tunnel id + Connect token (also valid after a reload dropped them)
@@ -84,8 +84,8 @@ export class SessionMonitor {
             }
         }
         catch (err) {
-            // linkspan not up yet (health still failing) or a tunnel API blip — transient, not job death; hold 'preparing' and retry.
-            // Count it so the monitor cross-checks sacct for job death after HEALTH_GIVEUP tries.
+            // Linkspan not up yet, or a tunnel API blip: transient rather than job death, so
+            // hold 'preparing' and count it toward the sacct cross-check.
             this.bumpHealthFails(session.id);
             this.warn(session, `linkspan unreachable (will retry): ${errMsg(err)}`);
             session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
@@ -105,11 +105,10 @@ export class SessionMonitor {
                 return;
             }
 
-            // SLURM kills the job at its wall time. Stop the moment we pass it AND the link is already gone (relay
-            // dropped, or never connected) — that's the job dying on schedule, no reason to grind through health-ping
-            // retries first. Only hold the grace while the relay still looks connected: our clock may be ahead of the
-            // cluster's, or SLURM's KillWait may be running the job a little past --time, and we don't want to tear down
-            // a session that still works. Skip an in-flight stop.
+            // Slurm kills the job at its wall time, so a passed deadline with the link
+            // already gone is the job dying on schedule. The grace applies only while the
+            // relay still looks connected: our clock may be ahead of the cluster's, or
+            // KillWait may be running the job a little past --time.
             const now = Date.now();
             if (session.status !== 'stopping' && isWallTimeExpired(session, now)
                 && (!isTunnelClientConnected(session.id) || isWallTimeExpired(session, now - WALL_TIME_GRACE_MS))) {
@@ -118,9 +117,9 @@ export class SessionMonitor {
                 return;
             }
 
-            // Job is running but Step 1 isn't up yet: drive the bring-up over the tunnel (prepareRemote), not Slurm,
-            // cross-checking sacct for job death only after HEALTH_GIVEUP prepare failures — so a running session never
-            // SSH-polls the login node. prepareRemote advances to ready_to_connect once linkspan answers.
+            // Job running but not yet up: drive bring-up over the tunnel rather than Slurm,
+            // cross-checking sacct only after HEALTH_GIVEUP failures, so a running session
+            // never SSH-polls the login node.
             if (session.status === 'preparing' && session.tunnelId && (session.connectionInfo?.apiPort ?? 0) > 0) {
                 await this.pingOrCrossCheck(session, () => this.prepareRemote(session));
                 return;
@@ -149,9 +148,9 @@ export class SessionMonitor {
             }
 
             const { status: slurmStatus, elapsedSec } = await getSlurmJobStatus(session);
-            this.log(session, `healthcheck (slurm): status=${slurmStatus}`);
+            this.log(session, `healthcheck (Slurm): status=${slurmStatus}`);
 
-            // Anchor the wall-time countdown to SLURM's reported elapsed run-time, not the poll time.
+            // Anchor the wall-time countdown to Slurm's reported elapsed run-time, not the poll time.
             if (slurmStatus === SlurmJobStatus.RUNNING && !session.startedAt) {
                 session.startedAt = Date.now() - elapsedSec * 1000;
                 updateSession(session);
@@ -222,7 +221,7 @@ export class SessionMonitor {
 export async function prepareLaunch(session: SlurmSession): Promise<void> {
     // Fresh connection info with this run's API port pinned before ensureDevTunnel: that call is what puts the port
     // on the tunnel, and the job's devtunnel host has to find it already there.
-    // ponytail: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
+    // Trade-off: random high port; ~1/12000 collision on a shared compute node (linkspan log.Fatals if taken, session then fails) — probe a free port on the node if it ever bites.
     session.connectionInfo = { sshPort: 0, sshTunnelId: '', region: '', apiPort: 20000 + Math.floor(Math.random() * 12000) };
     resetLive(session.id); // clear the prior run's live samples + stats, keep the run history
 
@@ -231,7 +230,7 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
 
     let hostToken: string;
     try { hostToken = await ensureDevTunnel(session); }
-    catch (err) { throw new Error(`Failed to create dev tunnel: ${errMsg(err)}`); }
+    catch (err) { throw new Error(`Failed to create Dev Tunnel: ${errMsg(err)}`); }
 
     try { session.batchScript = buildSlurmScript(session, hostToken); }
     catch (err) { throw new Error(`Failed to generate Slurm script: ${errMsg(err)}`); }

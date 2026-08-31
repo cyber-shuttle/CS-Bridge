@@ -7,7 +7,7 @@ export function wallMs(wallTime: string): number {
     return ((p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0)) * 1000;
 }
 
-/** SLURM kills the job at --time, so a passed deadline is authoritative even when the login node is unreachable
+/** Slurm kills the job at --time, so a passed deadline is authoritative even when the login node is unreachable
  *  for `sacct`. Assumes death within KillWait of --time; OverTimeLimit clusters may run past it. */
 export function isWallTimeExpired(session: Pick<SlurmSession, 'wallTime' | 'startedAt'>, now: number): boolean {
     const total = wallMs(session.wallTime);
