@@ -45,9 +45,9 @@ export class CloudProvider extends WebviewProvider {
                 this.pushState();
                 break;
             case "launch":
-                this.generateSSHKeyPair();
+                // this.generateSSHKeyPair();
                 // this.creatSSHSecurityGroup()
-                // this.launchEC2Instance();
+                this.launchEC2Instance();
                 break;
             case "rm-key-pair":
                 this.remmoveKeyPair(this.PRIVATE_KEY_PATH);
@@ -103,32 +103,6 @@ export class CloudProvider extends WebviewProvider {
         this.initEC2Client();
     }
 
-    // add options for ec2 instance later
-    // Launch insteance with custom CS-Bridge tag
-    // all to query only instances launched by ext
-    public async launchEC2Instance(): Promise<void> {
-        vscode.window.withProgress(
-            {
-                location: vscode.ProgressLocation.Notification,
-                title: "Setting up EC2 Instance...",
-                cancellable: true,
-            },
-            async (progress) => {
-                try {
-                    progress.report({ message: "Generating SSH Key Pair..." });
-                    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-                    progress.report({ message: "Launching Instnace..." });
-                    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-                    progress.report({ message: "Instance is running." });
-                    await new Promise((resolve) => setTimeout(resolve, 3000));
-                } catch (error: any) {
-                    vscode.window.showErrorMessage("Failed to launch instance");
-                }
-            },
-        );
-    }
     private async initEC2Client(): Promise<void> {
         this.client = new EC2Client({
             region: this.state.region,
@@ -138,6 +112,47 @@ export class CloudProvider extends WebviewProvider {
                 sessionToken: this.state.sessionToken,
             },
         });
+    }
+    // add options for ec2 instance later
+    // Launch insteance with custom CS-Bridge tag
+    // all to query only instances launched by ext
+    public async launchEC2Instance(): Promise<void> {
+
+        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+        vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: "Setting up EC2 Instance...",
+                cancellable: true,
+            },
+            // Outline for what is needed to launch instance
+            async (progress) => {
+                try {
+                    progress.report({ message: "Generating SSH Key Pair..." });
+                    await this.generateSSHKeyPair()
+                    await sleep(2500)
+                    progress.report({ message: "Check Security Groups" });
+                    const securityGroupID = await this.getSSHSecurityGroup()
+                    await sleep(2500)
+                    if (securityGroupID === "") {
+
+                        progress.report({ message: "Did not find existing security group for CS-Bridge" });
+                        await sleep(2500)
+                        progress.report({ message: "Creating new Security Group" });
+                        await this.creatSSHSecurityGroup()
+                        await sleep(2500)
+                    } else {
+                        progress.report({ message: "Found existing CS-Bridge Security Group" });
+                        await sleep(2500)
+                    }
+                    progress.report({ message: "Launching Instnace..." });
+                    // progress.report({ message: "Instance is running." });
+                    sleep(3000)
+                } catch (error: any) {
+                    vscode.window.showErrorMessage("Failed to launch instance");
+                }
+            },
+        );
     }
     private async generateSSHKeyPair(): Promise<void> {
         try {
@@ -207,8 +222,10 @@ export class CloudProvider extends WebviewProvider {
 
             const securityGroups = data.SecurityGroups;
             if (this.securityGroupName.length === 0) {
+                console.log("Did not find exisitng group")
                 return ""
             } else {
+                console.log("Found Exisitng Sec Group")
                 return securityGroups?.at(0)?.GroupName ?? ""
             }
 
