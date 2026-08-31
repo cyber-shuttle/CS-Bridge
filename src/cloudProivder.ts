@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CloudProviderState, WebviewMessage } from "./models";
+import { AWSInstanceInfo, CloudProviderState, WebviewMessage } from "./models";
 import { WebviewProvider } from "./webviewProvider";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
@@ -9,7 +9,9 @@ import {
     CreateKeyPairCommand,
     DeleteKeyPairCommand,
     EC2ServiceException,
-    DescribeInstanceStatusCommand,
+    paginateDescribeInstances,
+    AuthorizeSecurityGroupIngressCommand,
+    CreateSecurityGroupCommand,
 } from "@aws-sdk/client-ec2";
 
 // Webview provider for the Cloud Provider view .
@@ -17,6 +19,7 @@ export class CloudProvider extends WebviewProvider {
     public static readonly viewType = "csbridge.cloudView";
     protected readonly viewKind = "cloud" as const;
     protected readonly KEY_NAME = "cs-aws-generated-key";
+    private client: EC2Client | null = null;
 
     protected readonly PRIVATE_KEY_PATH = path.join(
         homedir(),
@@ -33,7 +36,6 @@ export class CloudProvider extends WebviewProvider {
         // add test data to see how UI looks
         instances: [{ instanceID: "12313", instanceType: "M5", name: "test1", state: "running" }, { instanceID: "asdfq", instanceType: "M5a", name: "test2", state: "running" }],
     };
-    private client: EC2Client | null = null;
 
     protected handleMessage(data: WebviewMessage): void {
         switch (data.command) {
@@ -41,7 +43,8 @@ export class CloudProvider extends WebviewProvider {
                 this.pushState();
                 break;
             case "launch":
-                // this.generateSSHKeyPair();
+                this.generateSSHKeyPair();
+                // this.creatSSHSecurityGroup()
                 // this.launchEC2Instance();
                 break;
             case "rm-key-pair":
@@ -99,11 +102,9 @@ export class CloudProvider extends WebviewProvider {
     }
 
     // add options for ec2 instance later
-    // handle cancel
-    // handle remove instance after launch
+    // Launch insteance with custom CS-Bridge tag
+    // all to query only instances launched by ext
     public async launchEC2Instance(): Promise<void> {
-        if (this.state.secretKey == "" || this.state.accessKey == "") {
-        }
         vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
@@ -161,33 +162,7 @@ export class CloudProvider extends WebviewProvider {
             }
         } catch (error) {
             if (error instanceof Error) {
-                switch (error.name) {
-                    case "InvalidKeyPair.Duplicate":
-                        console.error(
-                            `Error: A key pair named "${this.KEY_NAME}" already exists.`,
-                        );
-                        break;
-                    case "DryRunOperation":
-                        console.info(
-                            "Dry run successful. You have permissions to create this key pair.",
-                        );
-                        break;
-                    case "UnauthorizedOperation":
-                        console.error(
-                            "Error: You are not authorized to create key pairs. Check IAM policies.",
-                        );
-                        break;
-                    case "MissingParameter":
-                        console.error(
-                            "Error: The KeyName parameter is missing from the request.",
-                        );
-                        break;
-                    default:
-                        console.error(
-                            `Unexpected AWS Service Error (${error.name}):`,
-                            error.message,
-                        );
-                }
+                console.error(`AWS Error (${error.name}):`, error.message,);
             } else {
                 console.error("An unknown error occurred:", error);
             }
@@ -203,33 +178,97 @@ export class CloudProvider extends WebviewProvider {
             unlinkSync(this.PRIVATE_KEY_PATH);
         } catch (error) {
             if (error instanceof EC2ServiceException) {
-                switch (error.name) {
-                    case "InvalidKeyPair.NotFound":
-                        console.error("The key pair does not exist.");
-                        break;
-                    case "UnauthorizedOperation":
-                        console.error(
-                            "You do not have permission to delete this key pair.",
-                        );
-                        break;
-                    default:
-                        console.error(`AWS Error [${error.name}]: ${error.message}`);
-                }
+                console.error(`AWS Error [${error.name}]: ${error.message}`);
             } else {
-                console.error(`Undhandled Error ${error}`);
+                console.error(`Unhandled Error ${error}`);
             }
         }
     }
+    // Create Security For SSH Access
+    public async creatSSHSecurityGroup(): Promise<string | undefined> {
+        if (this.client === null) {
+            throw new Error("EC2 Client is not initialized")
+        }
+        try {
+            const createCommand = new CreateSecurityGroupCommand({
+                GroupName: "CS-Brige VSCode Ext SSH Access",
+                Description: "Security group - CS-Bridge SSH access",
+            });
+
+            const createResponse = await this.client.send(createCommand);
+            const groupID = createResponse.GroupId;
+            console.log(`Created Security Group with ID: ${groupID}`);
+
+            const sshGroupCommand = new AuthorizeSecurityGroupIngressCommand({
+                GroupId: groupID,
+                IpPermissions: [
+                    {
+                        IpProtocol: "tcp",
+                        FromPort: 22,
+                        ToPort: 22,
+                        IpRanges: [
+                            {
+                                CidrIp: "0.0.0.0/0",
+                                Description: " SSH Access"
+                            }
+                        ]
+                    }
+                ]
+            });
+
+            await this.client.send(sshGroupCommand);
+            console.log("Inbound SSH rule attached to the new group.");
+            return groupID
+
+
+        } catch (error) {
+            console.error("Creating SSH Sec Group failed:", error);
+        }
+    }
     // Stop Instace from webview
-    public async stopInstance(): Promise<void> { }
+    // public async stopInstance(instanceID: string): Promise<void> { }
+
     // Poll status of instance
     public async instanceStatus(): Promise<void> {
+        // Filter instasnce with custon CS-bridge tag 
+        if (this.client === null) {
+            return
+        }
+        const instances: AWSInstanceInfo[] = [];
+
+        const config = {
+            client: this.client,
+            input: {
+                Filters: [
+                    {
+                        Name: "tag:Environment",
+                        Values: ["CS-Bridge"]
+                    }
+                ]
+            }
+        };
         try {
-            const command = new DescribeInstanceStatusCommand({
-                IncludeAllInstances: true,
-            });
+            const paginator = paginateDescribeInstances(config, {});
+
+            for await (const page of paginator) {
+                if (page.Reservations) {
+                    for (const reservation of page.Reservations) {
+                        if (reservation.Instances) {
+                            reservation.Instances.map(instance => {
+                                const inst: AWSInstanceInfo = {
+                                    instanceID: instance.InstanceId,
+                                    instanceType: instance.InstanceType,
+                                    name: instance.Tags?.find(value => value.Key == "Name")?.Value,
+                                    state: instance.State?.Name
+                                }
+                                instances.push(inst)
+                            })
+                        }
+                    }
+                }
+            }
         } catch (error) {
-            console.error("Error fetching instance statuses:", error);
+            console.error("Get instances failed:", error);
         }
     }
 }
