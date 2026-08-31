@@ -90,95 +90,80 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         void disposeAllTunnelClients(); // window close: free local ports (remote stays, reaped by linkspan)
     }
 
+    // A dismissal only clears one field, so each is named by the field it clears.
+    private readonly dismissals: Record<string, () => void> = {
+        dismissDraftSession: () => { this.draftHost = null; },
+        dismissPreview: () => { this.previewSession = null; },
+        dismissAlert: () => { this.alert = null; },
+        dismissEditSession: () => { this.editingId = null; },
+    };
+
+    private readonly handlers: Record<string, (data: WebviewMessage, id: string) => void> = {
+        ready: () => void this.pushState(),
+        addSession: data => this.createSession(data),
+        editSession: (_data, id) => {
+            const s = this.requireSession(id, 'edit', true);
+            if (!s) { return; }
+            this.editingId = id;
+            void this.pushState();
+            this.fetchClusterInfo(s.cluster);
+        },
+        refreshClusterInfo: data => this.fetchClusterInfo(data.host ?? '', true),
+        saveSession: (data, id) => {
+            const s = this.requireSession(id, 'save', true);
+            if (!s) { return; }
+            // copy: a rejected edit must not touch the stored session
+            const updated = { ...s, ...this.paramsFromData(data), batchScript: undefined };
+            void this.validateThenPersist(updated, () => {
+                updateSession(updated);
+                this.editingId = null;
+            });
+        },
+        prepareLaunchSession: (_data, id) => { this.prepareLaunchSession(id).catch(() => void this.pushState()); },
+        launchSession: (_data, id) => this.launchSession(id),
+        stopSessionExecution: (_data, id) => this.stopSessionExecution(id),
+        stopRemoteSession: () => {
+            if (this.remoteSessionId) { void vscode.commands.executeCommand('csbridge.stopRemoteSession'); }
+        },
+        connectTunnel: (_data, id) => void this.connectSessionToTunnel(id),
+        removeSession: (_data, id) => this.removeSession(id),
+    };
+
     protected handleMessage(data: WebviewMessage) {
         this.logger.info('Received message from webview:', data);
-
-        const command = data.command;
-        const id = data.sessionId ?? '';
-        switch (command) {
-            case 'ready':
-                void this.pushState();
-                break;
-            case 'dismissDraftSession':
-                this.draftHost = null;
-                void this.pushState();
-                break;
-            case 'dismissPreview':
-                this.previewSession = null;
-                void this.pushState();
-                break;
-            case 'dismissAlert':
-                this.alert = null;
-                void this.pushState();
-                break;
-            case 'addSession': {
-                const now = Date.now();
-                const host = data.host ?? '';
-                const runtime = this.hostRuntime.get(host);
-                const newSession: SlurmSession = {
-                    id: uuidv7(), // time-ordered, so sorting by id is creation order
-                    name: `${now}`,
-                    cluster: host,
-                    status: 'not_started',
-                    jobId: '',
-                    submittedAt: now,
-                    errorMessage: '',
-                    workingDirectory: runtime?.phase === 'ready' ? runtime.info.homeDir : undefined,
-                    ...this.paramsFromData(data),
-                };
-                void this.validateThenPersist(newSession, () => {
-                    addSession(newSession);
-                    this.draftHost = null;
-                });
-                break;
-            }
-            case 'editSession': {
-                const s = this.requireSession(id, 'edit', true);
-                if (!s) { break; }
-                this.editingId = id;
-                void this.pushState();
-                this.fetchClusterInfo(s.cluster);
-                break;
-            }
-            case 'dismissEditSession':
-                this.editingId = null;
-                void this.pushState();
-                break;
-            case 'refreshClusterInfo':
-                this.fetchClusterInfo(data.host ?? '', true);
-                break;
-            case 'saveSession': {
-                const s = this.requireSession(id, 'save', true);
-                if (!s) { break; }
-                // copy: a rejected edit must not touch the stored session
-                const updated = { ...s, ...this.paramsFromData(data), batchScript: undefined };
-                void this.validateThenPersist(updated, () => {
-                    updateSession(updated);
-                    this.editingId = null;
-                });
-                break;
-            }
-            case 'prepareLaunchSession':
-                this.prepareLaunchSession(id).catch(() => void this.pushState());
-                break;
-            case 'launchSession':
-                this.launchSession(id);
-                break;
-            case 'stopSessionExecution':
-                this.stopSessionExecution(id);
-                break;
-            case 'stopRemoteSession':
-                if (this.remoteSessionId) { void vscode.commands.executeCommand('csbridge.stopRemoteSession'); }
-                break;
-            case 'connectTunnel':
-                void this.connectSessionToTunnel(id);
-                break;
-            case 'removeSession':
-                this.removeSession(id);
-                break;
-            default:
-                this.logger.warn('Unknown command from webview:', command);
+        const dismiss = this.dismissals[data.command];
+        if (dismiss) {
+            dismiss();
+            void this.pushState();
+            return;
         }
+        const handler = this.handlers[data.command];
+        if (!handler) {
+            this.logger.warn('Unknown command from webview:', data.command);
+            return;
+        }
+        handler(data, data.sessionId ?? '');
+    }
+
+    private createSession(data: WebviewMessage): void {
+        const now = Date.now();
+        const host = data.host ?? '';
+        const runtime = this.hostRuntime.get(host);
+        const session: SlurmSession = {
+            id: uuidv7(), // time-ordered, so sorting by id is creation order
+            name: `${now}`,
+            cluster: host,
+            status: 'not_started',
+            jobId: '',
+            submittedAt: now,
+            errorMessage: '',
+            workingDirectory: runtime?.phase === 'ready' ? runtime.info.homeDir : undefined,
+            ...this.paramsFromData(data),
+        };
+        void this.validateThenPersist(session, () => {
+            addSession(session);
+            this.draftHost = null;
+        });
     }
 
     private requireSession(id: string, action: string, push: boolean): SlurmSession | undefined {
