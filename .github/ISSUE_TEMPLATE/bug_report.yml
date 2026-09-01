@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in CS Bridge does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Security problems do not go here — see the [security policy](https://github.com/cyber-shuttle/CS-Bridge/security/policy).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: CS Bridge version
+      description: The Extensions view, or `code --list-extensions --show-versions`.
+    validations:
+      required: true
+  - type: input
+    id: vscode-version
+    attributes:
+      label: VS Code version
+      description: Help > About.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Local operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: cluster
+    attributes:
+      label: Cluster and scheduler
+      description: Which cluster, and its scheduler version if you know it (`sinfo --version`).
+    validations:
+      required: true
+  - type: textarea
+    id: extension-log
+    attributes:
+      label: CS Bridge output log
+      description: "View > Output > CS Bridge. Redact hostnames, usernames and tokens you do not want published."
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: linkspan-log
+    attributes:
+      label: Remote agent log
+      description: "On the cluster: `~/.cybershuttle/logs/linkspan-session-<jobid>.err` and `.out`. Leave blank if the job never started."
+      render: text
