@@ -210,5 +210,6 @@ export interface CloudProviderState {
     sessionToken: string
     instances: AWSInstanceInfo[]
     region: string
+    clientInit: boolean
 }
 

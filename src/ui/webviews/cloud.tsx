@@ -2,7 +2,7 @@ import { ComponentChildren, render } from "preact";
 import { Stack, Text, Button, Row, Icon } from "@/ui/components/base";
 import { post, useWebviewState } from "@/ui/platform/vscode";
 import { AWSInstanceInfo, CloudProviderState } from "@/models";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
 function DetailRow({ label, children }: { label: string; children: ComponentChildren }) {
     return (
@@ -26,10 +26,9 @@ function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
                     <DetailRow label="ID">{instance.instanceID ?? '—'}</DetailRow>
                     <DetailRow label="Type">{instance.instanceType ?? '—'}</DetailRow>
                     <DetailRow label="State">{instance.state ?? '—'}</DetailRow>
-                    {/* zoom 0.85 matches the Sessions-view action buttons (e.g. Connect). */}
                     <Row gap={6} justify="flex-end" pad="2px 0 0" style={{ zoom: 0.85 }}>
                         <Button icon="terminal" onClick={() => post({ command: 'openTerminal', name: instance.instanceID })}>Terminal</Button>
-                        <Button icon="trash" onClick={() => post({ command: 'removeSshHost', name: instance.instanceID })}>Stop</Button>
+                        <Button icon="trash" onClick={() => post({ command: 'stop-instance', name: instance.instanceID })}>Stop</Button>
                     </Row>
                 </Stack>
             ) : null}
@@ -39,12 +38,21 @@ function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
 
 function InstanceList({ state }: { state: CloudProviderState }) {
     const instances = [...state.instances].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+    if (!state.clientInit) { return <Text muted style={{ margin: '4px 0' }}>AWS Credentials not set.</Text>; }
     if (instances.length === 0) { return <Text muted style={{ margin: '4px 0' }}>No Instances yet.</Text>; }
     return <>{instances.map(host => <InstanceItem key={host.name} instance={host} />)}</>;
 }
 
 function Root() {
     const state = useWebviewState<CloudProviderState>();
+
+    useEffect(() => {
+        if (state?.clientInit === true) {
+            post({ command: 'poll-instances' });
+        }
+    }, [state?.clientInit]);
+
+
     return state ? (
         <Stack
             gap={10}
@@ -55,7 +63,7 @@ function Root() {
                 onClick={() => {
                     post({ command: "launch" });
                 }}
-            // disabled={state.accessKey == "" && state.secretKey === ""}
+                disabled={!state.clientInit}
             >
                 Launch EC2 Instance
             </Button>
@@ -63,7 +71,8 @@ function Root() {
                 onClick={() => {
                     post({ command: "rm-key-pair" });
                 }}
-            // disabled={state.accessKey == "" && state.secretKey === ""}
+
+                disabled={!state.clientInit}
             >
                 Remove Key Pair
             </Button>
