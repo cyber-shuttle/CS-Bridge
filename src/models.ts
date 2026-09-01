@@ -22,10 +22,10 @@ interface Session {
     name: string;
     cluster: string;
     status:
-        | 'not_started' | 'submitting' | 'queued' | 'preparing'
-        | 'ready_to_connect' | 'connecting' | 'connected'
-        | 'stopping' | 'stopped' | 'failed'
-        | 'unreachable' | 'awaiting_input';
+    | 'not_started' | 'submitting' | 'queued' | 'preparing'
+    | 'ready_to_connect' | 'connecting' | 'connected'
+    | 'stopping' | 'stopped' | 'failed'
+    | 'unreachable' | 'awaiting_input';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
@@ -58,7 +58,7 @@ export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined)
 // letting the caller treat it as a deliberate interruption rather than a failure.
 export type PromptObserver = (event: 'opened' | 'answered') => void;
 
-export class PromptCancelledError extends Error {}
+export class PromptCancelledError extends Error { }
 
 export interface SshHost {
     name: string;
@@ -211,5 +211,11 @@ export interface CloudProviderState {
     instances: AWSInstanceInfo[]
     region: string
     clientInit: boolean
+}
+
+export enum InstanceActions {
+    Start,
+    Stop,
+    Remove,
 }
 

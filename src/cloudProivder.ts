@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { AWSInstanceInfo, CloudProviderState, WebviewMessage } from "./models";
+import { AWSInstanceInfo, CloudProviderState, WebviewMessage, InstanceActions } from "./models";
 import { WebviewProvider } from "./webviewProvider";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
@@ -14,8 +14,13 @@ import {
     CreateSecurityGroupCommand,
     DescribeSecurityGroupsCommand,
     RunInstancesCommand,
+    StopInstancesCommand,
+    StartInstancesCommand,
+    TerminateInstancesCommand,
 } from "@aws-sdk/client-ec2";
 
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // Webview provider for the Cloud Provider view .
 export class CloudProvider extends WebviewProvider {
     public static readonly viewType = "csbridge.cloudView";
@@ -42,7 +47,20 @@ export class CloudProvider extends WebviewProvider {
         clientInit: false
     };
 
+    private toast(title: string, message: string, cancellable: boolean) {
+        vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title,
+            cancellable
+        }, async (progress) => {
+            progress.report({ message });
+            await new Promise(resolve => setTimeout(resolve, 5000));
+
+        });
+    }
+
     protected handleMessage(data: WebviewMessage): void {
+        const instanceID = data.name ?? ""
         switch (data.command) {
             case "ready":
                 this.pushState();
@@ -55,10 +73,30 @@ export class CloudProvider extends WebviewProvider {
             case "poll-instances":
                 if (this.client !== null) {
                     this.getInstances()
-                    this.pollInternval = setInterval(() => this.getInstances(), 30000) // poll every 30 secs
+                    this.pollInternval = setInterval(() => this.getInstances(), 60000) // poll every 1 min
                 }
+                break;
             case "stop-instance":
-                console.log(data.name ?? "no name")
+                if (instanceID !== "") {
+                    this.doInstanceActions(InstanceActions.Stop, instanceID)
+                } else (
+                    vscode.window.showErrorMessage("Error: No instance ID provided")
+                )
+                break
+            case "start-instance":
+                if (instanceID !== "") {
+                    this.doInstanceActions(InstanceActions.Start, instanceID)
+                } else (
+                    vscode.window.showErrorMessage("Error: No instance ID provided")
+                )
+                break
+            case "remove-instance":
+                if (instanceID !== "") {
+                    this.doInstanceActions(InstanceActions.Remove, instanceID)
+                } else (
+                    vscode.window.showErrorMessage("Error: No instance ID provided")
+                )
+                break
             default:
                 this.logger.warn("Unknown command from cloud webview:", data);
         }
@@ -129,7 +167,6 @@ export class CloudProvider extends WebviewProvider {
     // Entire workflow for launching EC2 instance
     public async launchEC2Instance(): Promise<void> {
 
-        const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
         vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
@@ -325,8 +362,57 @@ export class CloudProvider extends WebviewProvider {
             return ""
         }
     }
-    // Stop Instace from webview
-    // public async stopInstance(instanceID: string): Promise<void> { }
+
+    public async doInstanceActions(action: InstanceActions, instanceID: string): Promise<void> {
+        if (this.client === null) {
+            throw new Error("EC2 Client is not initialized")
+        }
+
+        let command = null;
+        let msg = "no action"
+        let title = "no action"
+        switch (action) {
+            case InstanceActions.Stop:
+                command = new StopInstancesCommand({
+                    InstanceIds: [instanceID],
+                });
+                break
+            case InstanceActions.Start:
+                command = new StartInstancesCommand({
+                    InstanceIds: [instanceID],
+                });
+                break
+            case InstanceActions.Remove:
+                command = new TerminateInstancesCommand({
+                    InstanceIds: [instanceID],
+                });
+        }
+
+        try {
+            await this.client.send(command);
+
+            switch (action) {
+                case InstanceActions.Stop:
+                    msg = `Stopping instance: ${instanceID}`
+                    title = "Stop Instance"
+                    break
+                case InstanceActions.Start:
+                    msg = `Restarting instance: ${instanceID}`
+                    title = "Restart Instance"
+                    break
+                case InstanceActions.Remove:
+                    msg = `Removing instance: ${instanceID}`
+                    title = "Remove Instance"
+                    break
+            }
+            console.log(msg);
+            this.toast(title, msg, false)
+        } catch (error) {
+            const errMsg = `Error ${title}: ${error}`
+            console.error(errMsg);
+            vscode.window.showErrorMessage(errMsg)
+        }
+    }
 
 
     public async getInstances(): Promise<void> {
@@ -371,7 +457,6 @@ export class CloudProvider extends WebviewProvider {
             console.error("Get instances failed:", error);
         }
 
-
         this.state = {
             ...this.state,
             instances: instances
@@ -379,14 +464,5 @@ export class CloudProvider extends WebviewProvider {
         this.pushState()
     }
 
-    // public async pollInstances(): Promise<void> {
-    //     if (this.client === null) {
-    //         throw new Error("EC2 Client is not initialized")
-    //     }
-    //     console.log("Fetching instance status ...")
-    //     await this.getInstances()
-    //     this.pollInternval = setInterval(() => this.getInstances(), 3000)
-    //
-    // }
 
 }
