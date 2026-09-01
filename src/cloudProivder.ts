@@ -13,6 +13,7 @@ import {
     AuthorizeSecurityGroupIngressCommand,
     CreateSecurityGroupCommand,
     DescribeSecurityGroupsCommand,
+    RunInstancesCommand,
 } from "@aws-sdk/client-ec2";
 
 // Webview provider for the Cloud Provider view .
@@ -22,6 +23,8 @@ export class CloudProvider extends WebviewProvider {
     protected readonly KEY_NAME = "cs-aws-generated-key";
     private client: EC2Client | null = null;
     private readonly securityGroupName = "CS-Brige VSCode Ext SSH Access"
+    protected pollInternval: NodeJS.Timeout | null = null;
+
 
     protected readonly PRIVATE_KEY_PATH = path.join(
         homedir(),
@@ -35,8 +38,8 @@ export class CloudProvider extends WebviewProvider {
         secretKey: "",
         sessionToken: "",
         region: "us-east-1",
-        // add test data to see how UI looks
-        instances: [{ instanceID: "12313", instanceType: "M5", name: "test1", state: "running" }, { instanceID: "asdfq", instanceType: "M5a", name: "test2", state: "running" }],
+        instances: [],
+        clientInit: false
     };
 
     protected handleMessage(data: WebviewMessage): void {
@@ -45,12 +48,17 @@ export class CloudProvider extends WebviewProvider {
                 this.pushState();
                 break;
             case "launch":
-                // this.generateSSHKeyPair();
-                // this.creatSSHSecurityGroup()
                 this.launchEC2Instance();
                 break;
             case "rm-key-pair":
                 this.remmoveKeyPair(this.PRIVATE_KEY_PATH);
+            case "poll-instances":
+                if (this.client !== null) {
+                    this.getInstances()
+                    this.pollInternval = setInterval(() => this.getInstances(), 30000) // poll every 30 secs
+                }
+            case "stop-instance":
+                console.log(data.name ?? "no name")
             default:
                 this.logger.warn("Unknown command from cloud webview:", data);
         }
@@ -99,8 +107,9 @@ export class CloudProvider extends WebviewProvider {
             secretKey: secretKey,
             sessionToken: sessionToken,
         };
-        this.pushState();
         this.initEC2Client();
+        this.pushState();
+        // this.getInstances()
     }
 
     private async initEC2Client(): Promise<void> {
@@ -112,10 +121,12 @@ export class CloudProvider extends WebviewProvider {
                 sessionToken: this.state.sessionToken,
             },
         });
+        this.state = {
+            ...this.state,
+            clientInit: true
+        };
     }
-    // add options for ec2 instance later
-    // Launch insteance with custom CS-Bridge tag
-    // all to query only instances launched by ext
+    // Entire workflow for launching EC2 instance
     public async launchEC2Instance(): Promise<void> {
 
         const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -145,15 +156,49 @@ export class CloudProvider extends WebviewProvider {
                         progress.report({ message: "Found existing CS-Bridge Security Group" });
                         await sleep(2500)
                     }
-                    progress.report({ message: "Launching Instnace..." });
-                    // progress.report({ message: "Instance is running." });
+                    progress.report({ message: "Creating Instnace..." });
+                    this.createInstance(this.KEY_NAME, securityGroupID)
                     sleep(3000)
+                    progress.report({ message: "Instance is running." });
                 } catch (error: any) {
                     vscode.window.showErrorMessage("Failed to launch instance");
                 }
             },
         );
     }
+
+    // Create EC2 Instance
+    // add options for image, and instance type later
+    private async createInstance(keyName: string, securityGroupID: string): Promise<void> {
+        if (this.client === null) {
+            throw new Error("EC2 Client is not initialized")
+        }
+        const instanceID = crypto.randomUUID().slice(0, 5)
+        try {
+
+            await this.client.send(new RunInstancesCommand({
+                ImageId: "ami-0001e312b82212f65", // Not sure how many options to show 
+                InstanceType: "t3.micro",
+                KeyName: keyName,
+                SecurityGroupIds: [securityGroupID],
+                MinCount: 1,
+                MaxCount: 1,
+                TagSpecifications: [
+                    {
+                        ResourceType: "instance",
+                        Tags: [
+                            { Key: "Name", Value: `CS-Bridge-Instance-${instanceID}` },
+                            { Key: "Environment", Value: "CS-Bridge" }
+                        ]
+                    }
+                ]
+            }));
+        } catch (errors) {
+            console.log("Failed to create instance: ", errors)
+        }
+
+    }
+
     private async generateSSHKeyPair(): Promise<void> {
         try {
             if (!existsSync(this.PRIVATE_KEY_PATH)) {
@@ -179,7 +224,7 @@ export class CloudProvider extends WebviewProvider {
             }
         } catch (error) {
             if (error instanceof Error) {
-                console.error(`AWS Error (${error.name}):`, error.message,);
+                console.error(`Error (${error.name}):`, error.message,);
             } else {
                 console.error("An unknown error occurred:", error);
             }
@@ -187,6 +232,9 @@ export class CloudProvider extends WebviewProvider {
     }
 
     public async remmoveKeyPair(keyName: string): Promise<void> {
+        if (this.client === null) {
+            throw new Error("EC2 Client is not initialized")
+        }
         try {
             console.log("Removing Key Pair from AWS");
             const command = new DeleteKeyPairCommand({ KeyName: keyName });
@@ -280,11 +328,10 @@ export class CloudProvider extends WebviewProvider {
     // Stop Instace from webview
     // public async stopInstance(instanceID: string): Promise<void> { }
 
-    // Poll status of instance
-    public async instanceStatus(): Promise<void> {
-        // Filter instasnce with custon CS-bridge tag 
+
+    public async getInstances(): Promise<void> {
         if (this.client === null) {
-            return
+            throw new Error("EC2 Client is not initialized")
         }
         const instances: AWSInstanceInfo[] = [];
 
@@ -299,6 +346,7 @@ export class CloudProvider extends WebviewProvider {
                 ]
             }
         };
+        console.log("Fetching instances ....")
         try {
             const paginator = paginateDescribeInstances(config, {});
 
@@ -322,5 +370,23 @@ export class CloudProvider extends WebviewProvider {
         } catch (error) {
             console.error("Get instances failed:", error);
         }
+
+
+        this.state = {
+            ...this.state,
+            instances: instances
+        };
+        this.pushState()
     }
+
+    // public async pollInstances(): Promise<void> {
+    //     if (this.client === null) {
+    //         throw new Error("EC2 Client is not initialized")
+    //     }
+    //     console.log("Fetching instance status ...")
+    //     await this.getInstances()
+    //     this.pollInternval = setInterval(() => this.getInstances(), 3000)
+    //
+    // }
+
 }
