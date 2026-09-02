@@ -1,133 +1,73 @@
-# Contributing to CS-Bridge
+# Contributing to CS Bridge
 
-Thank you for your interest in contributing to CS-Bridge. This document covers the project architecture, source layout, and everything you need to get a local development environment running. Whether you are fixing a bug, adding a feature, or improving documentation, we appreciate your help.
+Issues and pull requests are welcome, especially from people running CS Bridge on real clusters. Participation is
+covered by the [Code of Conduct](CODE_OF_CONDUCT.md). Found a security problem rather than a bug? Report it
+privately — see [SECURITY.md](SECURITY.md).
 
-## Architecture
-
-```text
-Local VS Code                              Remote HPC Cluster
-┌──────────────────────────┐               ┌──────────────────────────┐
-│  CS-Bridge sidebar       │── OS ssh ────▶│  Slurm login node        │
-│  (webview UI)            │               │  (sbatch, sacct, sinfo)  │
-│                          │               │                          │
-│  SSH ControlMaster pool  │               │  Compute Node:           │
-│  ~/.cybershuttle/        │               │  ┌──────────────────┐    │
-│    ssh_config            │               │  │  linkspan        │    │
-│    ssh_keys/             │               │  │  ├─ sshd         │    │
-│    ssh_control/          │               │  │  └─ Dev Tunnel ──┼────┼──▶ devtunnels.ms
-│                          │               │  └──────────────────┘    │
-│  Dev Tunnels SDK         │◀── tunnel ────│                          │
-│  (forwards 127.0.0.1:N   │               └──────────────────────────┘
-│   to compute-node sshd)  │
-└──────────────────────────┘
-         │
-         ▼
-  vscode-remote://ssh-remote+cshost-<sessionId>/…
-  (OS ssh dials 127.0.0.1:N using the per-session
-   alias in ~/.cybershuttle/ssh_config)
-```
-
-## How a Session Works
-
-1. **Host Selection**: The user selects an SSH host from `~/.ssh/config` and configures resources (CPUs, memory, GPU, wall time).
-2. **Cluster Capabilities**: The extension queries Slurm partitions, accounts, and limits over SSH, running `sinfo` and `sacctmgr` directly (`modules/slurmSupport.ts`).
-3. **Slurm Required**: `checkSlurmAvailability` runs `sinfo` on the host; if it fails, the launch is aborted. Plain-SSH support is on the roadmap.
-4. **Job Submission**: Generates and submits a Slurm batch script that runs **Linkspan** on the allocated compute node (`modules/sessionSupport.ts`, `modules/sshSupport.ts`).
-5. **Tunneling**: `linkspan` starts an SSH server on the compute node and opens a Microsoft Dev Tunnel.
-6. **Connection Loop**: The extension polls job status via `sacct` and polls `linkspan` over the tunnel it created, whose id and API port it pinned at launch (`modules/slurmSupport.ts`, `modules/sessionSupport.ts`).
-7. **Tunnel Forwarding**: The Microsoft Dev Tunnels SDK (`@microsoft/dev-tunnels-management`) forwards the remote SSH port to a local port (`127.0.0.1:N`) inside the extension process.
-8. **SSH Config Plumbing**: An entry for `cshost-<sessionId>` is appended to `~/.cybershuttle/ssh_config` pointing at `127.0.0.1:N` with the per-session key. CS-Bridge ensures `Include ~/.cybershuttle/ssh_config` is at the top of `~/.ssh/config` so the system SSH client picks the alias up.
-9. **Connect**: The user clicks **Connect**; the extension issues `vscode.openFolder(vscode-remote://ssh-remote+cshost-<sessionId>/…)`. VS Code's remote-SSH URI handler invokes the OS `ssh` binary against the alias and attaches a new window to the compute node.
-
-## Source Layout
-
-Four layers, and nothing reaches past its neighbour:
-
-- **`src/*.ts`** — the VS Code surface. `extension.ts` registers everything; one provider per contributed
-  view (`sessionProvider`, `sshHostProvider`, `statsProvider`) plus `summaryPanel`, and `webviewProvider`
-  renders the HTML/CSP the four bundles load into.
-- **`src/modules/*.ts`** — the logic, free of the `vscode` API so it unit-tests directly. SSH
-  (`sshSupport`, `sshShell`, `sshHostsStore`, `sshCommandParser`), Slurm (`slurmLaunch`, `slurmParse`,
-  `slurmSupport`), linkspan's HTTP client (`linkspanSupport`), the Dev Tunnel (`tunnelSupport`), the
-  session state machine (`sessionMachine`) and the on-disk stores.
-- **`src/ui/`** — Preact webviews, bundled per view by esbuild. `logic/` is pure and tested; `components/`
-  renders; `platform/` is the only thing that talks to the webview host.
-- **`resources/`, `scripts/`** — icons and codicons, and the `SSH_ASKPASS` helpers.
-
-Tests sit beside what they test as `*.test.ts` and run on `node --test`.
-
-Authentication uses `vscode.authentication.getSession('microsoft', ...)` — there is no custom OAuth server.
-
-## External Dependencies
-
-- **[linkspan](https://github.com/cyber-shuttle/linkspan)** — agent that runs on the compute node and manages an SSH server + Dev Tunnel. Auto-deployed by CS-Bridge to `~/.cybershuttle/bin/linkspan` on first launch (downloaded from the latest GitHub release via `curl | tar -xz`).
-- **Microsoft Dev Tunnels SDK** — npm packages `@microsoft/dev-tunnels-{management,connections,contracts}`. Used in-process to create and forward tunnels. Authentication via VS Code's built-in `microsoft` authentication provider (no custom OAuth server).
-- **OS-native OpenSSH** — every SSH connection (host info probes, ControlMaster pool, and the final tunnelled session) is made by the system `ssh` binary. CS-Bridge writes its per-session config to `~/.cybershuttle/ssh_config` and ensures `~/.ssh/config` `Include`s it.
-- **VS Code remote-SSH URI handler** — at the end of the connect flow CS-Bridge opens a `vscode-remote://ssh-remote+cshost-<sessionId>/…` URI; the user's installed remote-SSH provider (typically [ms-vscode-remote.remote-ssh](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh)) handles this URI by invoking the OS `ssh` binary against the alias. It is not a hard `extensionDependencies` declaration.
-
-## Development Setup
-
-### Prerequisites
+## Prerequisites
 
 - [Git](https://git-scm.com/)
-- [Node.js](https://nodejs.org/) v20+
-- [VS Code](https://code.visualstudio.com/) v1.98+
+- [Node.js](https://nodejs.org/) 20 or newer (CI runs Node 24)
+- [VS Code](https://code.visualstudio.com/) 1.98 or newer
 
-### Getting Started
+## Development setup
 
 ```sh
-# Clone the repository
 git clone https://github.com/cyber-shuttle/CS-Bridge.git
 cd CS-Bridge
-
-# Install dependencies
 npm install
-
-# Watch TypeScript files and build on change
-npm run watch
+npm run watch      # esbuild in watch mode: extension + webview bundles
 ```
 
-1. **Launch the Extension**: Open the `CS-Bridge` folder in VS Code and press **F5** (or *Run > Start Debugging*). This opens a new VS Code window with the extension loaded (Extension Development Host).
-2. **Interact**: The CyberShuttle icon will appear in the sidebar of the new window.
-3. **Reload**: Reload the Extension Development Host window (`Cmd+Shift+P` > "Developer: Reload Window") to reflect your newest code changes.
+Press **F5** to open an Extension Development Host with the extension loaded; reload that window
+(*Developer: Reload Window*) to pick up a rebuild. The activity-bar entry is titled **CS Bridge**.
 
-> **Note:** Development mode only loads the extension in the Extension Development Host window. If you open a new remote window directly from there, the extension won't automatically propagate. To test across all windows, compile and manually install the `.vsix` packaged extension natively.
-
-### Linting
-
-To enforce code style and catch issues:
+The Extension Development Host is the only window that loads a development build — a remote window opened from it
+does not inherit the extension. Testing the connect path end to end therefore needs an installed build:
 
 ```sh
-npm run lint
+npm run dev        # npm install, package the .vsix, install it into VS Code
 ```
 
-## Installation from Source
-
-If you want to install the extension directly into VS Code rather than running it through the Extension Development Host:
-
-1. Clone the repository:
-
-   ```sh
-   git clone https://github.com/cyber-shuttle/CS-Bridge.git
-   cd CS-Bridge
-   ```
-
-2. Build and install in one step:
-
-   ```sh
-   npm run dev
-   ```
-
-   This installs dependencies, compiles TypeScript, packages the `.vsix`, and installs it into VS Code.
-
-3. The CyberShuttle icon will appear in your Activity Bar. If it doesn't, reload VS Code (`Cmd+Shift+P` > "Developer: Reload Window").
-
-### Updating
-
-To update to the latest version:
+## Before you open a pull request
 
 ```sh
-cd CS-Bridge
-git pull
-npm run dev
+npm run check-types   # tsc twice: the extension config, then src/ui/tsconfig.json
+npm run lint          # eslint src  (npm run lint:fix applies what it can)
+npm test              # node --test over src/modules/*.test.ts and src/ui/logic/*.test.ts
 ```
+
+These three are exactly what `.github/workflows/ci.yml` runs on every pull request. esbuild does not type-check, so
+a `.tsx` type error surfaces only under `check-types`.
+
+## Submitting a change
+
+- Branch off `main` and open the pull request against `main`.
+- Cover new behaviour with a test. Tests sit beside what they test as `*.test.ts`. A module that imports `vscode`
+  cannot be loaded by the test runner, so testable logic belongs in a `vscode`-free module — see
+  [Source layout](docs/ARCHITECTURE.md#source-layout).
+- Say in the description what you ran and against what: the three commands above, plus the cluster and scheduler if
+  the change touches the launch or connect path. The webview `.tsx` rendering has no automated coverage, so UI
+  changes want a screenshot from the Extension Development Host.
+- Add a bullet under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for anything a user would notice.
+- Slurm's own terms (`CANCELLED`, `scancel`) stay as Slurm writes them; everywhere else the verb is "stop", not
+  "cancel", and the session status is `stopped`.
+- Keep CI green; a red check is the author's to clear.
+
+Source layout, the status model, the SSH transport and the build pipeline are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Open work is in the
+[issue tracker](https://github.com/cyber-shuttle/CS-Bridge/issues). There is no CLA and no DCO sign-off.
+
+## Releasing
+
+Maintainers, one pull request per release:
+
+1. Bump `version` in `package.json`.
+2. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, open a fresh `[Unreleased]` above it,
+   and add the version's link definition at the bottom of the file. Group entries under the Keep a Changelog
+   headings only: Added, Changed, Deprecated, Removed, Fixed, Security.
+3. If the release needs a newer linkspan, say so under the version heading (`Requires linkspan X.Y.Z.`). The
+   changelog is the only place that companion-agent contract is recorded.
+4. Merge the pull request as `release: X.Y.Z`, then tag that commit `X.Y.Z` — no `v` prefix — and push the tag.
+5. `npm run package` produces `csbridge-X.Y.Z.vsix`. A maintainer uploads it to the VS Code Marketplace under the
+   `cybershuttle` publisher; there is no publish workflow.

@@ -1,213 +1,50 @@
-# CS-Bridge (CyberShuttle VS Code Extension)
+# CS Bridge (CyberShuttle VS Code extension)
 
-VS Code extension for remote HPC development. From the sidebar you add an SSH host (a login node with Slurm),
-create a **session** describing the resources you want, and start it. CS-Bridge submits an `sbatch` job that runs the
-**Linkspan** agent on the allocated compute node, opens a **Microsoft Dev Tunnel** to it, forwards the compute-node
-SSH server to a local port **in-process**, writes a per-session `cshost-<id>` entry to `~/.cybershuttle/ssh_config`,
-and opens a `vscode-remote://ssh-remote+cshost-<id>/…` window. The OS-native `ssh` binary is the actual transport —
-CS-Bridge does not bundle, depend on, or call into Remote-SSH; it just emits the `ssh-remote+` URI for whatever URI
-handler is installed (typically `ms-vscode-remote.remote-ssh`). For its *own* remote commands (Slurm queries, linkspan
-install, sbatch) CS-Bridge holds one persistent `ssh` login shell per host in-process and multiplexes every command
-over it (see SSH transport below).
-
-A session's lifecycle reads as: **created → started → connected → stopped → started again → removed.**
-There is no local-filesystem mounting today.
-
-## Prerequisites
-
-- Node.js 20.x, VS Code `^1.98.0`, TypeScript `^5.9`
-
-```bash
-npm install          # install dependencies first
-```
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing anything structural; it holds the design and the
+invariants. [README.md](README.md) is the user-facing description, [CONTRIBUTING.md](CONTRIBUTING.md) the
+contribution and release workflow. Keep those three in step with the code as you change it, and never point a
+public file at this one.
 
 ## Commands
 
 ```bash
-npm run compile      # node esbuild.js — build the extension + 3 webview bundles into out/ (+ copy codicons)
+npm install          # install dependencies first
+npm run compile      # node esbuild.js — extension + 4 webview bundles into out/ (+ copy codicons)
 npm run watch        # esbuild in watch mode (extension + webviews)
 npm run check-types  # tsc --noEmit twice: root tsconfig (extension) + src/ui/tsconfig.json (webviews)
 npm run lint         # eslint src
-npm run test         # node --import tsx --test  (unit tests: src/modules/*.test.ts + src/ui/logic/*.test.ts)
+npm test             # node --import tsx --test  (src/modules/*.test.ts + src/ui/logic/*.test.ts)
 npm run package      # vsce package -> .vsix  (vscode:prepublish = check-types + esbuild --production)
 npm run dev          # install + package + install-ext into VS Code
 ```
 
-Press F5 in VS Code to launch an Extension Development Host. Always run `check-types` (esbuild does **not**
-type-check) and `test` before declaring a change done.
-
-## Build pipeline
-
-`esbuild.js` runs two esbuild contexts plus a codicon copy:
-
-1. **Extension** — bundles `src/extension.ts` → `out/extension.js` (CJS, `platform: node`, `target: node20`,
-   externals `vscode` + `node-rsa`).
-2. **Webviews** — bundles each sidebar view root `src/ui/webviews/{sessions,hosts,stats}.tsx` →
-   `out/{sessions,hosts,stats}.js` (IIFE, `platform: browser`, Preact JSX via `jsxImportSource: preact`).
-3. Copies `@vscode/codicons/dist/codicon.{css,ttf}` → `out/codicons/`.
-
-Shared: `bundle: true`, `sourcemap: !production`, `minify: production`, alias `@` → `src`. `tsc` only
-type-checks (`noEmit`), once per tsconfig — the root `tsconfig.json` excludes `src/ui`, which has its own
-`src/ui/tsconfig.json` (DOM libs, Preact JSX). The `.vsix` ships `out/`, `resources/`, `scripts/`,
-README/LICENSE/CHANGELOG, and `package.json` — no `src/` or `node_modules/` (see `.vscodeignore`).
-
-## Source Layout
-
-```
-src/
-  extension.ts          # activate(): init SshManager + store, construct the 3 providers, register views + commands
-  webviewProvider.ts    # abstract WebviewProvider base: webview wiring + nonce-CSP HTML shell (renderHtml) for all views
-  sessionProvider.ts    # Sessions view: message dispatch, view state, owns the SessionMonitor + user dialogs
-  sshHostProvider.ts    # SSH Hosts view: add/refresh/remove hosts; "Connect" hands off via csbridge.newSessionOnHost
-  statsProvider.ts      # Stats view: past runs, their sacct stats, clear-history
-  extensionStore.ts     # per-session record persistence + file lock + cross-window fs.watch + windowPids + liveAndCleanup
-  models.ts             # SlurmSession + status union, cluster/tunnel types, persistableConnectionInfo()
-  logger.ts             # output-channel Logger singleton + errMsg() helper
-  modules/                                 # capability layer; (V) = vscode-free & unit-testable, (C) = vscode-coupled
-    sshSupport.ts        # (C) SshManager: one persistent OS-ssh login shell per host (askpass IPC, ControlMaster bonus on Unix), runRemoteCommand, per-session ssh_config + keys, ~/.ssh/config Include patch
-    sshShell.ts          # (V) pure shell protocol: buildShellCommand/extractCommandResult (marker-framed stdout/stderr/exit demux) + READY_MARKER
-    tunnelSupport.ts     # (C) Dev Tunnels SDK: tunnel CRUD, remote sshd create + port forward, in-process relay client, MS auth
-    sessionSupport.ts    # (C) lifecycle composition (prepareLaunch/launchSession/stopSession) + SessionMonitor
-    slurmSupport.ts      # (V*) Slurm-over-SSH queries: getSlurmJobStatus/Output, getSlurmClusterInfo  (*imports Logger)
-    slurmLaunch.ts       # (V) launch steps over an injected RemoteRunner + LogSink (slurm check / linkspan install / sbatch submit)
-    slurmParse.ts        # (V) pure Slurm text: buildSlurmScript, parseSacctStatus, parsePartitionLine
-    sessionMachine.ts    # (V) status domain: computeStatusTransition + isTerminal/isCloseable/isStoppable/isRelayLive
-    sshHostsStore.ts     # (V) ssh-config parse/edit (user + system hosts), buildSshConfigBlock + SSH_RESILIENCE_OPTIONS
-    sshCommandParser.ts  # (V) parse an `ssh …` command line into a Host config entry (shell-quote + posix-getopt)
-    linkspanSupport.ts   # (V) linkspan's HTTP client: getHealth, getMetrics, getSshServers, createSshServer
-    fsSupport.ts         # (V) isPidAlive (kill -0) + cross-process file lock/release (SharedArrayBuffer + Atomics)
-  ui/                                      # webview UI — Preact + TypeScript, bundled per-view by esbuild
-    webviews/{sessions,hosts,stats,summary}.tsx  # the four bundle roots (render() into #root)
-    platform/vscode.ts   # acquireVsCodeApi bridge: post() + useWebviewState() ('ready' on mount, re-render on 'state')
-    components/           # SessionCard.tsx, HostForm.tsx, base/* (Preact wrappers over @vscode-elements/elements)
-    logic/                # (V, tested) pure view logic: session.ts (status→dot/actions/labels), cluster.ts (resource options)
-scripts/
-  askpass.{js,sh,cmd}    # SSH_ASKPASS bridge (Electron-as-node) routing password/passphrase prompts to VS Code dialogs
-resources/               # csbridge.svg/.png (activity-bar + command icons)
-```
-
-## Architecture
-
-- **One provider per view, over a shared base.** `SessionProvider`/`SshHostProvider`/`StatsProvider` all
-  `extends WebviewProvider` (`webviewProvider.ts`), which owns the common wiring: `enableScripts`, the nonce-gated
-  CSP HTML shell that loads `out/<viewKind>.js`, routing `onDidReceiveMessage` → `handleMessage`, re-pushing on
-  (re)visibility → `pushState`, and tracking/clearing the resolved `_view`. Subclasses set `viewKind` and override
-  `handleMessage`/`pushState`/`onResolved`. Providers are decoupled; the only cross-view handoff is SSH Hosts →
-  Sessions via the internal `csbridge.newSessionOnHost` command (`SessionProvider.startSessionDraft`).
-
-- **Webview UI is Preact + TypeScript** in `src/ui/`. Each sidebar view has a root (`webviews/*.tsx`) esbuild-bundles
-  to `out/<view>.js`; the only routing is the `<script src>` the shell injects per `viewKind`. The webview talks to
-  the extension only through `platform/vscode.ts`: `post({command,…})` out, and `useWebviewState` in (posts `ready`
-  once, re-renders on each `{command:'state', state}` push). Pure presentation logic lives in `ui/logic/*` (unit-tested);
-  `base/*` are thin wrappers over `@vscode-elements/elements` web components.
-
-- **Session status model.** Statuses: `not_started · submitting · queued · preparing · ready_to_connect · connecting ·
-  connected · stopping · stopped · failed · unreachable · awaiting_input`. The category predicates that gate behavior live
-  in the vscode-free `sessionMachine.ts` as the single source of truth, shared by the provider, the monitor, and the
-  webview: `isTerminal` (stopped/failed), `isCloseable` (terminal + not_started), `isStoppable`
-  (everything non-terminal except not_started and the in-flight `stopping`), `isRelayLive`
-  (ready_to_connect/connecting/connected). `computeStatusTransition(current, slurmStatus)` is the pure poll-loop
-  transition table.
-
-- **Two-step connect.** *Step 1 (remote)*: bring up the compute-node sshd and expose it on the Dev Tunnel —
-  `ensureRemoteSession` → `createSshServer` (POST to the Linkspan API) + `forwardSshPortOnTunnel`; driven once per
-  session by `SessionMonitor.prepareRemote` (→ `ready_to_connect`). *Step 2 (local)*:
-  `SessionProvider._connectSessionToTunnel` → `connectSessionToTunnel` opens an in-process `TunnelRelayTunnelClient`,
-  writes the `cshost-<id>` ssh_config entry, and opens the `vscode-remote://ssh-remote+cshost-<id>/…` window (→ `connected`).
-  On a Step-2 failure it falls back to `ready_to_connect` (Step 1 still live) or `disconnected`.
-
-- **SessionMonitor** (`sessionSupport.ts`) is provider-owned (one per window, `new SessionMonitor()`). It runs **one
-  independent `setInterval` poll loop per active session** — `startMonitoring(session)` spins one up (with an immediate
-  first poll), `stopMonitoring(id)` / `dispose()` tear them down; there is no central loop over all sessions. Each
-  loop is lock-free (a per-session reentrancy guard replaces the old shared `AsyncLock`, safe because every tick mutates
-  only its own session and `updateSession` is synchronous). Per tick, `tick()` picks the poll source by status: for
-  running phases (`preparing` + relay-live) it pings the tunnel (`getMetrics` / `prepareRemote`), falling back
-  to a `getSlurmJobStatus` sacct cross-check only after `HEALTH_GIVEUP` failures; for pre-running states it polls sacct
-  and applies `computeStatusTransition`. It owns poll-driven transitions; `SessionProvider` owns user-action transitions
-  (`submitting`/`connecting`/`connected`/`stopping`) and all dialogs.
-
-- **SSH transport** (`sshSupport.ts`). `SshManager` (singleton) holds **one persistent `ssh … bash -l` per host**,
-  established on demand and reused for every remote command (commands framed with a random per-call marker so
-  stdout/stderr/exit-code demux from the long-lived streams — pure logic in `sshShell.ts`). A per-host serial queue
-  keeps one command in flight at a time; on drop the next command lazily reconnects. This in-process multiplexing is
-  what makes Win32 work (no ControlMaster there); on Unix a ControlMaster socket (name = SHA-256 of the host, under the
-  104-byte limit) is *also* layered in so multiple windows share one authentication. Background polls run in `batch`
-  mode — they ride an existing shell or fail fast, never opening a connection that would raise a Duo prompt they can't
-  answer. Password/passphrase/2FA prompts go through the `SSH_ASKPASS` bridge (`scripts/askpass.*`) which IPCs to
-  `vscode.window.showInputBox`, once per connection at connect. Per-session it writes a `cshost-<id>` Host block to
-  `~/.cybershuttle/ssh_config` (`addSshConfigEntry` / `removeSshConfigEntry`, block built by
-  `sshHostsStore.buildSshConfigBlock` with the SSH-resilience options) and a 0600 key under `~/.cybershuttle/ssh_keys/`,
-  and prepends an `Include ~/.cybershuttle/ssh_config` line to `~/.ssh/config` (`_ensureSshInclude`) so the aliases resolve.
-
-- **Tunnels** (`tunnelSupport.ts`). Dev Tunnels are managed in-process via `@microsoft/dev-tunnels-*` (no `devtunnel`
-  CLI); `ensureDevTunnel`/`removeDevTunnel` do CRUD, `connectSessionToTunnel` runs the relay client (tracked in
-  `activeTunnelClients`, freed by `disposeTunnelClient`/`disposeAllTunnelClients`). Microsoft auth uses
-  `vscode.authentication.getSession('microsoft', [DEV_TUNNELS_SCOPE])`.
-
-- **Persistence** (`extensionStore.ts`). Sessions live one JSON record per id under `~/.cybershuttle/sessions/`, guarded by the
-  `fsSupport` cross-process lock; a `fs.watch` on the dir syncs state across windows. `persistableConnectionInfo`
-  writes only the reattach refs (`sshTunnelId`/`sshPort`/`region`) — secrets and the ephemeral local port stay
-  in-memory. `windowPids` is owned by the atomic `mutateWindowPids`; `liveAndCleanup` prunes dead pids and computes
-  `isCurrent`/`windowAlive`. On load, `connected`/`connecting` demote to `ready_to_connect` and `awaiting_input` to
-  `interrupted` (the relay/prompt are gone after a reload; Step 2 re-runs).
-
-- **Sidebar vs. remote (cshost) window.** `extension.ts` reads the workspace URI authority; in a
-  `ssh-remote+cshost-<id>` window it passes that id as `SessionProvider._myId` (scoped, observe-only — no monitoring)
-  and sets the `csbridge.remote` context so the SSH Hosts + Stats views hide. The sidebar window (`_myId` undefined)
-  sees all sessions and drives the monitor.
-
-- **Testability seam = vscode-free extraction, not DI/hooks into vscode-coupled files.** Tests run under
-  `node --import tsx --test` with no vscode shim, and the `(C)` modules import `vscode` at load (directly or via
-  `Logger.getInstance()`), so they can't be imported in a test — injecting fakes into them is inert. To make logic
-  testable, extract the pure/effect-light part into a `(V)` module and test that. `slurmLaunch` is the pattern for
-  I/O-bearing logic: take an injected `RemoteRunner`/`LogSink`, mutate only the in-memory session, and let the caller
-  (`sessionSupport`) persist + report progress. Do **not** add optional/pluggable hooks or deps-objects to the
-  vscode-coupled modules — that's scaffolding that doesn't unblock tests.
-
-## Manifest contributes (`package.json`)
-
-- One activity-bar container `csbridge` with three webview views: `csbridge.sessionsView` (always), and
-  `csbridge.hostsView` / `csbridge.statsView` (`when: !csbridge.remote`).
-- Commands (all `category: "CS Bridge"`, hidden from the palette, shown only as view-title icons): `csbridge.newSession`
-  (`$(add)`) + `csbridge.switchAccount` (`$(account)`) on the Sessions title; `csbridge.addHost` (`$(add)`) +
-  `csbridge.refreshHosts` (`$(refresh)`) on the SSH Hosts title; `csbridge.refreshStats` (`$(refresh)`) +
-  `csbridge.clearRunHistory` (`$(clear-all)`) on the Stats title. The account/refresh icons sit at `navigation@0`,
-  the `+` at `navigation@1`. `csbridge.newSessionOnHost` is registered programmatically (internal handoff, not in the manifest).
-- `activationEvents: ["onStartupFinished"]`, `extensionKind: ["ui"]`.
-
-## External processes / files
-
-- **Linkspan** — runs on the compute node at `~/.cybershuttle/bin/linkspan`; `slurmLaunch.installLinkspan` deploys it
-  via `curl -fsSL …/releases/latest/download/linkspan_Linux_<arch>.tar.gz | tar -xz` when missing/outdated.
-- **OpenSSH** (`ssh`) — system binary; every remote command rides one persistent per-host login shell it spawns
-  (ControlMaster layered on as a cross-window bonus on Unix). Not bundled.
-- **`~/.cybershuttle/`** — `sessions/<id>.json`, `ssh_config` (cshost-* aliases, Include'd into `~/.ssh/config`),
-  `ssh_keys/` (per-session 0600 keys), `ssh_control/` (hashed ControlMaster sockets); on the remote: `bin/linkspan`
-  and `logs/linkspan-session-<jobid>.{out,err}`. The API port is pinned at launch, so nothing tails those logs to
-  discover it.
+`check-types`, `lint` and `test` are what CI runs; run all three before declaring a change done. Press F5 in VS
+Code for an Extension Development Host.
 
 ## Unimplemented (do not document as features)
 
-- **FRP tunnel provider** — only `devtunnel` works end-to-end; there is no FRP code.
-- **Filesystem sync** (FUSE/mutagen/sshfs), the **Stats** view (skeleton), a **plain-SSH (non-Slurm) launch** path,
-  and any admin/telemetry server — no code exists. See README Roadmap.
+- **FRP tunnel provider** — only `devtunnel` works end to end; there is no FRP code.
+- **Filesystem sync** (FUSE/mutagen/sshfs), a **plain-SSH (non-Slurm) launch** path, and any admin or telemetry
+  server — no code exists. See the README roadmap.
 
 ## Gotchas
 
-- `check-types` runs **two** tscs (root + `src/ui/tsconfig.json`); esbuild never type-checks. A `.tsx` type error only
-  surfaces via `check-types`.
-- Webview UI uses **Preact**, not React — hooks must come from `preact/hooks` (the esbuild + tsconfig
-  `jsxImportSource` is `preact`).
-- The cross-window `fs.watch` + file lock in `extensionStore` is load-bearing — multiple windows share session state;
-  don't bypass the lock.
-- The `~/.ssh/config` → `Include ~/.cybershuttle/ssh_config` line is load-bearing; removing it without removing
-  CS-Bridge leaves broken `cshost-*` references.
-- `createSshServer` is **not** idempotent; `ensureRemoteSession` guards re-creation (only creates an sshd if `sshPort`
-  is unset) to avoid leaking compute-node daemons.
-- The webview `.tsx` rendering has no automated tests — only `ui/logic/*` and the `(V)` modules are unit-tested; UI
-  changes need a manual pass in the Extension Development Host.
-- The Slurm job state `CANCELLED` (and `scancel`) are Slurm's own terms and are kept; they map to our `'stopped'`
-  session status. Everything in *our* vocabulary is "stop", not "cancel".
+- The per-session Host alias is `<cluster>-<last 6 of the session name>` (`csHostAlias`), never `cshost-<id>`. No
+  runtime alias uses `cshost-` any more; it survives in the private-key filename `id_cshost-<sessionId>`, a stale
+  comment in `sshSupport.ts`, and fixtures in `sshHostsStore.test.ts`.
+- `check-types` runs **two** tscs (root + `src/ui/tsconfig.json`); esbuild never type-checks, so a `.tsx` type
+  error surfaces only there.
+- The webview UI is **Preact**, not React — hooks must come from `preact/hooks`.
+- The cross-window `fs.watch` + file lock in `extensionStore` is load-bearing — see
+  [Persistence and cross-window state](docs/ARCHITECTURE.md#persistence-and-cross-window-state).
+- The `Include ~/.cybershuttle/ssh_config` line in `~/.ssh/config` is load-bearing; removing it without removing
+  CS Bridge leaves the per-session aliases dangling.
+- `createSshServer` is **not** idempotent; `ensureRemoteSession` guards re-creation — see
+  [Session lifecycle](docs/ARCHITECTURE.md#session-lifecycle) step 7.
+- The webview `.tsx` rendering has no automated tests — only `ui/logic/*` and the `vscode`-free modules are unit-
+  tested; UI changes need a manual pass in the Extension Development Host.
+- Stop, never cancel, outside Slurm's own `CANCELLED`/`scancel` — see
+  [Submitting a change](CONTRIBUTING.md#submitting-a-change).
 
 ## Code Discipline
 

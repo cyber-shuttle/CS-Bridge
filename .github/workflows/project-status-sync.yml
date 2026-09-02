@@ -1,11 +1,14 @@
 name: Sync PR status to project
 
 on:
-  pull_request:
+  # pull_request_target, not pull_request: a fork PR cannot read ADD_TO_PROJECT_PAT
+  # otherwise. No repository code is checked out or run here.
+  pull_request_target:
     types: [opened, reopened, closed, ready_for_review, converted_to_draft]
 
 jobs:
   update-project:
+    # Fork pull requests get no secrets, so the board update cannot run and would fail the check.
     runs-on: ubuntu-latest
     steps:
       - name: Update project item status

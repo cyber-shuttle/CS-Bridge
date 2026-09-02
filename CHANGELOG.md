@@ -4,7 +4,9 @@ All notable changes to the CS Bridge VS Code extension will be documented in thi
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.5] - 2026-08-22
+## [Unreleased]
+
+## [0.1.5] - 2026-08-21
 
 Requires linkspan 0.17.0.
 
@@ -23,7 +25,7 @@ Requires linkspan 0.17.0.
 
 - Corrected descriptions of mechanisms that no longer exist: nothing tails linkspan's logs to discover the API port (it is pinned at launch), `linkspanSupport` is an HTTP client rather than a YAML generator, `checkLinkspanHealth` does not exist, and sessions are per-id records rather than one array file. (#114)
 
-## [0.1.4] - 2026-08-22
+## [0.1.4] - 2026-08-21
 
 Requires linkspan 0.16.0.
 
@@ -75,7 +77,7 @@ Requires linkspan 0.16.0.
 
 - **linkspan socket permission clash on shared compute nodes** — the in-allocation control socket now binds at `/tmp/csbridge-<id>.sock` directly in the sticky, world-writable `/tmp`, instead of a shared `/tmp/csbridge/` directory that the first user to launch on a node would own (mode 0755) and lock every other user out of, failing with `bind: permission denied`. (#105)
 
-## [0.0.5] - 2026-07-16
+## [0.0.5] - 2026-07-18
 
 ### Added
 
@@ -196,3 +198,16 @@ Initial release of **CS Bridge** — remote HPC development from VS Code. Publis
 - Session persistence via file-based storage, with cross-window reload resilience
 - Status bar countdown and progress toasts for active sessions
 - esbuild-based build producing a single bundled, minified `out/extension.js` (`tsc` used for type-checking only)
+
+[Unreleased]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.5...HEAD
+[0.1.5]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.4...0.1.5
+[0.1.4]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.3...0.1.4
+[0.1.3]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.2...0.1.3
+[0.1.2]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.1...0.1.2
+[0.1.1]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.0...0.1.1
+[0.1.0]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.0.5...0.1.0
+[0.0.5]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.0.4...0.0.5
+[0.0.4]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.0.3...0.0.4
+[0.0.3]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.0.2...0.0.3
+[0.0.2]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.0.1...0.0.2
+[0.0.1]: https://github.com/cyber-shuttle/CS-Bridge/releases/tag/0.0.1

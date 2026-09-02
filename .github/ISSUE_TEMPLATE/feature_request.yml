@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a capability CS Bridge does not have
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The workflow that is awkward or impossible today, and how you work around it now.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like instead
+    validations:
+      required: true
+  - type: input
+    id: context
+    attributes:
+      label: Cluster and scheduler
+      description: Where this would be used, if the request is site-specific.
