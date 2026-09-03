@@ -26,8 +26,8 @@ function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
                     <DetailRow label="ID">{instance.instanceID ?? '—'}</DetailRow>
                     <DetailRow label="Type">{instance.instanceType ?? '—'}</DetailRow>
                     <DetailRow label="State">{instance.state ?? '—'}</DetailRow>
-                    <Row gap={6} justify="flex-end" pad="2px 0 0" style={{ zoom: 0.85 }}>
-                        <Button icon="terminal" onClick={() => post({ command: 'openTerminal', name: instance.instanceID })}>Terminal</Button>
+                    <Row gap={4} justify="flex-start" pad="0 0 0" style={{ zoom: 0.80 }}>
+                        {instance.state === "running" && <Button icon="terminal" onClick={() => post({ command: 'openTerminal', name: instance.instanceID })}>Terminal</Button>}
                         {instance.state === "running" && <Button icon="stop" onClick={() => post({ command: 'stop-instance', name: instance.instanceID })}>Stop</Button>}
                         {instance.state === "stopped" && <Button icon="play" onClick={() => post({ command: 'start-instance', name: instance.instanceID })}>Start</Button>}
                         {instance.state === "stopped" && <Button icon="trash" onClick={() => post({ command: 'remove-instance', name: instance.instanceID })}>Remove</Button>}
