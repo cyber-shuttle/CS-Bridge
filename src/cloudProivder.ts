@@ -67,13 +67,14 @@ export class CloudProvider extends WebviewProvider {
                 break;
             case "launch":
                 this.launchEC2Instance();
+                this.getInstances()
                 break;
             case "rm-key-pair":
                 this.remmoveKeyPair(this.PRIVATE_KEY_PATH);
             case "poll-instances":
                 if (this.client !== null) {
                     this.getInstances()
-                    this.pollInternval = setInterval(() => this.getInstances(), 60000) // poll every 1 min
+                    this.pollInternval = setInterval(() => this.getInstances(), 10000) // poll every 10 secs, change later
                 }
                 break;
             case "stop-instance":
@@ -147,7 +148,6 @@ export class CloudProvider extends WebviewProvider {
         };
         this.initEC2Client();
         this.pushState();
-        // this.getInstances()
     }
 
     private async initEC2Client(): Promise<void> {
@@ -428,7 +428,12 @@ export class CloudProvider extends WebviewProvider {
                     {
                         Name: "tag:Environment",
                         Values: ["CS-Bridge"]
-                    }
+                    },
+                    // filter out terminated status
+                    // {
+                    //     Name: "instance-state-name",
+                    //     Values: ["pending", "running", "shutting-down", "stopping", "stopped"]
+                    // }
                 ]
             }
         };
