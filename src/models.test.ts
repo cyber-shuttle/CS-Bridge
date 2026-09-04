@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { persistableConnectionInfo, SessionConnectionInfo } from '../models';
+import { persistableConnectionInfo, SessionConnectionInfo } from './models';
 
 test('persistableConnectionInfo keeps reattach refs + apiPort and drops secrets/volatile fields', () => {
     const full: SessionConnectionInfo = {

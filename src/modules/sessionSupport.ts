@@ -22,6 +22,8 @@ const WALL_TIME_GRACE_MS = 30_000;
 
 // One independent poll loop per active session. No shared lock: each loop mutates
 // only its own session and updateSession is synchronous, so ticks never race.
+const sessionLine = (name: string, msg: string): string => `Session ${name}: ${msg}`;
+
 export class SessionMonitor {
     private sessions = new Map<string, SlurmSession>();
     private tickers = new Map<string, ReturnType<typeof setInterval>>();
@@ -29,9 +31,8 @@ export class SessionMonitor {
     private probeFailedCounts = new Map<string, number>();
     private lastSacctAt = new Map<string, number>(); // throttles the in-run sacct refresh, per session
 
-    // Every monitor line is "Session <name>: <msg>" — one format, one place.
-    private log(session: SlurmSession, msg: string): void { logger.info(`Session ${session.name}: ${msg}`); }
-    private warn(session: SlurmSession, msg: string): void { logger.warn(`Session ${session.name}: ${msg}`); }
+    private log(session: SlurmSession, msg: string): void { logger.info(sessionLine(session.name, msg)); }
+    private warn(session: SlurmSession, msg: string): void { logger.warn(sessionLine(session.name, msg)); }
 
     private probeFails(id: string): number { return this.probeFailedCounts.get(id) ?? 0; }
     private bumpProbeFails(id: string): number { const n = this.probeFails(id) + 1; this.probeFailedCounts.set(id, n); return n; }
@@ -208,7 +209,7 @@ export class SessionMonitor {
         this.ticking.delete(sessionId);
         this.probeFailedCounts.delete(sessionId);
         this.lastSacctAt.delete(sessionId);
-        logger.info(`Session ${name}: monitoring stopped.`);
+        logger.info(sessionLine(name, `monitoring stopped.`));
     }
 
     // Tear down every loop (window close).
@@ -239,7 +240,7 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
 }
 
 export async function launchSession(session: SlurmSession, monitor: SessionMonitor, progress: vscode.Progress<{ message?: string }>, observer: PromptObserver): Promise<void> {
-    logger.info(`Session ${session.name}: initiating launch`);
+    logger.info(sessionLine(session.name, `initiating launch`));
     const run: RemoteRunner = { runRemoteCommand: (host, command) => SshManager.getInstance().runRemoteCommand(host, command, observer) };
 
     progress.report({ message: 'Checking Slurm availability on cluster' });
@@ -258,22 +259,22 @@ export async function launchSession(session: SlurmSession, monitor: SessionMonit
 }
 
 export async function stopSession(session: SlurmSession, monitor: SessionMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
-    logger.info(`Session ${session.name}: stopping`);
+    logger.info(sessionLine(session.name, `stopping`));
     progress.report({ message: 'Stopping session...' });
 
     let stopError: Error | undefined;
     try {
         if (session.jobId) {
             const stopCommand = `scancel ${session.jobId}`;
-            logger.info(`Session ${session.name}: sending stop command: ${stopCommand}`);
+            logger.info(sessionLine(session.name, `sending stop command: ${stopCommand}`));
             const stopResult = await SshManager.getInstance().runRemoteCommand(session.cluster, stopCommand);
             if (stopResult.code !== 0) {
                 throw new Error(`Session ${session.name}: failed to send stop command: ${stopResult.stderr}`);
             }
-            logger.info(`Session ${session.name}: stop command sent successfully`);
+            logger.info(sessionLine(session.name, `stop command sent successfully`));
         }
         else {
-            logger.warn(`Session ${session.name}: has no job ID; marking stopped without scancel.`);
+            logger.warn(sessionLine(session.name, `has no job ID; marking stopped without scancel.`));
         }
         setStatus(session, 'stopped');
     }

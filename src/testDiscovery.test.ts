@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const root = path.join(__dirname, '..', '..');
+const root = path.join(__dirname, '..');
 
 function testFilesUnder(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
