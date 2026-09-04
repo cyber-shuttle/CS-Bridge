@@ -47,7 +47,7 @@ Each session shows its live status; a running one streams its CPU, memory, and G
 
 <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-live-status.png" alt="Live session status" width="480">
 
-Every run's resource use is recorded — live in the sidebar, and afterward in a per-run summary tab reporting the run's full resource history and its CPU and memory efficiency. The Stats view keeps every past run, so you can right-size the next one.
+Every run's resource use is recorded — live in the sidebar, and afterward in a per-run summary tab reporting the run's full resource history and its CPU and memory efficiency. The Stats view keeps the ten most recent runs per session, so you can right-size the next one.
 
 <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png" alt="Past runs and their utilization" width="480">
 
@@ -74,7 +74,7 @@ To reset, remove both `~/.cybershuttle/` directories and the `Include` line in `
 2. **Microsoft sign-in fails.** Your network may block `login.microsoftonline.com` or `*.devtunnels.ms`. Allowlist both. The Dev Tunnel is the only supported transport today.
 3. **Job stuck in `PENDING`.** Cluster busy or request too large. Try smaller resources, or run `squeue -u $USER` on the cluster for the reason.
 4. **Session fails with "Slurm is not available".** The selected host has no `sinfo` on `PATH`. CS Bridge requires Slurm for now — see the [Roadmap](#roadmap).
-5. **Connect window disconnects.** If the tunnel or compute-node network drops, the session shows as **Unreachable**; click **Reconnect** to rebuild the relay. Check `View > Output > CS Bridge` for the failing step.
+5. **Connect window disconnects.** A half-open relay rebuilds itself after four missed keep-alives; if that rebuild fails the session falls back to **Connect**. A login-node outage while a session is still submitting, queued or preparing shows as **Unreachable**, with **Reconnect**. Check `View > Output > CS Bridge` for the failing step.
 6. **Session stuck on `Submitting…`.** Linkspan may be installing on first use. Wait, then check `~/.cybershuttle/logs/` on the remote. If it never moves, click **Stop**, then **Start**.
 7. **Permission denied on the remote Linkspan binary.** Run `chmod +x ~/.cybershuttle/bin/linkspan` on the remote, then **Start**.
 8. **Walltime expired mid-work.** The session shows as **Stopped**. Click **Start** to resubmit with the same partition, account, and resources, then **Connect**. Files on the shared filesystem are untouched.

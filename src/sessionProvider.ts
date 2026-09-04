@@ -8,7 +8,7 @@ import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, setStatus, watchSessions, liveAndCleanup } from './extensionStore';
 import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
-import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountLabel, hasActiveTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
+import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountLabel, hasTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { slurmAccount } from './modules/slurmParse';
@@ -78,7 +78,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (await getMicrosoftAccountLabel() === null) { return; } // don't force a sign-in popup at startup
         for (const s of getAllSessions()) {
             // Relaying an expired (or stopping) session would only flash "connecting…" then fail back; leave it be.
-            if (s.status !== 'stopping' && isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasActiveTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
+            if (s.status !== 'stopping' && isReattachable(s.status, !!s.connectionInfo?.sshTunnelId) && !hasTunnelClient(s.id) && !isWallTimeExpired(s, Date.now())) {
                 void this.establishRelay(s);
             }
         }
@@ -120,13 +120,13 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             });
         },
         prepareLaunchSession: (_data, id) => { this.prepareLaunchSession(id).catch(() => void this.pushState()); },
-        launchSession: (_data, id) => this.launchSession(id),
+        launchSession: (_data, id) => this.submitSession(id),
         stopSessionExecution: (_data, id) => this.stopSessionExecution(id),
         stopRemoteSession: () => {
             if (this.remoteSessionId) { void vscode.commands.executeCommand('csbridge.stopRemoteSession'); }
         },
         connectTunnel: (_data, id) => void this.connectSession(id),
-        removeSession: (_data, id) => this.removeSession(id),
+        removeSession: (_data, id) => this.confirmAndRemoveSession(id),
     };
 
     protected handleMessage(data: WebviewMessage) {
@@ -176,7 +176,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         return s;
     }
 
-    private async removeSession(sessionId: string) {
+    private async confirmAndRemoveSession(sessionId: string) {
         // The webview disables this card's buttons on click, so every exit path must
         // refresh to re-enable them (or to drop the card after a successful remove).
         const session = this.requireSession(sessionId, 'remove', true);
@@ -426,7 +426,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             p => stopSession(session, this.monitor, p), 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.');
     }
 
-    private launchSession(sessionId: string) {
+    private submitSession(sessionId: string) {
         const session = this.requireSession(sessionId, 'launch', false);
         if (!session) { return; }
         this.previewSession = null;

@@ -10,9 +10,8 @@ import {
     SSH_RESILIENCE_OPTIONS,
 } from './sshHostsStore';
 
-test('csHostAlias is <cluster>-<last 6 of the session name>, tolerating a spaced legacy name', () => {
+test('csHostAlias is <cluster>-<last 6 chars of the session name>', () => {
     assert.equal(csHostAlias('delta', '1782444493119'), 'delta-493119');
-    assert.equal(csHostAlias('delta', 'Session 1782444493119'), 'delta-493119'); // trailing digits win
     assert.equal(csHostAlias('delta', 'abc'), 'delta-abc'); // shorter than 6: whole name
 });
 

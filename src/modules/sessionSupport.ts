@@ -16,9 +16,9 @@ const logger = Logger.getInstance();
 const POLLING_INTERVAL_MS = 5000;
 // How often to refresh the in-run sacct copy; coarse since usage only flushes at step end.
 const SACCT_REFRESH_MS = 30_000;
-// Consecutive failed /health pings before we stop trusting the tunnel and cross-check the job over batch sacct.
-const HEALTH_GIVEUP = 6;
-// Lets an authoritative sacct verdict win first when reachable (it can lag ~HEALTH_GIVEUP polls in the relay-live path).
+// Consecutive failed probes before we stop trusting the tunnel and cross-check the job over batch sacct.
+const PROBE_GIVEUP = 6;
+// Lets an authoritative sacct verdict win first when reachable (it can lag ~PROBE_GIVEUP polls in the relay-live path).
 const WALL_TIME_GRACE_MS = 30_000;
 
 // One independent poll loop per active session. No shared lock: each loop mutates
@@ -27,15 +27,15 @@ export class SessionMonitor {
     private sessions = new Map<string, SlurmSession>();
     private tickers = new Map<string, ReturnType<typeof setInterval>>();
     private ticking = new Set<string>(); // per-session reentrancy guard: a slow tick must not overlap its next fire
-    private healthFailedCounts = new Map<string, number>();
+    private probeFailedCounts = new Map<string, number>();
     private lastSacctAt = new Map<string, number>(); // throttles the in-run sacct refresh, per session
 
     // Every monitor line is "Session <name>: <msg>" — one format, one place.
     private log(session: SlurmSession, msg: string): void { logger.info(`Session ${session.name}: ${msg}`); }
     private warn(session: SlurmSession, msg: string): void { logger.warn(`Session ${session.name}: ${msg}`); }
 
-    private healthFails(id: string): number { return this.healthFailedCounts.get(id) ?? 0; }
-    private bumpHealthFails(id: string): number { const n = this.healthFails(id) + 1; this.healthFailedCounts.set(id, n); return n; }
+    private probeFails(id: string): number { return this.probeFailedCounts.get(id) ?? 0; }
+    private bumpProbeFails(id: string): number { const n = this.probeFails(id) + 1; this.probeFailedCounts.set(id, n); return n; }
 
     private endSession(sessionId: string): void {
         const session = this.sessions.get(sessionId);
@@ -55,17 +55,17 @@ export class SessionMonitor {
         try {
             const t = computeStatusTransition(session.status, (await getSlurmJobStatus(session)).status);
             if (t.stopMonitoring) { this.applyTransition(session, t); }
-            else { this.healthFailedCounts.delete(session.id); }
+            else { this.probeFailedCounts.delete(session.id); }
         }
         catch (err) {
             this.warn(session, `healthcheck (Slurm): unreachable (will retry): ${errMsg(err)}`);
         }
     }
 
-    // Probe over the tunnel until HEALTH_GIVEUP consecutive failures, then fall back
+    // Probe over the tunnel until PROBE_GIVEUP consecutive failures, then fall back
     // to an authoritative sacct cross-check. The probe differs by phase.
     private async pingOrCrossCheck(session: SlurmSession, probe: () => Promise<void>): Promise<void> {
-        if (this.healthFails(session.id) < HEALTH_GIVEUP) { await probe(); }
+        if (this.probeFails(session.id) < PROBE_GIVEUP) { await probe(); }
         else { await this.crossCheckSlurmForDeath(session); }
     }
 
@@ -78,7 +78,7 @@ export class SessionMonitor {
             await getHealth(baseUrl, headers); // poll the tunnel: throws until linkspan is up and answering /health
             await ensureRemoteSession(session); // linkspan is up — start the sshd and forward it (all over the tunnel)
             if (session.status === 'preparing') { // may have left 'preparing' during the awaits (e.g. user hit Stop)
-                this.healthFailedCounts.delete(session.id); // Step 1 up — clear the prepare-failure tally
+                this.probeFailedCounts.delete(session.id); // Step 1 up — clear the prepare-failure tally
                 this.log(session, 'linkspan is ready to connect.');
                 setStatus(session, 'ready_to_connect', ''); // clear any transient-retry warning now that Step 1 is up
             }
@@ -86,7 +86,7 @@ export class SessionMonitor {
         catch (err) {
             // Linkspan not up yet, or a tunnel API blip: transient rather than job death, so
             // hold 'preparing' and count it toward the sacct cross-check.
-            this.bumpHealthFails(session.id);
+            this.bumpProbeFails(session.id);
             this.warn(session, `linkspan unreachable (will retry): ${errMsg(err)}`);
             session.errorMessage = `Preparing remote session: ${errMsg(err)}`;
             updateSession(session);
@@ -118,7 +118,7 @@ export class SessionMonitor {
             }
 
             // Job running but not yet up: drive bring-up over the tunnel rather than Slurm,
-            // cross-checking sacct only after HEALTH_GIVEUP failures, so a running session
+            // cross-checking sacct only after PROBE_GIVEUP failures, so a running session
             // never SSH-polls the login node.
             if (session.status === 'preparing' && session.tunnelId && (session.connectionInfo?.apiPort ?? 0) > 0) {
                 await this.pingOrCrossCheck(session, () => this.prepareRemote(session));
@@ -126,12 +126,12 @@ export class SessionMonitor {
             }
 
             if (session.connectionInfo?.apiTunnelId && isRelayLive(session.status)) {
-                // Pulling /metrics is the health check: success = alive + a live sample; HEALTH_GIVEUP failures
+                // Pulling /metrics is the health check: success = alive + a live sample; PROBE_GIVEUP failures
                 // cross-check sacct for death. Transport follows the relay — devtunnel when it owns the tunnel, else srun.
                 await this.pingOrCrossCheck(session, async () => {
                     try {
                         const m = await this.pullMetrics(session);
-                        this.healthFailedCounts.delete(session.id);
+                        this.probeFailedCounts.delete(session.id);
                         // Samples go to the per-session metrics file; only write the record when a persisted field changes.
                         if (session.errorMessage) { session.errorMessage = ''; updateSession(session); }
                         if (m.memBytes !== undefined) { appendMetric(session.id, { ...m, atMs: Date.now() }); }
@@ -139,8 +139,8 @@ export class SessionMonitor {
                     }
                     catch (err) {
                         if (isRelayLive(session.status)) {
-                            const attempt = this.bumpHealthFails(session.id);
-                            this.warn(session, `healthcheck (metrics): failed (attempt ${attempt}/${HEALTH_GIVEUP}): ${errMsg(err)}`);
+                            const attempt = this.bumpProbeFails(session.id);
+                            this.warn(session, `healthcheck (metrics): failed (attempt ${attempt}/${PROBE_GIVEUP}): ${errMsg(err)}`);
                         }
                     }
                 });
@@ -207,7 +207,7 @@ export class SessionMonitor {
         this.tickers.delete(sessionId);
         this.sessions.delete(sessionId);
         this.ticking.delete(sessionId);
-        this.healthFailedCounts.delete(sessionId);
+        this.probeFailedCounts.delete(sessionId);
         this.lastSacctAt.delete(sessionId);
         logger.info(`Session ${name}: monitoring stopped.`);
     }

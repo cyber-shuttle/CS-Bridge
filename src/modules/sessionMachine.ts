@@ -40,7 +40,7 @@ export const unreachableStatus = (status: Status): Status | undefined =>
 
 export const isReattachable = (status: Status, hasRefs: boolean): boolean => !isTerminal(status) && hasRefs;
 
-// RUNNING-while-'preparing' is handled by the monitor instead (side effects: scrape output, start remote prepare).
+// RUNNING-while-'preparing' is handled by the monitor instead (side effect: SessionMonitor.prepareRemote).
 export function computeStatusTransition(current: Status, slurm: SlurmJobStatus): StatusTransition {
     // A stopping session is tearing down; a still-live RUNNING/QUEUED reading (scancel/accounting lag) must not revive it.
     if (current === 'stopping' && (slurm === SlurmJobStatus.RUNNING || slurm === SlurmJobStatus.QUEUED)) { return {}; }

@@ -61,15 +61,15 @@ function Divided({ items }: { items: VNode[] }) {
 // Raw resource text (e.g. "MEM: 2G", "CPU: 1", "GPU: 1") above each live sparkline when relay-live; a plain row
 // otherwise. Columns bracketed by vertical separators.
 function ResourceStats({ session }: { session: ViewSession }) {
-    const mem = session.memory.replace(/\s+/g, '').replace(/B$/i, '');
-    const textOf: Record<string, string> = { MEM: `MEM: ${mem}`, CPU: `CPU: ${session.cpus}`, GPU: `GPU: ${session.gpuCount}`, GPU0: `GPU: ${session.gpuCount}` };
+    const allocated = { memory: session.memory.replace(/\s+/g, '').replace(/B$/i, ''), cpus: session.cpus };
+    const graphs = metricGraphs(session.metrics ?? [], session.gpuCount, allocated);
     if (!isRelayLive(session.status)) {
-        return <Divided items={['MEM', 'CPU', 'GPU'].map(k => <Text key={k} size={11}>{textOf[k]}</Text>)} />;
+        return <Divided items={graphs.map(g => <Text key={g.label} size={11}>{g.text}</Text>)} />;
     }
     return (
-        <Divided items={metricGraphs(session.metrics ?? [], session.gpuCount).map(g => (
+        <Divided items={graphs.map(g => (
             <Stack key={g.label} gap={1} style={{ minWidth: '44px', alignItems: 'flex-start' }}>
-                <Text size={11}>{textOf[g.label] ?? g.label}</Text>
+                <Text size={11}>{g.text}</Text>
                 {g.lines[0].values.length >= 2
                     ? <Sparkline lines={g.lines} slots={METRICS_HISTORY_LEN} title={graphTitle(g)} />
                     : <div style={{ height: '14px' }} />}

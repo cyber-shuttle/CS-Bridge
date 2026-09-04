@@ -51,8 +51,10 @@ Local VS Code                              Remote HPC cluster
    so re-creation is guarded: an sshd linkspan reports in a non-`failed` state is reused only while this machine
    still holds that session's private key; either condition failing mints a new sshd and a new key pair. Skipping
    the guard leaks compute-node daemons.
-8. **Connect.** `connectSessionToTunnel` opens an in-process `TunnelRelayTunnelClient` bound to `127.0.0.1:N`,
-   writes the per-session `Host` block, and opens `vscode-remote://ssh-remote+<alias>/…`.
+8. **Connect.** `establishRelay` composes the step: `connectSessionToTunnel` opens an in-process
+   `TunnelRelayTunnelClient` bound to `127.0.0.1:N` and returns that port, `addSshConfigEntry` writes the
+   per-session `Host` block, and only on success does `openOrFocusWindow` open
+   `vscode-remote://ssh-remote+<alias>/…`.
 9. **Attach.** VS Code's remote-SSH URI handler runs the OS `ssh` binary against that alias, installs VS Code
    Server, and attaches the window to the compute node. CS Bridge pins that alias's
    `remote.SSH.serverInstallPath` to node-local `/tmp/cs-vscode/<sessionId>`, keeping the server off the shared

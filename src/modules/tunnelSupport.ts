@@ -120,7 +120,7 @@ export async function ensureRemoteSession(session: SlurmSession): Promise<void> 
     logger.info(`SSH port ${ci.sshPort} published on tunnel ${ci.apiTunnelId} for session ${session.id}.`);
 }
 
-export function hasActiveTunnelClient(sessionId: string): boolean {
+export function hasTunnelClient(sessionId: string): boolean {
     return activeTunnelClients.has(sessionId);
 }
 
