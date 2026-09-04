@@ -33,21 +33,22 @@ interface Session {
     windowPids?: number[];
 }
 
-// Required fields are persisted across reload (persistableConnectionInfo); optional ones are volatile/secret, in-memory only.
-export interface SessionConnectionInfo {
+export interface PersistedConnectionInfo {
     sshPort: number;
     sshTunnelId: string;
     region: string;
-    sshTunnelForwardPort?: number;
-    apiTunnelId?: string;
-    apiTunnelAccessToken?: string;
     apiPort?: number;
 }
 
-export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): SessionConnectionInfo | undefined {
+export interface SessionConnectionInfo extends PersistedConnectionInfo {
+    sshTunnelForwardPort?: number;
+    apiTunnelId?: string;
+    apiTunnelAccessToken?: string;
+}
+
+export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): PersistedConnectionInfo | undefined {
     // A session preparing on the tunnel has an apiPort but no sshd yet; drop it and a reload orphans it.
     if (!ci?.sshTunnelId && !ci?.apiPort) { return undefined; }
-    // apiPort persists so a reattached session health-pings the tunnel instead of polling the login node; the token is re-minted.
     const { sshTunnelId, sshPort, region, apiPort } = ci;
     return { sshTunnelId, sshPort, region, apiPort };
 }
@@ -100,6 +101,7 @@ export enum SlurmJobStatus {
 export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean; metrics?: Metric[] };
 
 export const METRICS_HISTORY_LEN = 20; // rolling live-sample window, also the sparkline slot count
+export const POLLING_INTERVAL_MS = 5000;
 
 // A resource sample from linkspan's /metrics. atMs (when taken) is set once stored, for rate derivation.
 export interface Metric {

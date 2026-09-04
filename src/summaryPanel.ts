@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { getSession, watchSessions } from './extensionStore';
 import { renderHtml } from './webviewProvider';
-import { readAllRuns, readSessionMetrics, readSessionStats, watchSessionMetrics } from './modules/sessionMetricsStore';
+import { readAllRuns, readRecentMetrics, readSessionStats, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { Metric, Stats, SlurmSession, SummaryState } from './models';
 
 // A finished run's fixed snapshot (from the Stats view), shown instead of the possibly-relaunched live session.
@@ -38,7 +38,7 @@ export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession
         const s = getSession(session.id) ?? session;
         // Past run from Stats: its fixed snapshot. Live: current samples + latest sacct copy (run record or in-run file).
         const run = runSnapshot ? undefined : readAllRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
-        const metrics = runSnapshot ? runSnapshot.metrics : readSessionMetrics(s.id);
+        const metrics = runSnapshot ? runSnapshot.metrics : readRecentMetrics(s.id);
         const stats = runSnapshot ? runSnapshot.stats : (run?.stats ?? readSessionStats(s.id));
         const state: SummaryState = { session: s, metrics, stats };
         void panel.webview.postMessage({ command: 'state', state });

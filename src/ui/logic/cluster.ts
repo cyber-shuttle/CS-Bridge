@@ -57,3 +57,9 @@ export function parseGpuClass(gpuClass: string): { gpuType: string; gpuCount: st
         ? { gpuType: '', gpuCount: gpuClass }
         : { gpuType: gpuClass.slice(0, idx), gpuCount: gpuClass.slice(idx + 1) };
 }
+
+// A field whose choices come from the selected partition keeps the user's pick only while that
+// partition still offers it; otherwise the partition's own first option wins.
+export function resolvePick(pick: string, options: string[], fallback: string): string {
+    return options.includes(pick) ? pick : (options[0] ?? fallback);
+}

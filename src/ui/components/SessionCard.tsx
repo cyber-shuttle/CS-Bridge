@@ -11,7 +11,7 @@ import { post } from '@/ui/platform/vscode';
 
 interface Props {
     session: ViewSession;
-    readonly?: boolean;
+    remote?: boolean;
 }
 
 // 1s clock owned by the Sessions root, fed through this context so StatusText re-renders each tick.
@@ -61,15 +61,15 @@ function Divided({ items }: { items: VNode[] }) {
 // Raw resource text (e.g. "MEM: 2G", "CPU: 1", "GPU: 1") above each live sparkline when relay-live; a plain row
 // otherwise. Columns bracketed by vertical separators.
 function ResourceStats({ session }: { session: ViewSession }) {
-    const mem = session.memory.replace(/\s+/g, '').replace(/B$/i, '');
-    const textOf: Record<string, string> = { MEM: `MEM: ${mem}`, CPU: `CPU: ${session.cpus}`, GPU: `GPU: ${session.gpuCount}`, GPU0: `GPU: ${session.gpuCount}` };
+    const allocated = { memory: session.memory.replace(/\s+/g, '').replace(/B$/i, ''), cpus: session.cpus };
+    const graphs = metricGraphs(session.metrics ?? [], session.gpuCount, allocated);
     if (!isRelayLive(session.status)) {
-        return <Divided items={['MEM', 'CPU', 'GPU'].map(k => <Text key={k} size={11}>{textOf[k]}</Text>)} />;
+        return <Divided items={graphs.map(g => <Text key={g.label} size={11}>{g.text}</Text>)} />;
     }
     return (
-        <Divided items={metricGraphs(session.metrics ?? [], session.gpuCount).map(g => (
+        <Divided items={graphs.map(g => (
             <Stack key={g.label} gap={1} style={{ minWidth: '44px', alignItems: 'flex-start' }}>
-                <Text size={11}>{textOf[g.label] ?? g.label}</Text>
+                <Text size={11}>{g.text}</Text>
                 {g.lines[0].values.length >= 2
                     ? <Sparkline lines={g.lines} slots={METRICS_HISTORY_LEN} title={graphTitle(g)} />
                     : <div style={{ height: '14px' }} />}
@@ -100,7 +100,7 @@ function StatusText({ session }: { session: ViewSession }) {
     }
 }
 
-export function SessionCard({ session, readonly }: Props) {
+export function SessionCard({ session, remote }: Props) {
     const statusColor = dotColor(session.status);
     const canClose = isCloseable(session.status);
     const actions = sessionActions(session);
@@ -119,7 +119,7 @@ export function SessionCard({ session, readonly }: Props) {
                 <Text weight={600}>{session.cluster}</Text>
                 <Chip label={session.allocation} />
                 <Chip label={session.queue} />
-                {!readonly && canClose
+                {!remote && canClose
                     ? (
                             <Row gap={4} style={{ marginLeft: 'auto' }}>
                                 <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
@@ -134,14 +134,14 @@ export function SessionCard({ session, readonly }: Props) {
                 <Row gap={6}>
                     <Chip label={fmtTime(wallMs(session.wallTime))} />
                     <StatusText session={session} />
-                    {!readonly && actions.length ? (
+                    {!remote && actions.length ? (
                         // zoom shrinks the label and the vscode-button's fixed-size codicon together.
                         <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0, zoom: 0.85 }}>
                             {actions.map(a => a.kind === 'opening'
                                 ? <Button key={a.kind} disabled><Row gap={4}><Spinner size={11} /> {a.label}</Row></Button>
                                 : <Button key={a.kind} icon={a.icon} disabled={a.kind === 'current' || undefined} onClick={() => act(a)}>{a.label}</Button>)}
                         </Row>
-                    ) : readonly && actions.some(a => a.kind === 'stop') ? (
+                    ) : remote && actions.some(a => a.kind === 'stop') ? (
                         <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0, zoom: 0.85 }}>
                             <Button icon="debug-stop" onClick={() => post({ command: 'stopRemoteSession', sessionId: session.id })}>Stop</Button>
                         </Row>

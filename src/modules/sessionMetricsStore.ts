@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Metric, METRICS_HISTORY_LEN, Stats, SessionRunRecord } from '../models';
-import { readJson, updateJson, deleteFile } from './fsSupport';
+import { readJson, lockedUpdateJson, deleteFile } from './fsSupport';
 
 // One file per session: metrics/{id}.json = { runs, metrics, stats } — finished-run history, live samples, live sacct
 // copy, each written independently. Per-file locked, so writes never contend across sessions.
@@ -20,14 +20,14 @@ function sessionIds(): string[] {
 
 const mutate = (id: string, fn: (cur: MetricsFile) => MetricsFile): void => {
     fs.mkdirSync(METRICS_DIR, { recursive: true });
-    updateJson<MetricsFile>(filePath(id), cur => fn(cur ?? {}));
+    lockedUpdateJson<MetricsFile>(filePath(id), cur => fn(cur ?? {}));
 };
 
 // live samples — append one, capped to the rolling window
 export function appendMetric(id: string, sample: Metric): void {
     mutate(id, cur => ({ ...cur, metrics: [...(cur.metrics ?? []), sample].slice(-METRICS_HISTORY_LEN) }));
 }
-export const readSessionMetrics = (id: string): Metric[] => read(id).metrics ?? [];
+export const readRecentMetrics = (id: string): Metric[] => read(id).metrics ?? [];
 
 export const writeSessionStats = (id: string, stats: Stats): void => mutate(id, cur => ({ ...cur, stats }));
 export const readSessionStats = (id: string): Stats | undefined => read(id).stats;
@@ -51,14 +51,14 @@ export function mergeRun(existing: SessionRunRecord[], record: SessionRunRecord)
 
 export function appendRun(record: SessionRunRecord, onError?: (err: unknown) => void): void {
     fs.mkdirSync(METRICS_DIR, { recursive: true });
-    updateJson<MetricsFile>(filePath(record.sessionId), (cur) => {
+    lockedUpdateJson<MetricsFile>(filePath(record.sessionId), (cur) => {
         const runs = mergeRun(cur?.runs ?? [], record);
         return runs === null ? null : { ...cur, runs };
     }, onError);
 }
 
 export function clearAllRuns(): void {
-    for (const id of sessionIds()) { updateJson<MetricsFile>(filePath(id), cur => (cur ? { ...cur, runs: [] } : null)); }
+    for (const id of sessionIds()) { lockedUpdateJson<MetricsFile>(filePath(id), cur => (cur ? { ...cur, runs: [] } : null)); }
 }
 
 export function deleteSessionMetrics(id: string): void {

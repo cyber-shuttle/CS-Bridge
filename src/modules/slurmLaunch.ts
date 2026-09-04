@@ -44,7 +44,7 @@ export function keepsInstalledLinkspan(local: string, latest: string): boolean {
 }
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
-export async function checkLinkspanInstallation(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
+export async function linkspanIsUpToDate(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
     const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | sed 's#.*/##'`);
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 
@@ -97,7 +97,8 @@ export async function installLinkspan(session: SlurmSession, run: RemoteRunner, 
         'chmod 700 "$staged"',
         'mv -f "$staged" "$bin/linkspan"',
     ].join('\n');
-    const installResult = await run.runRemoteCommand(session.cluster, install);
+    const installB64 = Buffer.from(install).toString('base64');
+    const installResult = await run.runRemoteCommand(session.cluster, `echo '${installB64}' | base64 -d | bash`);
     ensureSuccess(installResult, `Failed to install Linkspan on cluster ${session.cluster}`);
     log.info(`Linkspan installed successfully on cluster ${session.cluster}`);
 }
@@ -127,7 +128,6 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
 
     session.batchScript = undefined; // held the tunnel host token; sbatch has it now
     session.jobId = jobIdMatch[1];
-    session.status = 'queued';
     session.submittedAt = Date.now();
     log.info(`Job submitted successfully with Job ID: ${session.jobId}`);
 }
