@@ -1,4 +1,4 @@
-import { Metric, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
+import { Metric, POLLING_INTERVAL_MS, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './../logger';
 import { updateSession, setStatus } from '../extensionStore';
@@ -13,7 +13,6 @@ import { getHealth, getMetrics } from './linkspanSupport';
 import { appendMetric, writeSessionStats, resetLive } from './sessionMetricsStore';
 
 const logger = Logger.getInstance();
-const POLLING_INTERVAL_MS = 5000;
 // How often to refresh the in-run sacct copy; coarse since usage only flushes at step end.
 const SACCT_REFRESH_MS = 30_000;
 // Consecutive failed probes before we stop trusting the tunnel and cross-check the job over batch sacct.
@@ -254,7 +253,7 @@ export async function launchSession(session: SlurmSession, monitor: SessionMonit
 
     progress.report({ message: 'Submitting job to Slurm...' });
     await submitJobToSlurm(session, run, logger);
-    updateSession(session);
+    setStatus(session, 'queued');
     monitor.startMonitoring(session);
 }
 

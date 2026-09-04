@@ -101,6 +101,7 @@ export enum SlurmJobStatus {
 export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean; metrics?: Metric[] };
 
 export const METRICS_HISTORY_LEN = 20; // rolling live-sample window, also the sparkline slot count
+export const POLLING_INTERVAL_MS = 5000;
 
 // A resource sample from linkspan's /metrics. atMs (when taken) is set once stored, for rate derivation.
 export interface Metric {

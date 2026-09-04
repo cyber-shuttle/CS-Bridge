@@ -72,11 +72,11 @@ test('validateSlurmConfig resolves on exit 0 and throws the site filter error ot
         /Cluster cl rejected the session configuration: ERROR: Unknown project acct1/);
 });
 
-test('submitJobToSlurm sets jobId + queued on success and throws on missing script / bad output', async () => {
+test('submitJobToSlurm records the job without touching status, and throws on missing script / bad output', async () => {
     const s = session({ batchScript: '#!/bin/bash' });
     await submitJobToSlurm(s, runner([{ match: 'sbatch', stdout: 'Submitted batch job 4242' }]), noopLog);
     assert.equal(s.jobId, '4242');
-    assert.equal(s.status, 'queued');
+    assert.equal(s.status, undefined, 'status belongs to setStatus, not the submit step');
     assert.ok((s.submittedAt ?? 0) > 0);
 
     await assert.rejects(() => submitJobToSlurm(session(), runner([]), noopLog), /missing batch script/);

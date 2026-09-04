@@ -4,7 +4,7 @@ import * as path from 'path';
 import { parse, LineType } from 'ssh-config';
 import { SshHost } from '../models';
 import { SshConfigEntry } from './sshCommandParser';
-import { updateTextFile } from './fsSupport';
+import { lockedUpdateTextFile } from './fsSupport';
 
 export const USER_SSH_CONFIG_PATH = path.join(os.homedir(), '.ssh', 'config');
 export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
@@ -66,6 +66,19 @@ interface SshConfigDirective {
 const directiveText = (value: DirectiveValue): string =>
     Array.isArray(value) ? value.map(t => t.val).join(' ') : value;
 
+// An Include only applies globally when it is uncommented and precedes the first Host/Match block;
+// OpenSSH scopes anything after one to that block.
+export function includeIsEffective(configText: string, includeLine: string): boolean {
+    const wanted = includeLine.trim().replace(/\s+/g, ' ');
+    for (const raw of configText.split('\n')) {
+        const line = raw.trim();
+        if (line === '' || line.startsWith('#')) { continue; }
+        if (/^(Host|Match)\b/i.test(line)) { return false; }
+        if (line.replace(/\s+/g, ' ') === wanted) { return true; }
+    }
+    return false;
+}
+
 export function parseHostsFromConfigText(text: string): SshHost[] {
     const config = parse(text);
     const hosts: SshHost[] = [];
@@ -116,9 +129,9 @@ export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
 
 export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    updateTextFile(filePath, text => addHostToConfigText(text ?? '', entry), 0o600);
+    lockedUpdateTextFile(filePath, text => addHostToConfigText(text ?? '', entry), 0o600);
 }
 
 export function removeHostFromConfigFile(filePath: string, name: string): void {
-    updateTextFile(filePath, text => (text === undefined ? null : removeHostFromConfigText(text, name)), 0o600);
+    lockedUpdateTextFile(filePath, text => (text === undefined ? null : removeHostFromConfigText(text, name)), 0o600);
 }

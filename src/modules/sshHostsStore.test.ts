@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    includeIsEffective,
     parseHostsFromConfigText,
     addHostToConfigText,
     removeHostFromConfigText,
@@ -84,4 +85,14 @@ test('mergeHostsByPriority keeps the first occurrence of each name (user wins ov
     assert.deepEqual(merged.map(h => h.name), ['a', 'b', 'c']);
     assert.equal(merged.find(h => h.name === 'b')?.hostname, 'user-b');
     assert.equal(merged.find(h => h.name === 'b')?.source, 'user');
+});
+
+test('includeIsEffective accepts only an uncommented Include above the first Host/Match block', () => {
+    const line = 'Include ~/.cybershuttle/ssh_config';
+    assert.equal(includeIsEffective('', line), false);
+    assert.equal(includeIsEffective(`${line}\nHost foo\n    HostName x\n`, line), true);
+    assert.equal(includeIsEffective(`  ${line}  \n`, line), true, 'surrounding whitespace is not significant');
+    assert.equal(includeIsEffective(`# ${line}\n`, line), false, 'a commented Include does nothing');
+    assert.equal(includeIsEffective(`Host *\n    ${line}\n`, line), false, 'scoped to a Host block, not global');
+    assert.equal(includeIsEffective(`Match host bar\n    ${line}\n`, line), false, 'scoped to a Match block');
 });

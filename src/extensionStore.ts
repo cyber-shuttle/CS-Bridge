@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Logger } from './logger';
-import { readJson, updateJson, deleteFile, isPidAlive } from './modules/fsSupport';
+import { readJson, lockedUpdateJson, deleteFile, isPidAlive } from './modules/fsSupport';
 import { SlurmSession } from './models';
 import { mergeFromDisk, mergeRecord, toPersistedRecord } from './modules/sessionStore';
 import { deleteSessionMetrics } from './modules/sessionMetricsStore';
@@ -27,7 +27,7 @@ function readAllRecords(): SlurmSession[] {
 
 // Keeps the on-disk windowPids so a record write can't clobber another window's pids.
 function writeRecord(session: SlurmSession): void {
-    updateJson<SlurmSession>(recordPath(session.id), cur => toPersistedRecord(session, cur?.windowPids),
+    lockedUpdateJson<SlurmSession>(recordPath(session.id), cur => toPersistedRecord(session, cur?.windowPids),
         err => logger.error(`Failed to save session ${session.id}`, err));
 }
 
@@ -65,7 +65,6 @@ export function updateSession(session: SlurmSession) {
     writeRecord(session);
 }
 
-// The one status-write path: set status (and, when given, errorMessage) and persist.
 export function setStatus(session: SlurmSession, status: SlurmSession['status'], errorMessage?: string): void {
     session.status = status;
     if (errorMessage !== undefined) { session.errorMessage = errorMessage; }
@@ -80,7 +79,7 @@ export function removeSession(sessionId: string) {
 }
 
 export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
-    updateJson<SlurmSession>(recordPath(sessionId), (cur) => {
+    lockedUpdateJson<SlurmSession>(recordPath(sessionId), (cur) => {
         if (!cur) { return null; }
         cur.windowPids = transform(cur.windowPids ?? []);
         const mem = sessions.find(s => s.id === sessionId);

@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release } from './fsSupport';
 import { buildShellCommand, extractCommandResult, READY_MARKER, renderAuthHtml } from './sshShell';
-import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock, csHostAlias } from './sshHostsStore';
+import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock, csHostAlias, includeIsEffective } from './sshHostsStore';
 
 const logger = Logger.getInstance();
 const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
@@ -312,8 +312,7 @@ export class SshManager {
                 return;
             }
             const content = fs.readFileSync(sshConfigPath, 'utf-8');
-            if (!content.includes(includeLine)) {
-                // Include must appear before any Host/Match blocks to take effect
+            if (!includeIsEffective(content, includeLine)) {
                 fs.writeFileSync(sshConfigPath, `${includeLine}\n${content}`);
             }
         }

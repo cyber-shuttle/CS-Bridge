@@ -127,7 +127,6 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
 
     session.batchScript = undefined; // held the tunnel host token; sbatch has it now
     session.jobId = jobIdMatch[1];
-    session.status = 'queued';
     session.submittedAt = Date.now();
     log.info(`Job submitted successfully with Job ID: ${session.jobId}`);
 }
