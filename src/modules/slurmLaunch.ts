@@ -97,7 +97,8 @@ export async function installLinkspan(session: SlurmSession, run: RemoteRunner, 
         'chmod 700 "$staged"',
         'mv -f "$staged" "$bin/linkspan"',
     ].join('\n');
-    const installResult = await run.runRemoteCommand(session.cluster, install);
+    const installB64 = Buffer.from(install).toString('base64');
+    const installResult = await run.runRemoteCommand(session.cluster, `echo '${installB64}' | base64 -d | bash`);
     ensureSuccess(installResult, `Failed to install Linkspan on cluster ${session.cluster}`);
     log.info(`Linkspan installed successfully on cluster ${session.cluster}`);
 }

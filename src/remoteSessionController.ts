@@ -25,7 +25,7 @@ export class RemoteSessionController implements vscode.Disposable {
         this.stopItem.text = '$(debug-stop) Stop';
         this.stopItem.tooltip = 'Stop this session and return to a local window';
         this.stopItem.command = 'csbridge.stopRemoteSession';
-        this.stopCommand = vscode.commands.registerCommand('csbridge.stopRemoteSession', () => this.stopAndSummarize());
+        this.stopCommand = vscode.commands.registerCommand('csbridge.stopRemoteSession', () => this.requestStopHandoff());
 
         this.render();
         if (!this.torndown) { this.item.show(); this.stopItem.show(); }
@@ -63,7 +63,7 @@ export class RemoteSessionController implements vscode.Disposable {
         await this.endToLocal();
     }
 
-    private async stopAndSummarize(): Promise<void> {
+    private async requestStopHandoff(): Promise<void> {
         if (this.torndown) { return; }
         const session = getSession(this.sessionId);
         if (!session) { return; }
@@ -73,7 +73,6 @@ export class RemoteSessionController implements vscode.Disposable {
 
         this.torndown = true; // claim now so the 1s render tick can't race the reload
         this.stopItem.text = '$(loading~spin) Stopping…';
-        // Persist 'stopping', then reload; the reloaded local window finishes the stop (scancel + metrics), not this one.
         setStatus(session, 'stopping', '');
         await this.endToLocal();
     }

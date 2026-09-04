@@ -29,6 +29,11 @@ function recordingRunner(machine: string): { run: RemoteRunner; calls: string[] 
     return { run, calls };
 }
 
+const decodeInstall = (calls: string[]): string => {
+    const b64 = /echo '([A-Za-z0-9+/=]+)' \| base64 -d \| bash/.exec(calls.find(c => c.includes('base64 -d')) ?? '');
+    return b64 ? Buffer.from(b64[1], 'base64').toString() : '';
+};
+
 test('keepsInstalledLinkspan keeps only a real version that is ahead of the release', () => {
     assert.equal(keepsInstalledLinkspan('0.15.13', '0.15.12'), true);
     assert.equal(keepsInstalledLinkspan('0.15.12', '0.15.12'), true); // already installed
@@ -57,10 +62,10 @@ test('checkLinkspanInstallation passes the installed and latest versions the rig
 test('installLinkspan normalizes aarch64 and throws on a failed install', async () => {
     const { run, calls } = recordingRunner('aarch64');
     await installLinkspan(session(), run, noopLog);
-    assert.ok(calls.some(c => c.includes('linkspan_Linux_arm64.tar.gz')), 'aarch64 should map to arm64 asset');
+    assert.match(decodeInstall(calls), /linkspan_Linux_arm64\.tar\.gz/, 'aarch64 should map to arm64 asset');
 
     await assert.rejects(
-        () => installLinkspan(session(), runner([{ match: 'uname', stdout: 'x86_64' }, { match: 'curl', code: 1, stderr: 'net' }]), noopLog),
+        () => installLinkspan(session(), runner([{ match: 'uname', stdout: 'x86_64' }, { match: 'base64 -d', code: 1, stderr: 'net' }]), noopLog),
         /Failed to install Linkspan on cluster cl: net/);
 });
 
@@ -97,9 +102,21 @@ test('installLinkspan refuses a machine linkspan is not released for', async () 
 test('installLinkspan stages the download and moves it into place', async () => {
     const { run, calls } = recordingRunner('x86_64');
     await installLinkspan(session(), run, noopLog);
-    const install = calls.find(c => c.includes('curl')) ?? '';
+    const install = decodeInstall(calls);
     assert.match(install, /staged=/, 'download must land on a staging path');
     assert.match(install, /mv -f "\$staged"/, 'the staged file must be moved into place, not written in place');
     assert.doesNotMatch(install, /tar -xz -C/, 'must not untar straight onto the destination');
     assert.match(install, /install -d -m 700/, 'the bin directory should be owner-only');
+});
+
+// set -eu and the EXIT trap must not land in the persistent login shell every later command shares.
+test('installLinkspan sends one line, running the script in a subshell', async () => {
+    const { run, calls } = recordingRunner('x86_64');
+    await installLinkspan(session(), run, noopLog);
+    const install = calls.find(c => c.includes('base64 -d')) ?? '';
+    assert.ok(install, 'the install script must be base64-encoded like the sbatch submit');
+    assert.match(install, /\| bash$/, 'decoded script runs in its own bash');
+    for (const c of calls) {
+        assert.doesNotMatch(c, /\n/, `command reaching the shell must be single-line: ${c}`);
+    }
 });
