@@ -44,7 +44,7 @@ export function keepsInstalledLinkspan(local: string, latest: string): boolean {
 }
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
-export async function checkLinkspanInstallation(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
+export async function linkspanIsUpToDate(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
     const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | sed 's#.*/##'`);
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 

@@ -125,7 +125,7 @@ export function hasTunnelClient(sessionId: string): boolean {
 }
 
 // True while this window's relay client holds a live connection — its keepAlive already watches the link, so this is
-// the authoritative liveness signal for a connected session and lets the monitor skip HTTP-pinging the same tunnel.
+// the authoritative liveness signal for a connected session.
 export function isTunnelClientConnected(sessionId: string): boolean {
     return activeTunnelClients.get(sessionId)?.connectionStatus === ConnectionStatus.Connected;
 }

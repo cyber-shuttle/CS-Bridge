@@ -7,7 +7,7 @@ import { SshManager } from './sshSupport';
 import { getMetricsViaSrun, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus, StatusTransition } from './sessionMachine';
-import { checkSlurmAvailability, checkLinkspanInstallation, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
+import { checkSlurmAvailability, linkspanIsUpToDate, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, isTunnelClientConnected, linkspanEndpoint, removeDevTunnel } from './tunnelSupport';
 import { getHealth, getMetrics } from './linkspanSupport';
 import { appendMetric, writeSessionStats, resetLive } from './sessionMetricsStore';
@@ -246,7 +246,7 @@ export async function launchSession(session: SlurmSession, monitor: SessionMonit
     await checkSlurmAvailability(session, run, logger);
 
     progress.report({ message: 'Checking Linkspan installation on cluster' });
-    if (!await checkLinkspanInstallation(session, run, logger)) {
+    if (!await linkspanIsUpToDate(session, run, logger)) {
         progress.report({ message: 'Installing Linkspan on cluster' });
         await installLinkspan(session, run, logger);
     }

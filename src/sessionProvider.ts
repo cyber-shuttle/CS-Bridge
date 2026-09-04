@@ -7,7 +7,7 @@ import { removeSshConfigEntry, addSshConfigEntry, hasSessionKey, SshManager } fr
 import { getSlurmClusterInfo } from './modules/slurmSupport';
 import { csHostAlias } from './modules/sshHostsStore';
 import { addSession, removeSession, getSession, getAllSessions, updateSession, setStatus, watchSessions, liveAndCleanup } from './extensionStore';
-import { readSessionMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
+import { readRecentMetrics, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { connectSessionToTunnel, removeDevTunnel, disposeAllTunnelClients, disposeTunnelClient, ensureRemoteSession, getMicrosoftAccountLabel, hasTunnelClient, switchDevTunnelAccount } from './modules/tunnelSupport';
 import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './modules/sessionSupport';
 import { validateSlurmConfig } from './modules/slurmLaunch';
@@ -306,7 +306,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     .map((s) => {
                         const live = liveAndCleanup(s);
                         if (live.windowAlive) { this.opening.delete(s.id); }
-                        return { ...s, ...live, opening: this.opening.has(s.id), metrics: readSessionMetrics(s.id) };
+                        return { ...s, ...live, opening: this.opening.has(s.id), metrics: readRecentMetrics(s.id) };
                     })
                     // newest first (uuidv7 ids are time-ordered)
                     .sort((a, b) => b.id.localeCompare(a.id)),

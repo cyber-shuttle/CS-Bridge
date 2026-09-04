@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLinkspanInstallation, keepsInstalledLinkspan, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
+import { linkspanIsUpToDate, keepsInstalledLinkspan, installLinkspan, submitJobToSlurm, validateSlurmConfig, RemoteRunner } from './slurmLaunch';
 import { SlurmSession } from '../models';
 
 const noopLog = { info() {}, warn() {}, error() {} };
@@ -51,12 +51,12 @@ test('keepsInstalledLinkspan keeps only a real version that is ahead of the rele
     assert.equal(keepsInstalledLinkspan('0.15.12', ''), true); // no answer about the latest keeps what works
 });
 
-test('checkLinkspanInstallation passes the installed and latest versions the right way round', async () => {
+test('linkspanIsUpToDate passes the installed and latest versions the right way round', async () => {
     const ahead = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.4' }]);
-    assert.equal(await checkLinkspanInstallation(session(), ahead, noopLog), true);
+    assert.equal(await linkspanIsUpToDate(session(), ahead, noopLog), true);
 
     const stale = runner([{ match: 'releases/latest', stdout: 'v1.2.4' }, { match: '--version', stdout: '1.2.3' }]);
-    assert.equal(await checkLinkspanInstallation(session(), stale, noopLog), false);
+    assert.equal(await linkspanIsUpToDate(session(), stale, noopLog), false);
 });
 
 test('installLinkspan normalizes aarch64 and throws on a failed install', async () => {

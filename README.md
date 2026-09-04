@@ -47,7 +47,7 @@ Each session shows its live status; a running one streams its CPU, memory, and G
 
 <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/03-live-status.png" alt="Live session status" width="480">
 
-Every run's resource use is recorded — live in the sidebar, and afterward in a per-run summary tab reporting the run's full resource history and its CPU and memory efficiency. The Stats view keeps the ten most recent runs per session, so you can right-size the next one.
+Every run's resource use is recorded — live in the sidebar, and afterward in a per-run summary tab reporting the run's most recent resource samples and its CPU and memory efficiency. The Stats view keeps the ten most recent runs per session, so you can right-size the next one.
 
 <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png" alt="Past runs and their utilization" width="480">
 

@@ -27,7 +27,7 @@ const mutate = (id: string, fn: (cur: MetricsFile) => MetricsFile): void => {
 export function appendMetric(id: string, sample: Metric): void {
     mutate(id, cur => ({ ...cur, metrics: [...(cur.metrics ?? []), sample].slice(-METRICS_HISTORY_LEN) }));
 }
-export const readSessionMetrics = (id: string): Metric[] => read(id).metrics ?? [];
+export const readRecentMetrics = (id: string): Metric[] => read(id).metrics ?? [];
 
 export const writeSessionStats = (id: string, stats: Stats): void => mutate(id, cur => ({ ...cur, stats }));
 export const readSessionStats = (id: string): Stats | undefined => read(id).stats;
