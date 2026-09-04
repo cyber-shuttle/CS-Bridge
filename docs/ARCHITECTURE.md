@@ -106,7 +106,8 @@ multiplexing is what makes Windows work, where OpenSSH has no Unix-socket Contro
 socket (named by a SHA-256 of the host, to stay under the 104-byte socket-path limit) is layered on as well so
 several windows share one authentication. Background polls run in a batch mode that rides an existing shell or
 fails fast, so they never raise a 2FA prompt nobody is watching. Password, passphrase and keyboard-interactive
-prompts go out through the `SSH_ASKPASS` helper, which IPCs to `vscode.window.showInputBox`.
+prompts go out through the `SSH_ASKPASS` helper, which IPCs to a `csbridge.sshAuth` webview panel: a
+newline-preserving monospace block is what lets a device-flow QR prompt render, which an input box cannot do.
 
 ## Persistence and cross-window state
 

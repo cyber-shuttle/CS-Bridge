@@ -7,7 +7,7 @@ import { confirmModal } from './webviewProvider';
 
 const WARN_THRESHOLD_MS = 10 * 60_000; // color the status bar under 10 minutes left
 
-// Lives only in a cshost remote window. Owns the wall-time status bar + a Stop button, and the end-to-local:
+// Lives only in a remote window. Owns the wall-time status bar + a Stop button, and the end-to-local:
 // on wall-time expiry, terminal status, or the user hitting Stop, queue the summary and convert this window to local.
 export class RemoteSessionController implements vscode.Disposable {
     private readonly item: vscode.StatusBarItem;

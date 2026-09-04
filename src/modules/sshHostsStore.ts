@@ -30,7 +30,8 @@ export const SSH_RESILIENCE_OPTIONS: ReadonlyArray<readonly [string, string]> = 
 export const csHostAlias = (cluster: string, sessionName: string): string =>
     `${cluster}-${sessionName.slice(-6)}`;
 
-// Per-session cshost block appended to ~/.cybershuttle/ssh_config (4-space indent matches removeSshConfigEntry).
+// Per-session block appended to ~/.cybershuttle/ssh_config (4-space indent matches removeSshConfigEntry).
+// hostAlias is always csHostAlias() output.
 export function buildSshConfigBlock(
     sessionId: string,
     hostAlias: string,

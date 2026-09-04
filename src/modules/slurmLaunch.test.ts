@@ -17,6 +17,18 @@ function runner(rules: Array<{ match: string; stdout?: string; stderr?: string; 
     };
 }
 
+// A runner that records every command it is given, answering `uname` with machine.
+function recordingRunner(machine: string): { run: RemoteRunner; calls: string[] } {
+    const calls: string[] = [];
+    const run: RemoteRunner = {
+        async runRemoteCommand(_h, command) {
+            calls.push(command);
+            return { stdout: command.includes('uname') ? machine : 'ok', stderr: '', code: 0 };
+        },
+    };
+    return { run, calls };
+}
+
 test('keepsInstalledLinkspan keeps only a real version that is ahead of the release', () => {
     assert.equal(keepsInstalledLinkspan('0.15.13', '0.15.12'), true);
     assert.equal(keepsInstalledLinkspan('0.15.12', '0.15.12'), true); // already installed
@@ -43,14 +55,7 @@ test('checkLinkspanInstallation passes the installed and latest versions the rig
 });
 
 test('installLinkspan normalizes aarch64 and throws on a failed install', async () => {
-    const calls: string[] = [];
-    const run: RemoteRunner = {
-        async runRemoteCommand(_h, command) {
-            calls.push(command);
-            if (command.includes('uname')) { return { stdout: 'aarch64', stderr: '', code: 0 }; }
-            return { stdout: 'ok', stderr: '', code: 0 };
-        },
-    };
+    const { run, calls } = recordingRunner('aarch64');
     await installLinkspan(session(), run, noopLog);
     assert.ok(calls.some(c => c.includes('linkspan_Linux_arm64.tar.gz')), 'aarch64 should map to arm64 asset');
 
@@ -90,13 +95,7 @@ test('installLinkspan refuses a machine linkspan is not released for', async () 
 
 // An interrupted download must not leave a truncated binary where the next launch execs it.
 test('installLinkspan stages the download and moves it into place', async () => {
-    const calls: string[] = [];
-    const run: RemoteRunner = {
-        async runRemoteCommand(_h, command) {
-            calls.push(command);
-            return { stdout: command.includes('uname') ? 'x86_64' : 'ok', stderr: '', code: 0 };
-        },
-    };
+    const { run, calls } = recordingRunner('x86_64');
     await installLinkspan(session(), run, noopLog);
     const install = calls.find(c => c.includes('curl')) ?? '';
     assert.match(install, /staged=/, 'download must land on a staging path');

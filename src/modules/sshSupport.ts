@@ -56,7 +56,7 @@ export class SshManager {
             SshManager.instance = new SshManager(extensionUri);
         }
 
-        // Include'd above the user's global entries so cshost-* aliases win via SSH first-match.
+        // Include'd above the user's global entries so a session alias wins via SSH first-match.
         if (!fs.existsSync(CS_SSH_CONFIG_PATH)) {
             fs.mkdirSync(path.dirname(CS_SSH_CONFIG_PATH), { recursive: true, mode: 0o700 });
             fs.writeFileSync(CS_SSH_CONFIG_PATH, '', { mode: 0o600 });

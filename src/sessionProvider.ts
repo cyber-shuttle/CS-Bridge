@@ -38,7 +38,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private readonly monitor = new SessionMonitor();
     private sharedReady = false;
 
-    // Set in a cshost remote window (session-scoped, observe-only); undefined in the sidebar.
+    // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
         super(extensionUri);
     }
@@ -125,7 +125,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         stopRemoteSession: () => {
             if (this.remoteSessionId) { void vscode.commands.executeCommand('csbridge.stopRemoteSession'); }
         },
-        connectTunnel: (_data, id) => void this.connectSessionToTunnel(id),
+        connectTunnel: (_data, id) => void this.connectSession(id),
         removeSession: (_data, id) => this.removeSession(id),
     };
 
@@ -379,26 +379,26 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         openSessionWindow(session.id, true);
     }
 
-    private async connectSessionToTunnel(sessionId: string) {
+    private async connectSession(sessionId: string) {
         const session = this.requireSession(sessionId, 'connect tunnel', true);
         if (!session) { return; }
-        // Stale Connect/Switch on an expired session: stop it (the monitor terminal-guard untracks) instead of a doomed relay.
-        if (isWallTimeExpired(session, Date.now())) {
-            setStatus(session, 'stopped', '');
-            await disposeTunnelClient(session.id);
-            vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Start it to run again.');
-            void this.pushState();
-            return;
+        try {
+            // Stale Connect/Switch on an expired session: stop it (the monitor terminal-guard untracks) instead of a doomed relay.
+            if (isWallTimeExpired(session, Date.now())) {
+                setStatus(session, 'stopped', '');
+                await disposeTunnelClient(session.id);
+                vscode.window.showInformationMessage('This session was stopped at its wall-time limit. Start it to run again.');
+                return;
+            }
+            // Already connected with a live remote window — this window's own, or another sidebar's (windowAlive reads the
+            // shared windowPids). Just focus it; a second relay to the same tunnel is redundant and fights the first.
+            if (session.status === 'connected' && (liveAndCleanup(session).windowAlive || session.connectionInfo?.sshTunnelForwardPort)) {
+                this.openOrFocusWindow(session);
+                return;
+            }
+            if (await this.establishRelay(session)) { this.openOrFocusWindow(session); }
         }
-        // Already connected with a live remote window — this window's own, or another sidebar's (windowAlive reads the
-        // shared windowPids). Just focus it; a second relay to the same tunnel is redundant and fights the first.
-        if (session.status === 'connected' && (liveAndCleanup(session).windowAlive || session.connectionInfo?.sshTunnelForwardPort)) {
-            this.openOrFocusWindow(session);
-            void this.pushState();
-            return;
-        }
-        if (await this.establishRelay(session)) { this.openOrFocusWindow(session); }
-        void this.pushState();
+        finally { void this.pushState(); }
     }
 
     private async stopSessionExecution(sessionId: string) {

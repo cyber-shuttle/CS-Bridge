@@ -31,7 +31,7 @@ export async function activate(context: vscode.ExtensionContext) {
         });
     }
 
-    // The SSH Hosts pane is hidden in read-only remote (cshost) windows.
+    // The SSH Hosts pane is hidden in read-only remote windows.
     void vscode.commands.executeCommand('setContext', 'csbridge.remote', !!id);
 
     SshManager.initInstance(context.extensionUri);
@@ -55,7 +55,7 @@ export async function activate(context: vscode.ExtensionContext) {
     void sessionProvider.reattachLiveSessions();
 
     if (id) {
-        // Remote (cshost) window: own the wall-time status bar + graceful end for this session.
+        // Remote window: own the wall-time status bar + graceful end for this session.
         context.subscriptions.push(new RemoteSessionController(context, id));
     }
     else {
