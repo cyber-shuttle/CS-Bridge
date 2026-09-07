@@ -29,9 +29,6 @@ Code for an Extension Development Host.
 
 ## Gotchas
 
-- The per-session Host alias is `<cluster>-<last 6 of the session name>` (`csHostAlias`), never `cshost-<id>`. No
-  runtime alias uses `cshost-` any more; it survives in the private-key filename `id_cshost-<sessionId>`, a stale
-  comment in `sshSupport.ts`, and fixtures in `sshHostsStore.test.ts`.
 - `check-types` runs **two** tscs (root + `src/ui/tsconfig.json`); esbuild never type-checks, so a `.tsx` type
   error surfaces only there.
 - The webview UI is **Preact**, not React — hooks must come from `preact/hooks`.

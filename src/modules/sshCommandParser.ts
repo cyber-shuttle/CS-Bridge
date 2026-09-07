@@ -53,7 +53,6 @@ const OPTION_MAP: Record<string, (c: Record<string, string>, arg: string) => voi
     R: (c, a) => { c.RemoteForward = a; },
     S: (c, a) => { c.ControlPath = a; },
     v: (c) => { c.LogLevel = 'verbose'; },
-    W: (c, a) => { c.RemoteForward = a; },
     w: (c, a) => { c.TunnelDevice = a; },
     X: (c) => { c.ForwardX11 = 'yes'; },
     x: (c) => { c.ForwardX11 = 'no'; },

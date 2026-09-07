@@ -1,10 +1,10 @@
-import { Metric } from '../models';
+import { Metric, POLLING_INTERVAL_MS } from '../models';
 
 // linkspan's HTTP API client — one function per endpoint, each taking the base URL + auth headers its transport
 // mandates (devtunnel today; see tunnelSupport.linkspanEndpoint). It does the calling but owns no transport of its
 // own, so devtunnel and linkspan stay separate and compose at the caller.
 
-const TIMEOUT_MS = 4500; // linkspan shares one relay + a 2-CPU node with live SSH + polls; keep below the 5s poll interval
+const TIMEOUT_MS = POLLING_INTERVAL_MS - 500;
 
 export interface LinkspanSshStatus {
     id: string;

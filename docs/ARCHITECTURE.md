@@ -51,8 +51,10 @@ Local VS Code                              Remote HPC cluster
    so re-creation is guarded: an sshd linkspan reports in a non-`failed` state is reused only while this machine
    still holds that session's private key; either condition failing mints a new sshd and a new key pair. Skipping
    the guard leaks compute-node daemons.
-8. **Connect.** `connectSessionToTunnel` opens an in-process `TunnelRelayTunnelClient` bound to `127.0.0.1:N`,
-   writes the per-session `Host` block, and opens `vscode-remote://ssh-remote+<alias>/…`.
+8. **Connect.** `establishRelay` composes the step: `connectSessionToTunnel` opens an in-process
+   `TunnelRelayTunnelClient` bound to `127.0.0.1:N` and returns that port, `addSshConfigEntry` writes the
+   per-session `Host` block, and only on success does `openOrFocusWindow` open
+   `vscode-remote://ssh-remote+<alias>/…`.
 9. **Attach.** VS Code's remote-SSH URI handler runs the OS `ssh` binary against that alias, installs VS Code
    Server, and attaches the window to the compute node. CS Bridge pins that alias's
    `remote.SSH.serverInstallPath` to node-local `/tmp/cs-vscode/<sessionId>`, keeping the server off the shared
@@ -106,7 +108,8 @@ multiplexing is what makes Windows work, where OpenSSH has no Unix-socket Contro
 socket (named by a SHA-256 of the host, to stay under the 104-byte socket-path limit) is layered on as well so
 several windows share one authentication. Background polls run in a batch mode that rides an existing shell or
 fails fast, so they never raise a 2FA prompt nobody is watching. Password, passphrase and keyboard-interactive
-prompts go out through the `SSH_ASKPASS` helper, which IPCs to `vscode.window.showInputBox`.
+prompts go out through the `SSH_ASKPASS` helper, which IPCs to a `csbridge.sshAuth` webview panel: a
+newline-preserving monospace block is what lets a device-flow QR prompt render, which an input box cannot do.
 
 ## Persistence and cross-window state
 

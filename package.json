@@ -170,7 +170,7 @@
 		"check-types": "tsc -p ./ && tsc -p src/ui/tsconfig.json",
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix",
-		"test": "node --import tsx --test src/modules/*.test.ts src/ui/logic/*.test.ts",
+		"test": "node --import tsx --test src/*.test.ts src/modules/*.test.ts src/ui/logic/*.test.ts",
 		"package": "npx @vscode/vsce package",
 		"install-ext": "node -e \"const p=require('./package.json');require('child_process').execFileSync('code',['--install-extension',p.name+'-'+p.version+'.vsix'],{stdio:'inherit'})\"",
 		"dev": "npm install && npm run package && npm run install-ext"

@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import type { SlurmClusterInfo, SlurmPartitionInfo, HostRuntime } from '@/models';
-import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuString, type ResourceTab } from '@/ui/logic/cluster';
+import type { SlurmClusterInfo, HostRuntime } from '@/models';
+import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuString, resolvePick, type ResourceTab } from '@/ui/logic/cluster';
 import { Row, Stack, Text, Spinner, Button, SingleSelect, Option } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 
@@ -50,37 +50,27 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
     // initialPart, not initial.partName: a partition the cluster dropped would stay selected and still submit.
     const [partName, setPartName] = useState(initialPart?.name ?? '');
     const [allocation, setAllocation] = useState(initial?.allocation ?? info.accounts[0] ?? '');
-    const [cpu, setCpu] = useState(initial?.cpu ?? String(cpuOptions(initialPart)[0] ?? 1));
-    const [memory, setMemory] = useState(initial?.memory ?? memoryOptions(initialPart)[0] ?? '8 GB');
-    const [gpuCount, setGpuCount] = useState(initial?.gpuCount ?? String(gpuOptions(initialPart, initialTab).counts[0] ?? 0));
-    const [gpuType, setGpuType] = useState(initial?.gpuType ?? gpuOptions(initialPart, initialTab).types[0] ?? '');
+    const [cpuPick, setCpu] = useState(initial?.cpu ?? '');
+    const [memoryPick, setMemory] = useState(initial?.memory ?? '');
+    const [gpuCountPick, setGpuCount] = useState(initial?.gpuCount ?? '');
+    const [gpuTypePick, setGpuType] = useState(initial?.gpuType ?? '');
     const [wall, setWall] = useState(initial?.wall ?? WALL_OPTIONS[0][0]);
 
     const parts = partitionsForTab(info, tab);
     const partition = parts.find(p => p.name === partName) ?? parts[0];
-    const cpus = cpuOptions(partition);
+    const cpus = cpuOptions(partition).map(String);
     const mems = memoryOptions(partition);
     const gpus = gpuOptions(partition, tab);
+    const gpuCounts = gpus.counts.map(String);
 
-    // Invariant: selectPartition and switchTab MUST call this to re-default cpu/memory/gpu to the new option lists.
-    const applyPartitionDefaults = (p: SlurmPartitionInfo | undefined, t: ResourceTab) => {
-        setCpu(String(cpuOptions(p)[0] ?? 1));
-        setMemory(memoryOptions(p)[0] ?? '8 GB');
-        const g = gpuOptions(p, t);
-        setGpuCount(String(g.counts[0] ?? 0));
-        setGpuType(g.types[0] ?? '');
-    };
-
-    const selectPartition = (name: string) => {
-        setPartName(name);
-        applyPartitionDefaults(parts.find(p => p.name === name), tab);
-    };
+    const cpu = resolvePick(cpuPick, cpus, '1');
+    const memory = resolvePick(memoryPick, mems, '8 GB');
+    const gpuCount = resolvePick(gpuCountPick, gpuCounts, '0');
+    const gpuType = resolvePick(gpuTypePick, gpus.types, '');
 
     const switchTab = (t: ResourceTab) => {
         setTab(t);
-        const np = partitionsForTab(info, t);
-        setPartName(np[0]?.name ?? '');
-        applyPartitionDefaults(np[0], t);
+        setPartName(partitionsForTab(info, t)[0]?.name ?? '');
     };
 
     const submit = () => {
@@ -111,19 +101,19 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
 
             {/* '' → (No Allocation): a cluster may expose no accounts to pick (buildSlurmScript then omits --account). */}
             <Select label="Allocation" value={allocation} onChange={setAllocation} options={[['', '(No Allocation)'], ...info.accounts.map(a => [a, a])]} />
-            <Select label="Partition" value={partName} onChange={selectPartition}>
+            <Select label="Partition" value={partName} onChange={setPartName}>
                 {parts.map(p => (
                     <Option key={p.name} value={p.name}>
                         {p.gres.length ? `${p.name} (${p.cpuCount} CPUs, ${p.gres[0].count} GPUs)` : `${p.name} (${p.cpuCount} CPUs)`}
                     </Option>
                 ))}
             </Select>
-            <Select label="CPUs" value={cpu} onChange={setCpu} options={cpus.map(c => [String(c), String(c)])} />
+            <Select label="CPUs" value={cpu} onChange={setCpu} options={cpus.map(c => [c, c])} />
             <Select label="Memory" value={memory} onChange={setMemory} options={mems.map(m => [m, m])} />
             {tab === 'gpu' && gpus.counts.length
                 ? (
                         <>
-                            <Select label="GPUs" value={gpuCount} onChange={setGpuCount} options={gpus.counts.map(n => [String(n), String(n)])} />
+                            <Select label="GPUs" value={gpuCount} onChange={setGpuCount} options={gpuCounts.map(n => [n, n])} />
                             <Select label="GPU Type" value={gpuType} onChange={setGpuType} options={gpus.types.map(t => [t, t])} />
                         </>
                     )

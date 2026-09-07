@@ -43,7 +43,7 @@ export function readJson<T>(file: string): T | undefined {
 }
 
 // Per-file locked read-modify-write (atomic temp+rename). `mutate` returns the value to write, or null to skip.
-export function updateJson<T>(file: string, mutate: (cur: T | undefined) => T | null, onError?: (err: unknown) => void): void {
+export function lockedUpdateJson<T>(file: string, mutate: (cur: T | undefined) => T | null, onError?: (err: unknown) => void): void {
     lock(file);
     try {
         const next = mutate(readJson<T>(file));
@@ -63,7 +63,7 @@ export function deleteFile(file: string): void {
 
 // Per-file locked read-modify-write of a text file (atomic temp+rename). `transform` gets the current text (undefined
 // if absent) and returns the new text, or null to skip.
-export function updateTextFile(file: string, transform: (cur: string | undefined) => string | null, mode?: number): void {
+export function lockedUpdateTextFile(file: string, transform: (cur: string | undefined) => string | null, mode?: number): void {
     lock(file);
     try {
         let cur: string | undefined;

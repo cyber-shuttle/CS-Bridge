@@ -65,3 +65,9 @@ test('renderAuthHtml HTML-escapes the prompt so markup in it cannot inject', () 
     const html = renderAuthHtml('user & <b>host</b>', 'N');
     assert.ok(html.includes('user &amp; &lt;b&gt;host&lt;/b&gt;'));
 });
+
+// A multi-line command runs line by line in the persistent login shell, so `set -eu` or a trap would
+// outlive it and take the shared connection down with the next failing command.
+test('buildShellCommand refuses a multi-line command', () => {
+    assert.throws(() => buildShellCommand('abc123', 'set -eu\nfalse'), /single line/);
+});

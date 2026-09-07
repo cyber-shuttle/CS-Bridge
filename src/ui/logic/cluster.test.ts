@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SlurmClusterInfo, SlurmPartitionInfo } from '@/models';
-import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuString, parseGpuClass } from './cluster';
+import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuString, parseGpuClass, resolvePick } from './cluster';
 
 const cpuPart: SlurmPartitionInfo = { name: 'cpu', cpuCount: 3, memory: '8192', gres: [] };
 const gpuPart: SlurmPartitionInfo = { name: 'gpu', cpuCount: 16, memory: '0', gres: [{ name: 'a100', count: 2 }] };
@@ -45,4 +45,13 @@ test('parseGpuClass inverts gpuString, splitting the count off the LAST colon (g
     assert.equal(parseGpuClass(''), undefined);
     // Round-trips for a colon-containing type.
     assert.deepEqual(parseGpuClass(gpuString('gpu:a100', 4)), { gpuType: 'gpu:a100', gpuCount: '4' });
+});
+
+// Switching partition used to require every dependent field to be reset by hand; deriving the value
+// means a pick the new partition cannot honour simply falls back to its first option.
+test('resolvePick keeps a pick the options still offer and falls back otherwise', () => {
+    assert.equal(resolvePick('16', ['8', '16', '32'], '1'), '16');
+    assert.equal(resolvePick('128', ['8', '16', '32'], '1'), '8', 'a pick the partition dropped falls back');
+    assert.equal(resolvePick('', ['8', '16'], '1'), '8', 'no pick yet takes the first option');
+    assert.equal(resolvePick('16', [], '1'), '1', 'a partition offering nothing uses the fallback');
 });

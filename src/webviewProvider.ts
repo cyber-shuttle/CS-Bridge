@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomBytes } from 'node:crypto';
 import { Logger, errMsg } from './logger';
 import { WebviewMessage } from './models';
 
@@ -48,7 +49,8 @@ export async function confirmModal(title: string, confirmLabel: string, detail?:
 
 // CSP-gated HTML shell that loads the view's esbuild bundle (out/<view>.js) + codicons.
 export function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri, view: ViewKind): string {
-    const nonce = getNonce();
+    // A CSP nonce is only worth having if it cannot be guessed, so it comes from the CSPRNG.
+    const nonce = randomBytes(24).toString('base64url');
     const codiconCss = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', 'codicons', 'codicon.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', `${view}.js`));
 
@@ -66,11 +68,4 @@ export function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri, vi
     <script nonce="${nonce}" src="${js}"></script>
     </body>
     </html>`;
-}
-
-function getNonce(): string {
-    let text = '';
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    for (let i = 0; i < 32; i++) { text += possible.charAt(Math.floor(Math.random() * possible.length)); }
-    return text;
 }

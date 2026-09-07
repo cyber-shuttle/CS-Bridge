@@ -8,8 +8,11 @@ export const READY_MARKER = '__CS_SHELL_READY__';
 const marker = (rid: string): string => `__CSE_${rid}__`;
 
 // Run `command`, capture its exit code before the marker printf overwrites $?, then emit the code on stdout and
-// a matching boundary on stderr. Commands here are single-line and never read stdin (the shell's stdin is ours).
+// a matching boundary on stderr. The command never reads stdin — the shell's stdin is ours.
 export function buildShellCommand(rid: string, command: string): string {
+    if (command.includes('\n')) {
+        throw new Error(`Remote command must be a single line; base64 a script and pipe it to bash instead: ${command}`);
+    }
     const m = marker(rid);
     return `${command}\n__cs=$?; printf '\\n${m} %s\\n' "$__cs"; printf '\\n${m}\\n' 1>&2\n`;
 }

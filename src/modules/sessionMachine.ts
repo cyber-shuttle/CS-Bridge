@@ -21,11 +21,12 @@ export interface StatusTransition {
 }
 
 // Session-status categories — the single source of truth shared by the provider, monitor, and webview UI.
-const CONNECT_PHASE: Status[] = ['preparing', 'ready_to_connect', 'connecting', 'connected'];
 const TERMINAL: Status[] = ['stopped', 'failed'];
 // 'stopping' is excluded so Stop neither shows nor re-triggers while a stop is already in flight.
 const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'ready_to_connect', 'connecting', 'connected', 'unreachable'];
 const RELAY_LIVE: Status[] = ['ready_to_connect', 'connecting', 'connected'];
+// The relay-live set plus the bring-up that precedes it, so a new relay-live status joins both.
+const CONNECT_PHASE: Status[] = ['preparing', ...RELAY_LIVE];
 // Non-relay-live statuses the monitor polls; an infra failure downgrades these (never a relay-live one) to 'unreachable'.
 const MONITORABLE_OFFLINE: Status[] = ['submitting', 'queued', 'preparing', 'unreachable'];
 
@@ -39,7 +40,7 @@ export const unreachableStatus = (status: Status): Status | undefined =>
 
 export const isReattachable = (status: Status, hasRefs: boolean): boolean => !isTerminal(status) && hasRefs;
 
-// RUNNING-while-'preparing' is handled by the monitor instead (side effects: scrape output, start remote prepare).
+// RUNNING-while-'preparing' is handled by the monitor instead (side effect: SessionMonitor.prepareRemote).
 export function computeStatusTransition(current: Status, slurm: SlurmJobStatus): StatusTransition {
     // A stopping session is tearing down; a still-live RUNNING/QUEUED reading (scancel/accounting lag) must not revive it.
     if (current === 'stopping' && (slurm === SlurmJobStatus.RUNNING || slurm === SlurmJobStatus.QUEUED)) { return {}; }
