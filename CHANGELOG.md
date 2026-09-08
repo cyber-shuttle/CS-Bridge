@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-07
+
+Requires linkspan 0.17.5.
+
+### Added
+
+- **Public project files** — `SECURITY.md` (how to report a vulnerability), `CODE_OF_CONDUCT.md`, `CITATION.cff`, issue and pull-request templates, and a single architecture document at `docs/ARCHITECTURE.md` in place of three drifting copies. (#121)
+
+### Changed
+
+- **linkspan is staged before it is installed, and stays owner-only** — the release tarball is extracted to a temporary path and moved into place only once it is complete, and `~/.cybershuttle/bin` and the binary in it are created mode 700. An architecture with no linkspan release is now refused by name instead of building a download URL that 404s and reads as a network fault. (#117)
+- **A partition switch keeps a selection the new partition still offers** — CPU, memory and GPU fell back to the new partition's first option on every switch; they now fall back only when the new partition cannot honour the pick. (#120)
+- **Slurm spelled as its own project spells it** — the script preview is titled **Slurm Job Script Preview**, and the same spelling runs through the log lines and error messages. The `SLURM_*` environment variables and the `CS-Bridge` ssh_config marker are wire formats and unchanged. (#119)
+
+### Removed
+
+- Local scratch is no longer packaged — `.superpowers/` stayed out of git through a nested `.gitignore`, but `vsce` packages the working directory rather than the git tree, so ~140 KB of internal diffs shipped inside every published `.vsix` from 0.1.4 on. The package drops from 21 files / 482 KB to 17 files / 443 KB. (#116)
+
+### Fixed
+
+- **A job that ended in `NODE_FAIL`, `BOOT_FAIL`, `PREEMPTED` or `DEADLINE` showed as still preparing until its wall time elapsed** — seven scheduler states were recognised and every other one read as `UNKNOWN`, which the monitor holds on rather than treating as job death. The 23 states cs-control classifies are now classified here too, and the state is read from its first token, so a decorated state (`CANCELLED by 1001`) and a truncated one (`COMPLETING+`) both parse. `SUSPENDED` and `STOPPED` still hold an allocation, so they read as queued rather than unknown. (#117)
+- **An interrupted linkspan download became the binary the next launch execs** — `curl` was piped straight into `tar` over the destination path, leaving a truncated binary in place. (#117)
+- **An out-of-date linkspan was never replaced on a login node without GNU grep** — the latest-release lookup extracted the tag with `grep -oP`, and a failed lookup is treated as no answer about the latest release, which keeps whatever is installed. The extraction now uses `sed`. (#117)
+- **An inert `Include` line counted as a present one** — the `~/.ssh/config` repair tested for the line as a substring, so a commented-out `Include`, or one sitting below a `Host` block where ssh never reaches it, passed the check; the repair silently did not happen and the per-session aliases stopped resolving. (#120)
+- **`~/.ssh/config` was written unlocked when the `Include` was added** — every other write to that file takes the cross-process lock and renames a temp file into place, but this one, which runs on every window start, did a bare read-then-write: two windows opening together, or one racing a host add, could duplicate the `Include` or write back stale content and drop a host block. (#122)
+- **`-W` overwrote `-R` in an added SSH command** — the command parser mapped `-W` to `RemoteForward`, the same directive `-R` writes, so a command carrying both silently lost one of them. `-W` is now consumed without producing a directive. (#120)
+- **GPU columns on a multi-GPU session card** — the labels were looked up in a map holding one `GPU0` key, so a two-GPU allocation showed the total count in the first column and a bare `GPU1` in the second. The label travels with its series, and the columns read `GPU0` and `GPU1`. (#120)
+- **The summary panel posted twice per sample** — run records and live samples land in the same store, so its two watchers were one subscription under two names. (#117)
+- **The summary tab title ended in a dangling colon.** (#118)
+- **`LICENSE` was not the canonical Apache 2.0 text** — the body carried three word-level alterations and the appendix had been replaced. (#121)
+- **`install-ext` was literal text under `cmd.exe`** — it relied on POSIX `$npm_package_*` expansion, breaking the documented build-from-source path on Windows; it now reads the name and version through Node. (#121)
+
 ## [0.1.5] - 2026-08-21
 
 Requires linkspan 0.17.0.
@@ -199,7 +231,8 @@ Initial release of **CS Bridge** — remote HPC development from VS Code. Publis
 - Status bar countdown and progress toasts for active sessions
 - esbuild-based build producing a single bundled, minified `out/extension.js` (`tsc` used for type-checking only)
 
-[Unreleased]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.5...HEAD
+[Unreleased]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.6...HEAD
+[0.1.6]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.5...0.1.6
 [0.1.5]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.4...0.1.5
 [0.1.4]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.3...0.1.4
 [0.1.3]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.2...0.1.3
