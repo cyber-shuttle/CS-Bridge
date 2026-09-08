@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 
+declare function acquireVsCodeApi(): {
+    postMessage(message: unknown): void;
+    getState(): unknown;
+    setState(state: unknown): void;
+};
+
 const vscode = acquireVsCodeApi();
 
 export const post = (msg: unknown) => vscode.postMessage(msg);

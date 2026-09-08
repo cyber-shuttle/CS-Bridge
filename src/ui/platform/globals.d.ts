@@ -1,13 +1,5 @@
 import type {} from 'preact';
 
-declare global {
-    function acquireVsCodeApi(): {
-        postMessage(message: unknown): void;
-        getState(): unknown;
-        setState(state: unknown): void;
-    };
-}
-
 type VscodeElementProps = Record<string, unknown>;
 
 declare module 'preact' {

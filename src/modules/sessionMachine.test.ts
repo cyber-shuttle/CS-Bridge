@@ -104,7 +104,6 @@ test('QUEUED maps to queued without stopping monitoring', () => {
 });
 
 test('UNKNOWN holds (never terminalizes) — a transient/unrecognized sacct state is not job death', () => {
-    // PREEMPTED/REQUEUED/SUSPENDED/COMPLETING/blank rows all parse to UNKNOWN; none mean the job died.
     assert.deepEqual(computeStatusTransition('preparing', SlurmJobStatus.UNKNOWN), {});
     assert.deepEqual(computeStatusTransition('connected', SlurmJobStatus.UNKNOWN), {});
 });

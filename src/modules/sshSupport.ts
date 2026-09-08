@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { spawn, spawnSync, ChildProcess } from 'child_process';
 import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
-import { lock, release } from './fsSupport';
+import { lock, release, lockedUpdateTextFile } from './fsSupport';
 import { buildShellCommand, extractCommandResult, READY_MARKER, renderAuthHtml } from './sshShell';
 import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock, csHostAlias, includeIsEffective } from './sshHostsStore';
 
@@ -307,14 +307,10 @@ export class SshManager {
             if (!fs.existsSync(sshDir)) {
                 fs.mkdirSync(sshDir, { mode: 0o700 });
             }
-            if (!fs.existsSync(sshConfigPath)) {
-                fs.writeFileSync(sshConfigPath, `${includeLine}\n`, { mode: 0o600 });
-                return;
-            }
-            const content = fs.readFileSync(sshConfigPath, 'utf-8');
-            if (!includeIsEffective(content, includeLine)) {
-                fs.writeFileSync(sshConfigPath, `${includeLine}\n${content}`);
-            }
+            lockedUpdateTextFile(sshConfigPath, cur =>
+                cur === undefined ? `${includeLine}\n`
+                    : includeIsEffective(cur, includeLine) ? null
+                        : `${includeLine}\n${cur}`, 0o600);
         }
         catch (err) {
             logger.error(`[ssh] Failed to add Include to ~/.ssh/config: ${errMsg(err)}`);
