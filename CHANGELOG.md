@@ -22,7 +22,7 @@ Requires linkspan 0.17.5.
 
 ### Removed
 
-- Local scratch is no longer packaged — `.superpowers/` stayed out of git through a nested `.gitignore`, but `vsce` packages the working directory rather than the git tree, so ~140 KB of internal diffs shipped inside every published `.vsix` from 0.1.4 on. The package drops from 21 files / 482 KB to 17 files / 443 KB. (#116)
+- Local scratch is no longer packaged — `.superpowers/` stayed out of git through a nested `.gitignore`, but `vsce` packages the working directory rather than the git tree, so ~140 KB of internal diffs shipped inside every published `.vsix` from 0.1.4 on. (#116)
 
 ### Fixed
 
