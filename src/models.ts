@@ -191,7 +191,7 @@ export interface AWSInstanceInfo {
     instanceID: string | undefined;
     state: string | undefined;
     instanceType: string | undefined;
-    // publicIp: string | undefined;
+    publicIp: string | undefined;
 }
 
 export interface CloudProviderState {

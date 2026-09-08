@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { AWSInstanceInfo, CloudProviderState, WebviewMessage, InstanceActions } from "./models";
+import { SshManager } from './modules/sshSupport';
 import { WebviewProvider } from "./webviewProvider";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
@@ -97,6 +98,15 @@ export class CloudProvider extends WebviewProvider {
                 } else (
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
+                break
+            case "terminal":
+                console.log("Opening terminal")
+                const instanceIP = data.name ?? ""
+                if (instanceIP !== "") {
+                    this.openTerminal(instanceIP)
+                } else {
+                    vscode.window.showErrorMessage("Error: No instance IP provided")
+                }
                 break
             default:
                 this.logger.warn("Unknown command from cloud webview:", data);
@@ -450,7 +460,8 @@ export class CloudProvider extends WebviewProvider {
                                     instanceID: instance.InstanceId,
                                     instanceType: instance.InstanceType,
                                     name: instance.Tags?.find(value => value.Key == "Name")?.Value,
-                                    state: instance.State?.Name
+                                    state: instance.State?.Name,
+                                    publicIp: instance.PublicIpAddress
                                 }
                                 instances.push(inst)
                             })
@@ -467,6 +478,11 @@ export class CloudProvider extends WebviewProvider {
             instances: instances
         };
         this.pushState()
+    }
+
+    private openTerminal(ip: string): void {
+        const hostString = `ec2-user@${ip}`
+        vscode.window.createTerminal({ name: ip, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(ip), this.PRIVATE_KEY_PATH, hostString] }).show();
     }
 
 
