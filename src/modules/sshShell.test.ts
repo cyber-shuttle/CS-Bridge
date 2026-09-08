@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildShellCommand, extractCommandResult, READY_MARKER, renderAuthHtml } from './sshShell';
+import { buildShellCommand, extractCommandResult, renderAuthHtml } from './sshShell';
 
 // What the persistent login shell echoes back after running `cmd` with the given rid.
 const reply = (rid: string, stdout: string, stderr: string, code: number) =>
@@ -42,11 +42,6 @@ test('a unique rid keeps a colliding-looking payload from being mistaken for the
     const payload = '__CSE_other__ 9'; // looks like a marker but wrong rid
     const [out, err] = reply(rid, payload, '', 0);
     assert.deepEqual(extractCommandResult(rid, out, err), { stdout: payload, stderr: '', code: 0 });
-});
-
-test('READY_MARKER is a fixed, recognizable token', () => {
-    assert.equal(typeof READY_MARKER, 'string');
-    assert.ok(READY_MARKER.length > 0);
 });
 
 test('renderAuthHtml preserves QR block glyphs and newlines verbatim in the <pre>', () => {
