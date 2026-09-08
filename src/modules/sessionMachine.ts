@@ -62,7 +62,6 @@ export function computeStatusTransition(current: Status, slurm: SlurmJobStatus):
             return { next: 'stopped', stopMonitoring: true };
         case SlurmJobStatus.UNKNOWN:
         default:
-            // An unrecognized/blank sacct state (PREEMPTED, REQUEUED, COMPLETING, accounting lag) is not job death — hold.
             return {};
     }
 }
