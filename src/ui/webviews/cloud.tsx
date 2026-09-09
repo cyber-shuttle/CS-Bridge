@@ -28,10 +28,11 @@ function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
                     <DetailRow label="State">{instance.state ?? '—'}</DetailRow>
                     <DetailRow label="IP">{instance.publicIp ?? '—'}</DetailRow>
                     <Row gap={4} justify="flex-start" pad="0 0 0" style={{ zoom: 0.80 }}>
-                        {instance.state === "running" && <Button icon="terminal" onClick={() => post({ command: 'terminal', name: instance.publicIp })}>Terminal</Button>}
-                        {instance.state === "running" && <Button icon="stop" onClick={() => post({ command: 'stop-instance', name: instance.instanceID })}>Stop</Button>}
-                        {instance.state === "stopped" && <Button icon="play" onClick={() => post({ command: 'start-instance', name: instance.instanceID })}>Start</Button>}
-                        {instance.state === "stopped" && <Button icon="trash" onClick={() => post({ command: 'remove-instance', name: instance.instanceID })}>Remove</Button>}
+                        {instance.state === "running" && <Button icon="terminal" onClick={() => post({ command: 'terminal', host: instance.publicIp })}>Terminal</Button>}
+                        {instance.state === "running" && <Button icon="remote" onClick={() => post({ command: 'remote', name: instance.name, host: instance.publicIp, sessionId: instance.instanceID })}>Remote</Button>}
+                        {instance.state === "running" && <Button icon="stop" onClick={() => post({ command: 'stop-instance', sessionId: instance.instanceID, name: instance.name })}>Stop</Button>}
+                        {instance.state === "stopped" && <Button icon="play" onClick={() => post({ command: 'start-instance', sessionId: instance.instanceID })}>Start</Button>}
+                        {instance.state === "stopped" && <Button icon="trash" onClick={() => post({ command: 'remove-instance', sessionId: instance.instanceID, name: instance.name })}>Remove</Button>}
                     </Row>
                 </Stack>
             ) : null}

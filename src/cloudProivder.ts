@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { AWSInstanceInfo, CloudProviderState, WebviewMessage, InstanceActions } from "./models";
-import { SshManager } from './modules/sshSupport';
+import { addSshConfigEntryAWS, removeSshConfigEntryAWS, SshManager } from './modules/sshSupport';
 import { WebviewProvider } from "./webviewProvider";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
@@ -22,6 +22,8 @@ import {
 
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const CS_SSH_CONFIG_PATH = path.join(homedir(), '.cybershuttle', 'ssh_config');
+
 // Webview provider for the Cloud Provider view .
 export class CloudProvider extends WebviewProvider {
     public static readonly viewType = "csbridge.cloudView";
@@ -45,7 +47,8 @@ export class CloudProvider extends WebviewProvider {
         sessionToken: "",
         region: "us-east-1",
         instances: [],
-        clientInit: false
+        clientInit: false,
+        sshHosts: []
     };
 
     private toast(title: string, message: string, cancellable: boolean) {
@@ -61,9 +64,13 @@ export class CloudProvider extends WebviewProvider {
     }
 
     protected handleMessage(data: WebviewMessage): void {
-        const instanceID = data.name ?? ""
+        const instanceName = data.name ?? ""
+        const instanceID = data.sessionId ?? ""
+        const instanceIP = data.host ?? ""
         switch (data.command) {
             case "ready":
+                const hosts = SshManager.getInstance().getCSHosts()
+                this.state.sshHosts = hosts
                 this.pushState();
                 break;
             case "launch":
@@ -95,19 +102,28 @@ export class CloudProvider extends WebviewProvider {
             case "remove-instance":
                 if (instanceID !== "") {
                     this.doInstanceActions(InstanceActions.Remove, instanceID)
+                    this.removeSshConfigEntryAWS(instanceID, instanceName)
                 } else (
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
                 break
             case "terminal":
                 console.log("Opening terminal")
-                const instanceIP = data.name ?? ""
                 if (instanceIP !== "") {
                     this.openTerminal(instanceIP)
                 } else {
                     vscode.window.showErrorMessage("Error: No instance IP provided")
                 }
                 break
+            case "remote":
+                console.log("Opening remote session")
+                if (instanceIP !== "") {
+                    this.openRemoteSession(instanceID, instanceName, instanceIP)
+                } else {
+                    vscode.window.showErrorMessage("Error: No instance IP provided")
+                }
+                break;
+
             default:
                 this.logger.warn("Unknown command from cloud webview:", data);
         }
@@ -440,10 +456,10 @@ export class CloudProvider extends WebviewProvider {
                         Values: ["CS-Bridge"]
                     },
                     // filter out terminated status
-                    // {
-                    //     Name: "instance-state-name",
-                    //     Values: ["pending", "running", "shutting-down", "stopping", "stopped"]
-                    // }
+                    {
+                        Name: "instance-state-name",
+                        Values: ["pending", "running", "shutting-down", "stopping", "stopped"]
+                    }
                 ]
             }
         };
@@ -464,6 +480,7 @@ export class CloudProvider extends WebviewProvider {
                                     publicIp: instance.PublicIpAddress
                                 }
                                 instances.push(inst)
+
                             })
                         }
                     }
@@ -485,5 +502,44 @@ export class CloudProvider extends WebviewProvider {
         vscode.window.createTerminal({ name: ip, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(ip), "-i", this.PRIVATE_KEY_PATH, hostString] }).show();
     }
 
+    private async openRemoteSession(id: string, name: string, ip: string): Promise<void> {
+        console.log("Checking SSH Config")
+        if (this.state.sshHosts.find(host => host.hostname === ip)) {
+            console.log("Found existing entry")
+        } else {
+            await addSshConfigEntryAWS(id, name, ip, 22, this.PRIVATE_KEY_PATH)
+            this.state.sshHosts = SshManager.getInstance().getCSHosts()
+            this.pushState()
+        }
+
+        const sshConfig = vscode.workspace.getConfiguration('remote.SSH');
+        await sshConfig.update('configFile', CS_SSH_CONFIG_PATH, vscode.ConfigurationTarget.Global);
+
+        const uri = vscode.Uri.from({
+            scheme: 'vscode-remote',
+            authority: `ssh-remote+${name}`,
+            path: '/'
+        });
+
+
+        console.log("Openning Remote Session")
+        await vscode.commands.executeCommand('vscode.openFolder', uri, {
+            forceNewWindow: true
+        });
+
+    }
+
+    private async removeSshConfigEntryAWS(id: string, name: string): Promise<void> {
+        console.log(`Remove SSH Config for ${name} `)
+        console.log(this.state.sshHosts)
+        await removeSshConfigEntryAWS(id, name)
+        this.state.sshHosts = SshManager.getInstance().getCSHosts()
+        this.pushState()
+
+    }
+
 
 }
+
+
+
