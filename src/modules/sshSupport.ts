@@ -1,4 +1,4 @@
-import { SshHost, SlurmSession, PromptObserver, PromptCancelledError } from '../models';
+import { SshHost, SlurmSession, PromptObserver, PromptCancelledError, AWSInstanceInfo } from '../models';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -91,6 +91,10 @@ export class SshManager {
         );
     }
 
+
+    public getCSHosts(): SshHost[] {
+        return this.readHostsFile(CS_SSH_CONFIG_PATH, 'user')
+    }
     public buildControlMasterArgs(hostName: string): string[] {
         // Windows OpenSSH has no Unix-socket ControlMaster ("getsockname failed: Not a socket").
         if (process.platform === 'win32') {
@@ -408,4 +412,52 @@ export async function removeSshConfigEntry(sessionId: string, hostAlias: string)
         release(CS_SSH_CONFIG_PATH);
     }
     await setServerInstallPath(hostAlias, undefined);
+}
+
+
+
+export async function addSshConfigEntryAWS(instanceID: string, instanceName: string, instanceIp: string, localPort: number, privateKey: string): Promise<string> {
+    await removeSshConfigEntry(instanceID, instanceName);
+
+    const user = 'ec2-user'; // any non-empty value works; the custom SSH server ignores the username
+    const configBlock = buildSshConfigBlock(instanceID, instanceName, instanceIp, localPort, user, privateKey);
+
+    // Locked: startup reattach can rewrite this concurrently, so the append must not interleave.
+    lock(CS_SSH_CONFIG_PATH);
+    try {
+        fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
+    }
+    catch (err) {
+        logger.error(`Failed to write SSH config for instance ${instanceName}:`, err);
+    }
+    finally {
+        release(CS_SSH_CONFIG_PATH);
+    }
+    await setServerInstallPath(instanceName, `/tmp/cs-vscode/${instanceID}`);
+    return instanceName;
+}
+
+
+export async function removeSshConfigEntryAWS(instanceID: string, instanceName: string): Promise<void> {
+    lock(CS_SSH_CONFIG_PATH);
+    try {
+        const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
+        // Escape the alias (a cluster name may contain '.') so it can't over-match; the id marker is a regex-safe uuid.
+        const aliasRe = instanceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(
+            `(?:\\n|^)# CS-Bridge auto-generated for session ${instanceID}\\nHost ${aliasRe}\\n(?:    [^\\n]+\\n)*`,
+            'gm',
+        );
+        const cleaned = content.replace(re, '');
+        if (cleaned !== content) {
+            fs.writeFileSync(CS_SSH_CONFIG_PATH, cleaned);
+        }
+    }
+    catch (err) {
+        logger.error(`Failed to clear SSH config entry for instance ${instanceID}:`, err);
+    }
+    finally {
+        release(CS_SSH_CONFIG_PATH);
+    }
+    await setServerInstallPath(instanceName, undefined);
 }
