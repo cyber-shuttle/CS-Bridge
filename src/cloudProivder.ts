@@ -482,7 +482,7 @@ export class CloudProvider extends WebviewProvider {
 
     private openTerminal(ip: string): void {
         const hostString = `ec2-user@${ip}`
-        vscode.window.createTerminal({ name: ip, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(ip), this.PRIVATE_KEY_PATH, hostString] }).show();
+        vscode.window.createTerminal({ name: ip, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(ip), "-i", this.PRIVATE_KEY_PATH, hostString] }).show();
     }
 
 
