@@ -4,3 +4,4 @@ node_modules/
 out/
 *.vsix
 /docs/plans
+/CLAUDE.md
