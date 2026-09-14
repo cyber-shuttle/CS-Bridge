@@ -12,31 +12,23 @@ Requires linkspan 0.17.5.
 
 ### Added
 
-- **Public project files** — `SECURITY.md` (how to report a vulnerability), `CODE_OF_CONDUCT.md`, `CITATION.cff`, issue and pull-request templates, and a single architecture document at `docs/ARCHITECTURE.md` in place of three drifting copies. (#121)
+- **Public project files**: a security policy, code of conduct, citation file, issue and pull-request templates, and a single architecture document. (#121)
 
 ### Changed
 
-- **linkspan is staged before it is installed, and stays owner-only** — the release tarball is extracted to a temporary path and moved into place only once it is complete, and `~/.cybershuttle/bin` and the binary in it are created mode 700. An architecture with no linkspan release is now refused by name instead of building a download URL that 404s and reads as a network fault. (#117)
-- **A partition switch keeps a selection the new partition still offers** — CPU, memory and GPU fell back to the new partition's first option on every switch; they now fall back only when the new partition cannot honour the pick. (#120)
-- **Slurm spelled as its own project spells it** — the script preview is titled **Slurm Job Script Preview**, and the same spelling runs through the log lines and error messages. The `SLURM_*` environment variables and the `CS-Bridge` ssh_config marker are wire formats and unchanged. (#119)
+- **linkspan installs are atomic and owner-only.** The tarball is extracted to a temporary path and moved into place whole, and the install directory and binary are mode 700. (#117)
+- A partition switch keeps the picks the new partition still offers (#120), and Slurm is spelled as its own project spells it (#119).
 
 ### Removed
 
-- Local scratch is no longer packaged — `.superpowers/` stayed out of git through a nested `.gitignore`, but `vsce` packages the working directory rather than the git tree, so ~140 KB of internal diffs shipped inside every published `.vsix` from 0.1.4 on. (#116)
+- **Local scratch no longer ships in the `.vsix`.** `vsce` packages the working directory, causing unnecessary files to be bundled since 0.1.4. Removed the unnecessary files. (#116)
 
 ### Fixed
 
-- **A job that ended in `NODE_FAIL`, `BOOT_FAIL`, `PREEMPTED` or `DEADLINE` showed as still preparing until its wall time elapsed** — seven scheduler states were recognised and every other one read as `UNKNOWN`, which the monitor holds on rather than treating as job death. The 23 states cs-control classifies are now classified here too, and the state is read from its first token, so a decorated state (`CANCELLED by 1001`) and a truncated one (`COMPLETING+`) both parse. `SUSPENDED` and `STOPPED` still hold an allocation, so they read as queued rather than unknown. (#117)
-- **An interrupted linkspan download became the binary the next launch execs** — `curl` was piped straight into `tar` over the destination path, leaving a truncated binary in place. (#117)
-- **An out-of-date linkspan was never replaced on a login node without GNU grep** — the latest-release lookup extracted the tag with `grep -oP`, and a failed lookup is treated as no answer about the latest release, which keeps whatever is installed. The extraction now uses `sed`. (#117)
-- **An inert `Include` line counted as a present one** — the `~/.ssh/config` repair tested for the line as a substring, so a commented-out `Include`, or one sitting below a `Host` block where ssh never reaches it, passed the check; the repair silently did not happen and the per-session aliases stopped resolving. (#120)
-- **`~/.ssh/config` was written unlocked when the `Include` was added** — every other write to that file takes the cross-process lock and renames a temp file into place, but this one, which runs on every window start, did a bare read-then-write: two windows opening together, or one racing a host add, could duplicate the `Include` or write back stale content and drop a host block. (#122)
-- **`-W` overwrote `-R` in an added SSH command** — the command parser mapped `-W` to `RemoteForward`, the same directive `-R` writes, so a command carrying both silently lost one of them. `-W` is now consumed without producing a directive. (#120)
-- **GPU columns on a multi-GPU session card** — the labels were looked up in a map holding one `GPU0` key, so a two-GPU allocation showed the total count in the first column and a bare `GPU1` in the second. The label travels with its series, and the columns read `GPU0` and `GPU1`. (#120)
-- **The summary panel posted twice per sample** — run records and live samples land in the same store, so its two watchers were one subscription under two names. (#117)
-- **The summary tab title ended in a dangling colon.** (#118)
-- **`LICENSE` was not the canonical Apache 2.0 text** — the body carried three word-level alterations and the appendix had been replaced. (#121)
-- **`install-ext` was literal text under `cmd.exe`** — it relied on POSIX `$npm_package_*` expansion, breaking the documented build-from-source path on Windows; it now reads the name and version through Node. (#121)
+- **Failed jobs no longer show as preparing until their wall time runs out.** All 23 scheduler states are now classified, including decorated and truncated ones such as `CANCELLED by 1001` and `COMPLETING+`. (#117)
+- **An interrupted linkspan download no longer leaves a truncated binary in place.** (#117)
+- **`~/.ssh/config` repairs are reliable.** A commented-out or misplaced `Include` no longer counts as present, and adding one now takes the same lock as every other write to the file. (#120, #122)
+- Smaller fixes: linkspan updates on login nodes without GNU grep (#117), `-W` overwriting `-R` in an added SSH command, GPU column labels on multi-GPU cards (#120), a summary panel that posted twice per sample (#117), a dangling colon in the summary tab title (#118), a non-canonical `LICENSE`, and `install-ext` under `cmd.exe` (#121).
 
 ## [0.1.5] - 2026-08-21
 
@@ -44,18 +36,16 @@ Requires linkspan 0.17.0.
 
 ### Changed
 
-- **Stopped sending and declaring fields linkspan no longer has** — `POST /vscode/sessions` no longer sends `mount_user_home`, the last remnant of the remote filesystem mounting linkspan no longer does, and a session status no longer declares `active`, `restarts` or `last_error`. Only `id`, `state` and `addr` were ever read. (#114)
-- **Dropped the one-time legacy session migration** — the old `~/.cybershuttle/sessions.json` array was folded into per-id records, and the id rewrite and `cshost-<id>` workspace-authority form repaired ids written in that format. All three are one-time repairs, and the migration deleted its own input. (#114)
-- **Removed surface with no caller** — `SlurmSession.jobDirectory` (written as `''`, rendered behind a guard that is never true), the `statusDescriptor` wrapper over three predicates, the `AccountInfo` wrapper over a nullable string, three re-exports that renamed store functions, and unused `Chip`/`Card` props. The logger's level enum and gate never filtered anything. (#114)
+- **Dropped the fields linkspan no longer has.** Session creation no longer sends `mount_user_home`, and only `id`, `state` and `addr` are read from a session status. (#114)
+- Removed the one-time legacy session migration and code with no caller. (#114)
 
 ### Fixed
 
-- **`summaryPanel` subscribed to the run watcher twice** — one subscription came in under a re-exported alias, hiding the duplicate. (#114)
-- **`install-ext` pinned a stale vsix** — it installed `csbridge-0.0.2.vsix` regardless of the packaged version, and now reads the name and version from the package. (#114)
+- `summaryPanel` subscribed to the run watcher twice, and `install-ext` installed a stale vsix. (#114)
 
 ### Docs
 
-- Corrected descriptions of mechanisms that no longer exist: nothing tails linkspan's logs to discover the API port (it is pinned at launch), `linkspanSupport` is an HTTP client rather than a YAML generator, `checkLinkspanHealth` does not exist, and sessions are per-id records rather than one array file. (#114)
+- Corrected descriptions of mechanisms that no longer exist, such as tailing linkspan's logs for the API port. (#114)
 
 ## [0.1.4] - 2026-08-21
 
