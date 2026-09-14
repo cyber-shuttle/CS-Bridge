@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Allocations on TACC** are now spelled as the cluster's project map spells them, since its submit filter rejects the lower-case names Slurm reports.
+
 ## [0.1.6] - 2026-09-07
 
 Requires linkspan 0.17.5.

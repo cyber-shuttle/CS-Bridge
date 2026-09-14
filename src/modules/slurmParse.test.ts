@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { buildSlurmScript, classifySchedulerState, parseAccounts, parsePartitionLine, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
 import { SlurmJobStatus, SlurmSession } from '../models';
 
-test('parseAccounts drops the header and de-duplicates per-partition associations', () => {
-    const out = 'Account|\npearc26-tutorial|\npearc26-tutorial|\ndelta-cpu|\n';
+test('parseAccounts de-duplicates per-partition associations', () => {
+    const out = 'pearc26-tutorial\npearc26-tutorial\ndelta-cpu\n';
     assert.deepEqual(parseAccounts(out), ['pearc26-tutorial', 'delta-cpu']);
 });
 
 test('parseAccounts returns [] when there are no associations', () => {
     assert.deepEqual(parseAccounts(''), []);
-    assert.deepEqual(parseAccounts('Account|\n'), []);
+    assert.deepEqual(parseAccounts('\n'), []);
 });
 
 test('parseSacctStatus classifies each Slurm state and reads ElapsedRaw', () => {

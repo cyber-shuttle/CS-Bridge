@@ -30,7 +30,7 @@ CS Bridge is tested on the following ACCESS clusters (🟢 supported, 🟡 parti
 | Delta | `login.delta.ncsa.illinois.edu` | 25.11 | x86_64 | 🟢 |
 | DeltaAI | `dtai-login.delta.ncsa.illinois.edu` | 25.11 | aarch64 | 🟢 |
 | Expanse | `login.expanse.sdsc.edu` | 23.02 | x86_64 | 🟢 |
-| Stampede3 | `stampede3.tacc.utexas.edu` | 23.11 | x86_64 | 🟡 |
+| Stampede3 | `stampede3.tacc.utexas.edu` | 23.11 | x86_64 | 🟢 |
 
 ## Quick Start
 

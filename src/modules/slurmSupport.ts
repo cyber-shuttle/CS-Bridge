@@ -27,9 +27,11 @@ export async function getSlurmClusterInfo(hostName: string, observer?: PromptObs
     const log = Logger.getInstance();
     const clusterInfo: SlurmClusterInfo = { host: hostName, accounts: [], partitions: [] };
     // Only the first command authenticates (later ones reuse the ControlMaster socket), so the auth box surfaces here.
+    // Slurm's database lowercases account names; TACC's submit filter wants them as project.map spells them.
     try {
         const accountResult = await sshManager.runRemoteCommand(hostName,
-            'sacctmgr show associations where user=$USER format=Account -p', observer);
+            'sacctmgr -n show associations where user=$USER format=Account -P'
+            + ' | if [ -r /usr/local/etc/project.map ]; then grep -iwf - /usr/local/etc/project.map | cut -d" " -f1; else cat; fi', observer);
 
         if (accountResult.code === 0) {
             clusterInfo.accounts = parseAccounts(accountResult.stdout);

@@ -10,10 +10,10 @@ export const linkspanSocketPath = (sessionId: string): string => `/tmp/csbridge-
 // A Slurm account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
 export const slurmAccount = (raw: string | undefined): string => (raw ?? '').trim().match(/^[\w.-]+$/)?.[0] ?? '';
 
-// Distinct accounts from `sacctmgr show associations ... format=Account -p`; it prints one
+// Distinct accounts from `sacctmgr show associations ... format=Account -P`; it prints one
 // row per (account, partition) association, so per-partition accounts repeat.
 export function parseAccounts(output: string): string[] {
-    const names = output.trim().split(/\r?\n/).slice(1)
+    const names = output.trim().split(/\r?\n/)
         .map(l => l.split('|')[0].trim())
         .filter(Boolean);
     return [...new Set(names)];
