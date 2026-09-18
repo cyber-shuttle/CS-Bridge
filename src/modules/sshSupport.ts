@@ -1,4 +1,4 @@
-import { SshHost, SlurmSession, PromptObserver, PromptCancelledError, AWSInstanceInfo } from '../models';
+import { SshHost, SlurmSession, PromptObserver, PromptCancelledError } from '../models';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';

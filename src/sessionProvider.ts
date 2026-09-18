@@ -13,6 +13,7 @@ import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './mod
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { slurmAccount } from './modules/slurmParse';
 import { isTerminal, isCloseable, isStoppable, isReattachable, isRelayLive, isWallTimeExpired } from './modules/sessionMachine';
+import AWSClient from "./modules/aws"
 
 // forceNew=false relies on VS Code deduping by workspace identity: it focuses the window already holding this URI.
 function openSessionWindow(sessionId: string, forceNew: boolean): void {
@@ -37,6 +38,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private readonly opening = new Set<string>();
     private readonly monitor = new SessionMonitor();
     private sharedReady = false;
+    private awsClient = new AWSClient()
 
     // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
@@ -219,18 +221,45 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     }
 
     public async startNewSession(): Promise<void> {
-        const hosts = SshManager.getInstance().getMergedHosts();
-        if (hosts.length === 0) {
-            vscode.window.showInformationMessage('No SSH hosts configured yet — add one from the SSH Hosts view first.');
-            return;
+        const cloudbank = {
+            label: "Cloudbank",
+            description: "Launch compute resouce using Cloudbank Allocations"
         }
-        const pick = await vscode.window.showQuickPick(
-            hosts.map(h => ({ label: h.name, description: h.hostname ? `${h.user ? h.user + '@' : ''}${h.hostname}` : undefined })),
-            { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
+        const hpc = {
+            label: "HPC",
+            description: "Launch compute resouce using HPC Allocations"
+        }
+
+        const platform = await vscode.window.showQuickPick(
+            [hpc, cloudbank]
         );
-        if (!pick) { return; }
-        this.startSessionDraft(pick.label);
+
+        if (!platform) { return; }
+
+        if (platform.label === "HPC") {
+
+            const hosts = SshManager.getInstance().getMergedHosts();
+            if (hosts.length === 0) {
+                vscode.window.showInformationMessage('No SSH hosts configured yet — add one from the SSH Hosts view first.');
+                return;
+            }
+            const pick = await vscode.window.showQuickPick(
+                hosts.map(h => ({ label: h.name, description: h.hostname ? `${h.user ? h.user + '@' : ''}${h.hostname}` : undefined })),
+                { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
+            );
+            if (!pick) { return; }
+            this.startSessionDraft(pick.label);
+        }
+
+        if (platform.label === "Cloudbank") {
+            // prompt to past tokens
+            // later pull cloud accounts from custos instead
+            this.awsClient.initEC2Client("us-east-1")
+        }
+
     }
+
+
 
     public startSessionDraft(host: string): void {
         this.draftHost = host;
