@@ -1,11 +1,4 @@
-import * as vscode from "vscode";
-import { CloudInstanceInfo, CloudProviderState, WebviewMessage, InstanceActions } from "./models";
-// import AWSClient from "./modules/aws"
-import { addSshConfigEntryAWS, removeSshConfigEntryAWS, SshManager } from './modules/sshSupport';
-import { WebviewProvider } from "./webviewProvider";
-import { writeFileSync, unlinkSync, existsSync } from "fs";
-import { homedir } from "os";
-import path from "path";
+import * as vscode from 'vscode';
 import {
     EC2Client,
     CreateKeyPairCommand,
@@ -21,17 +14,17 @@ import {
     TerminateInstancesCommand,
 } from "@aws-sdk/client-ec2";
 
+import { CloudInstanceInfo, InstanceActions } from "../models";
+import { addSshConfigEntryAWS, removeSshConfigEntryAWS, SshManager } from '../modules/sshSupport';
+import { writeFileSync, unlinkSync, existsSync } from "fs";
+import { homedir } from "os";
+import path from "path";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const CS_SSH_CONFIG_PATH = path.join(homedir(), '.cybershuttle', 'ssh_config');
-
-// Webview provider for the Cloud Provider view .
-export class CloudProvider extends WebviewProvider {
-    public static readonly viewType = "csbridge.cloudView";
-    protected readonly viewKind = "cloud" as const;
+export default class AWSClient {
     protected readonly KEY_NAME = "cs-aws-generated-key";
     private client: EC2Client | null = null;
-    // private awsClient: AWSClient;
     private readonly securityGroupName = "CS-Brige VSCode Ext SSH Access"
     protected pollInternval: NodeJS.Timeout | null = null;
 
@@ -42,16 +35,6 @@ export class CloudProvider extends WebviewProvider {
         this.KEY_NAME,
     );
 
-    private state: CloudProviderState = {
-        name: "aws",
-        accessKey: "",
-        secretKey: "",
-        sessionToken: "",
-        region: "us-east-1",
-        instances: [],
-        clientInit: false,
-        sshHosts: []
-    };
 
     private toast(title: string, message: string, cancellable: boolean) {
         vscode.window.withProgress({
@@ -65,78 +48,17 @@ export class CloudProvider extends WebviewProvider {
         });
     }
 
-    protected handleMessage(data: WebviewMessage): void {
-        const instanceName = data.name ?? ""
-        const instanceID = data.sessionId ?? ""
-        const instanceIP = data.host ?? ""
-        switch (data.command) {
-            case "ready":
-                const hosts = SshManager.getInstance().getCSHosts()
-                this.state.sshHosts = hosts
-                this.pushState();
-                break;
-            case "launch":
-                this.launchEC2Instance();
-                this.getInstances()
-                break;
-            case "rm-key-pair":
-                this.remmoveKeyPair(this.PRIVATE_KEY_PATH);
-            case "poll-instances":
-                if (this.client !== null) {
-                    this.getInstances()
-                    this.pollInternval = setInterval(() => this.getInstances(), 10000) // poll every 10 secs, change later
-                }
-                break;
-            case "stop-instance":
-                if (instanceID !== "") {
-                    this.doInstanceActions(InstanceActions.Stop, instanceID)
-                } else (
-                    vscode.window.showErrorMessage("Error: No instance ID provided")
-                )
-                break
-            case "start-instance":
-                if (instanceID !== "") {
-                    this.doInstanceActions(InstanceActions.Start, instanceID)
-                } else (
-                    vscode.window.showErrorMessage("Error: No instance ID provided")
-                )
-                break
-            case "remove-instance":
-                if (instanceID !== "") {
-                    this.doInstanceActions(InstanceActions.Remove, instanceID)
-                    this.removeSshConfigEntryAWS(instanceID, instanceName)
-                } else (
-                    vscode.window.showErrorMessage("Error: No instance ID provided")
-                )
-                break
-            case "terminal":
-                console.log("Opening terminal")
-                if (instanceIP !== "") {
-                    this.openTerminal(instanceIP)
-                } else {
-                    vscode.window.showErrorMessage("Error: No instance IP provided")
-                }
-                break
-            case "remote":
-                console.log("Opening remote session")
-                if (instanceIP !== "") {
-                    this.openRemoteSession(instanceID, instanceName, instanceIP)
-                } else {
-                    vscode.window.showErrorMessage("Error: No instance IP provided")
-                }
-                break;
+    constructor() {
+    }
 
-            default:
-                this.logger.warn("Unknown command from cloud webview:", data);
-        }
+    public isReady(): boolean {
+        return this.client !== null
     }
-    public pushState(): void {
-        if (!this.view) {
-            return;
-        }
-        this.view.webview.postMessage({ command: "state", state: this.state });
-    }
-    public async addAWSToken(): Promise<void> {
+
+
+
+    public async initEC2Client(region: string): Promise<void> {
+
         const accessKey = (
             await vscode.window.showInputBox({
                 title: "Enter AWS Access Key",
@@ -168,30 +90,15 @@ export class CloudProvider extends WebviewProvider {
         if (!sessionToken) {
             return;
         }
-        this.state = {
-            ...this.state,
-            accessKey: accessKey,
-            secretKey: secretKey,
-            sessionToken: sessionToken,
-        };
-        this.initEC2Client();
-        // this.awsClient = new AWSClient(accessKey, secretKey, sessionToken, 'us-east-1')
-        this.pushState();
-    }
 
-    private async initEC2Client(): Promise<void> {
         this.client = new EC2Client({
-            region: this.state.region,
+            region: region,
             credentials: {
-                accessKeyId: this.state.accessKey,
-                secretAccessKey: this.state.secretKey,
-                sessionToken: this.state.sessionToken,
+                accessKeyId: accessKey,
+                secretAccessKey: secretKey,
+                sessionToken: sessionToken,
             },
         });
-        this.state = {
-            ...this.state,
-            clientInit: true
-        };
     }
     // Entire workflow for launching EC2 instance
     public async launchEC2Instance(): Promise<void> {
@@ -235,7 +142,7 @@ export class CloudProvider extends WebviewProvider {
 
     // Create EC2 Instance
     // add options for image, and instance type later
-    private async createInstance(keyName: string, securityGroupID: string): Promise<void> {
+    protected async createInstance(keyName: string, securityGroupID: string): Promise<void> {
         if (this.client === null) {
             throw new Error("EC2 Client is not initialized")
         }
@@ -444,7 +351,7 @@ export class CloudProvider extends WebviewProvider {
     }
 
 
-    public async getInstances(): Promise<void> {
+    public async getInstances(): Promise<CloudInstanceInfo[]> {
         if (this.client === null) {
             throw new Error("EC2 Client is not initialized")
         }
@@ -492,27 +399,22 @@ export class CloudProvider extends WebviewProvider {
         } catch (error) {
             console.error("Get instances failed:", error);
         }
+        return instances
 
-        this.state = {
-            ...this.state,
-            instances: instances
-        };
-        this.pushState()
     }
 
-    private openTerminal(ip: string): void {
+    public openTerminal(ip: string): void {
         const hostString = `ec2-user@${ip}`
         vscode.window.createTerminal({ name: ip, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(ip), "-i", this.PRIVATE_KEY_PATH, hostString] }).show();
     }
 
-    private async openRemoteSession(id: string, name: string, ip: string): Promise<void> {
+    public async openRemoteSession(id: string, name: string, ip: string): Promise<void> {
+        const hosts = SshManager.getInstance().getCSHosts()
         console.log("Checking SSH Config")
-        if (this.state.sshHosts.find(host => host.hostname === ip)) {
+        if (hosts.find(host => host.hostname === ip)) {
             console.log("Found existing entry")
         } else {
             await addSshConfigEntryAWS(id, name, ip, 22, this.PRIVATE_KEY_PATH)
-            this.state.sshHosts = SshManager.getInstance().getCSHosts()
-            this.pushState()
         }
 
         const sshConfig = vscode.workspace.getConfiguration('remote.SSH');
@@ -532,17 +434,11 @@ export class CloudProvider extends WebviewProvider {
 
     }
 
-    private async removeSshConfigEntryAWS(id: string, name: string): Promise<void> {
+    protected async removeSshConfigEntryAWS(id: string, name: string): Promise<void> {
         console.log(`Remove SSH Config for ${name} `)
-        console.log(this.state.sshHosts)
         await removeSshConfigEntryAWS(id, name)
-        this.state.sshHosts = SshManager.getInstance().getCSHosts()
-        this.pushState()
 
     }
 
 
 }
-
-
-

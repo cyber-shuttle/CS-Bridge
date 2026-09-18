@@ -1,7 +1,7 @@
 import { ComponentChildren, render } from "preact";
 import { Stack, Text, Button, Row, Icon } from "@/ui/components/base";
 import { post, useWebviewState } from "@/ui/platform/vscode";
-import { AWSInstanceInfo, CloudProviderState } from "@/models";
+import { CloudInstanceInfo, CloudProviderState } from "@/models";
 import { useEffect, useState } from "preact/hooks";
 
 function DetailRow({ label, children }: { label: string; children: ComponentChildren }) {
@@ -13,7 +13,7 @@ function DetailRow({ label, children }: { label: string; children: ComponentChil
     );
 }
 
-function InstanceItem({ instance: instance }: { instance: AWSInstanceInfo }) {
+function InstanceItem({ instance: instance }: { instance: CloudInstanceInfo }) {
     const [open, setOpen] = useState(false);
     return (
         <Stack>
