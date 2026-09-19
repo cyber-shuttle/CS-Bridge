@@ -1,5 +1,6 @@
 import { ComponentChildren, render } from "preact";
 import { Stack, Text, Button, Row, Icon } from "@/ui/components/base";
+import { CloudSessionCard } from '@/ui/components/CloudSessionCard'
 import { post, useWebviewState } from "@/ui/platform/vscode";
 import { CloudInstanceInfo, CloudProviderState } from "@/models";
 import { useEffect, useState } from "preact/hooks";
@@ -44,7 +45,7 @@ function InstanceList({ state }: { state: CloudProviderState }) {
     const instances = [...state.instances].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
     if (!state.clientInit) { return <Text muted style={{ margin: '4px 0' }}>AWS Credentials not set.</Text>; }
     if (instances.length === 0) { return <Text muted style={{ margin: '4px 0' }}>No Instances yet.</Text>; }
-    return <>{instances.map(host => <InstanceItem key={host.name} instance={host} />)}</>;
+    return <>{instances.map(host => <CloudSessionCard key={host.name} instance={host} />)}</>;
 }
 
 function Root() {

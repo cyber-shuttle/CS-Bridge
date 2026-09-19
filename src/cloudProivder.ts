@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { CloudInstanceInfo, CloudProviderState, WebviewMessage, InstanceActions } from "./models";
 // import AWSClient from "./modules/aws"
 import { addSshConfigEntryAWS, removeSshConfigEntryAWS, SshManager } from './modules/sshSupport';
-import { WebviewProvider } from "./webviewProvider";
+import { confirmModal, WebviewProvider } from "./webviewProvider";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
 import path from "path";
@@ -65,7 +65,7 @@ export class CloudProvider extends WebviewProvider {
         });
     }
 
-    protected handleMessage(data: WebviewMessage): void {
+    protected async handleMessage(data: WebviewMessage): Promise<void> {
         const instanceName = data.name ?? ""
         const instanceID = data.sessionId ?? ""
         const instanceIP = data.host ?? ""
@@ -76,33 +76,41 @@ export class CloudProvider extends WebviewProvider {
                 this.pushState();
                 break;
             case "launch":
-                this.launchEC2Instance();
-                this.getInstances()
+                await this.launchEC2Instance();
+                await this.getInstances()
                 break;
             case "rm-key-pair":
                 this.remmoveKeyPair(this.PRIVATE_KEY_PATH);
             case "poll-instances":
                 if (this.client !== null) {
-                    this.getInstances()
+                    await this.getInstances()
                     this.pollInternval = setInterval(() => this.getInstances(), 10000) // poll every 10 secs, change later
                 }
                 break;
             case "stop-instance":
                 if (instanceID !== "") {
-                    this.doInstanceActions(InstanceActions.Stop, instanceID)
+
+                    await this.doInstanceActions(InstanceActions.Stop, instanceID)
                 } else (
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
                 break
             case "start-instance":
                 if (instanceID !== "") {
-                    this.doInstanceActions(InstanceActions.Start, instanceID)
+                    await this.doInstanceActions(InstanceActions.Start, instanceID)
                 } else (
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
                 break
             case "remove-instance":
                 if (instanceID !== "") {
+                    const confirmed = await confirmModal('Remove Instnace?', 'Remove',
+                        'This stops and terminates the instance')
+                    if (!confirmed) {
+                        console.log("Cancel remove")
+                        return;
+                    }
+                    console.log("Removing ")
                     this.doInstanceActions(InstanceActions.Remove, instanceID)
                     this.removeSshConfigEntryAWS(instanceID, instanceName)
                 } else (

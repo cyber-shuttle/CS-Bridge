@@ -14,7 +14,7 @@ import {
     TerminateInstancesCommand,
 } from "@aws-sdk/client-ec2";
 
-import { CloudInstanceInfo, InstanceActions } from "../models";
+import { CloudInstanceInfo, InstanceActions, SshHost } from "../models";
 import { addSshConfigEntryAWS, removeSshConfigEntryAWS, SshManager } from '../modules/sshSupport';
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
@@ -27,6 +27,8 @@ export default class AWSClient {
     private client: EC2Client | null = null;
     private readonly securityGroupName = "CS-Brige VSCode Ext SSH Access"
     protected pollInternval: NodeJS.Timeout | null = null;
+    protected instances: CloudInstanceInfo[] = []
+    protected hosts: SshHost[] = []
 
 
     protected readonly PRIVATE_KEY_PATH = path.join(
@@ -350,8 +352,12 @@ export default class AWSClient {
         }
     }
 
+    public getInstances(): CloudInstanceInfo[] {
+        return this.instances
+    }
 
-    public async getInstances(): Promise<CloudInstanceInfo[]> {
+
+    public async pollInstances(): Promise<void> {
         if (this.client === null) {
             throw new Error("EC2 Client is not initialized")
         }
@@ -399,7 +405,7 @@ export default class AWSClient {
         } catch (error) {
             console.error("Get instances failed:", error);
         }
-        return instances
+        this.instances = instances
 
     }
 
