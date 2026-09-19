@@ -39,6 +39,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private readonly monitor = new SessionMonitor();
     private sharedReady = false;
     private awsClient = new AWSClient()
+    protected cloudPollInterval: NodeJS.Timeout | null = null;
+    private pollIntervalTime = 10000
 
     // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
@@ -252,9 +254,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         }
 
         if (platform.label === "Cloudbank") {
-            // prompt to past tokens
-            // later pull cloud accounts from custos instead
-            this.awsClient.initEC2Client("us-east-1")
+            await this.awsClient.initEC2Client("us-east-1")
+            this.pushState()
         }
 
     }
@@ -345,7 +346,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 previewSession: this.previewSession,
                 validating: this.validating,
                 alert: this.alert,
+                isCloud: this.awsClient.isReady(),
+                cloudSessions: this.awsClient.getInstances()
             };
+
             view.webview.postMessage({ command: 'state', state });
         }
         catch (error) {
