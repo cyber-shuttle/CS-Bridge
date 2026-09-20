@@ -11,7 +11,7 @@ CS Bridge is a VS Code extension for working on high-performance computing (HPC)
 
 ## Features
 
-- **Cluster hosts** — hosts come from `~/.ssh/config`; a new one is added by pasting its `ssh` command.
+- **Resources** — hosts and keys come from `~/.ssh/config`. Paste an `ssh` command to add a host, or edit one in place.
 - **Job form** — partition, allocation, CPUs, memory, GPUs and walltime are chosen once; CS Bridge writes and submits the batch script.
 - **Live metrics** — the session card shows the job state and its current CPU, memory and GPU use.
 - **Persistent sessions** — a job outlives its VS Code window; **Connect** opens a new window on the same job.
@@ -71,6 +71,7 @@ The full design is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - `~/.cybershuttle/ssh_config` defines the per-session SSH aliases and is included from `~/.ssh/config`.
 - `~/.cybershuttle/ssh_keys/` holds the per-session SSH keys.
 - `~/.cybershuttle/ssh_control/` holds the ControlMaster sockets.
+- `~/.ssh/config.csbridge-backup` is the copy of `~/.ssh/config` taken before its first Resources edit.
 - VS Code keeps the Microsoft account token in the operating system keychain.
 
 **Remote**

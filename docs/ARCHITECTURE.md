@@ -68,6 +68,15 @@ Local VS Code                              Remote HPC cluster
 three stay in lockstep. The alias is what VS Code prints as the window's `[SSH: …]` label, and it never equals a
 bare cluster name, so it cannot shadow the login host used for Slurm.
 
+## The Resources view
+
+Hosts are the concrete `Host` aliases of `~/.ssh/config` and its `Include` tree, each resolved with `ssh -G`
+into `{ Name, Config }`, the shape cs-control stores (`sshHostsStore.ts`). The first edit converts the file once,
+after a confirm and a backup to `~/.ssh/config.csbridge-backup`: the session Include, a marker line and one
+effective stanza per alias, written only if every alias still resolves identically. Later edits run under the
+config lock and are validated with `ssh -G` before the file is replaced. Keys are the `IdentityFile` values plus
+the keys in `~/.ssh/`, minus session keys; only metadata reaches the webview (`sshKeyStore.ts`).
+
 ## Source layout
 
 Four layers, and nothing reaches past its neighbour.
@@ -76,7 +85,7 @@ Four layers, and nothing reaches past its neighbour.
   (`sessionProvider`, `sshHostProvider`, `statsProvider`) plus `summaryPanel`, over the `webviewProvider` base that
   renders the nonce-gated CSP shell each bundle loads into. `remoteSessionController` exists only inside a remote
   window, where it owns the walltime status bar and the hand-back to a local window.
-- **`src/modules/*.ts`** — the capability layer. SSH (`sshSupport`, `sshShell`, `sshHostsStore`, `sshCommandParser`),
+- **`src/modules/*.ts`** — the capability layer. SSH (`sshSupport`, `sshShell`, `sshHostsStore`, `sshKeyStore`, `sshCommandParser`),
   Slurm (`slurmLaunch`, `slurmParse`, `slurmSupport`), linkspan's HTTP client (`linkspanSupport`), Dev Tunnels
   (`tunnelSupport`), the status domain (`sessionMachine`), lifecycle composition (`sessionSupport`) and the on-disk
   stores. Modules that do not import `vscode` unit-test directly; the ones that do cannot be imported under the test
@@ -125,7 +134,7 @@ lives separately, one file per session under `~/.cybershuttle/metrics/` (`sessio
 
 A remote window recognises itself: `extension.ts` reads the workspace URI authority, and in an
 `ssh-remote+<alias>` window it scopes the Sessions view to that one session, observe-only, and sets the
-`csbridge.remote` context so the SSH Hosts and Stats views hide.
+`csbridge.remote` context so the Resources and Stats views hide.
 
 ## Build pipeline
 

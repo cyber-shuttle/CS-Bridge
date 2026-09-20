@@ -1,4 +1,4 @@
-import { SshHost, SlurmSession, PromptObserver, PromptCancelledError } from '../models';
+import { SSHHost, SlurmSession, PromptObserver, PromptCancelledError } from '../models';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -8,11 +8,10 @@ import * as crypto from 'crypto';
 import { Logger, errMsg } from '../logger';
 import { lock, release, lockedUpdateTextFile } from './fsSupport';
 import { buildShellCommand, extractCommandResult, READY_MARKER, renderAuthHtml } from './sshShell';
-import { USER_SSH_CONFIG_PATH, SYSTEM_SSH_CONFIG_PATH, mergeHostsByPriority, parseHostsFromConfigText, buildSshConfigBlock, csHostAlias, includeIsEffective } from './sshHostsStore';
+import { systemRunner } from './commandRunner';
+import { SSH_DIR, USER_SSH_CONFIG_PATH, CS_SSH_CONFIG_PATH, CS_SSH_KEYS_DIR, buildSshConfigBlock, csHostAlias, includeIsEffective, importHosts } from './sshHostsStore';
 
 const logger = Logger.getInstance();
-const CS_SSH_CONFIG_PATH = path.join(os.homedir(), '.cybershuttle', 'ssh_config');
-const CS_SSH_KEYS_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_keys');
 const CS_SSH_CONTROL_DIR = path.join(os.homedir(), '.cybershuttle', 'ssh_control');
 
 const sessionKeyPath = (sessionId: string): string => path.join(CS_SSH_KEYS_DIR, `id_cshost-${sessionId}`);
@@ -72,23 +71,9 @@ export class SshManager {
         return SshManager.instance;
     }
 
-    private readHostsFile(filePath: string, source: 'user' | 'system'): SshHost[] {
-        try {
-            if (!fs.existsSync(filePath)) { return []; }
-            const text = fs.readFileSync(filePath, 'utf-8');
-            return parseHostsFromConfigText(text).map(h => ({ ...h, source }));
-        }
-        catch (err) {
-            logger.error(`Error reading SSH config ${filePath}:`, err);
-            return [];
-        }
-    }
-
-    public getMergedHosts(): SshHost[] {
-        return mergeHostsByPriority(
-            this.readHostsFile(USER_SSH_CONFIG_PATH, 'user'),
-            this.readHostsFile(SYSTEM_SSH_CONFIG_PATH, 'system'),
-        );
+    public getMergedHosts(): SSHHost[] {
+        try { return importHosts(systemRunner); }
+        catch (err) { logger.error('Error importing SSH hosts:', err); return []; }
     }
 
     public buildControlMasterArgs(hostName: string): string[] {
@@ -299,15 +284,13 @@ export class SshManager {
     }
 
     private ensureSshInclude(targetPath: string): void {
-        const sshDir = path.join(os.homedir(), '.ssh');
-        const sshConfigPath = path.join(sshDir, 'config');
         const includeLine = `Include ${targetPath}`;
 
         try {
-            if (!fs.existsSync(sshDir)) {
-                fs.mkdirSync(sshDir, { mode: 0o700 });
+            if (!fs.existsSync(SSH_DIR)) {
+                fs.mkdirSync(SSH_DIR, { mode: 0o700 });
             }
-            lockedUpdateTextFile(sshConfigPath, cur =>
+            lockedUpdateTextFile(USER_SSH_CONFIG_PATH, cur =>
                 cur === undefined ? `${includeLine}\n`
                     : includeIsEffective(cur, includeLine) ? null
                         : `${includeLine}\n${cur}`, 0o600);

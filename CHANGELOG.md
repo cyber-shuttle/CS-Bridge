@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Resources view** replaces SSH Hosts. Hosts are the aliases of `~/.ssh/config`, resolved with `ssh -G`, shown
+  with the keys they use. The first edit converts the file once into one stanza per alias, keeping the original
+  at `~/.ssh/config.csbridge-backup`. Hosts and their identity files are edited inline.
+
 ## [0.1.7] - 2026-09-14
 
 Requires linkspan 0.18.0.

@@ -221,11 +221,15 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     public async startNewSession(): Promise<void> {
         const hosts = SshManager.getInstance().getMergedHosts();
         if (hosts.length === 0) {
-            vscode.window.showInformationMessage('No SSH hosts configured yet — add one from the SSH Hosts view first.');
+            vscode.window.showInformationMessage('No SSH hosts configured yet — add one from the Resources view first.');
             return;
         }
         const pick = await vscode.window.showQuickPick(
-            hosts.map(h => ({ label: h.name, description: h.hostname ? `${h.user ? h.user + '@' : ''}${h.hostname}` : undefined })),
+            hosts.map((h) => {
+                const hostname = h.Config.hostname?.[0];
+                const user = h.Config.user?.[0];
+                return { label: h.Name, description: hostname ? `${user ? user + '@' : ''}${hostname}` : undefined };
+            }),
             { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
         );
         if (!pick) { return; }

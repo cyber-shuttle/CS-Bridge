@@ -60,12 +60,17 @@ export type PromptObserver = (event: 'opened' | 'answered') => void;
 
 export class PromptCancelledError extends Error {}
 
-export interface SshHost {
-    name: string;
-    hostname?: string;
-    user?: string;
-    extraDirectives?: string[]; // "Key Value" ssh_config lines other than HostName/User
-    source?: 'user' | 'system'; // user is editable, system is read-only
+// One alias as `ssh -G` resolves it. Keys are lowercase, values verbatim, a repeated key keeps printed order.
+export interface SSHHost {
+    Name: string;
+    Config: Record<string, string[]>;
+}
+
+export interface SshKeyInfo {
+    path: string;
+    fingerprint: string; // '' when the key is missing
+    status: 'private' | 'public-only' | 'missing';
+    hosts: string[];
 }
 
 export interface SlurmClusterInfo {
@@ -168,7 +173,9 @@ export interface SessionsState {
 }
 
 export interface HostsState {
-    sshHosts: SshHost[];
+    converted: boolean;
+    sshHosts: SSHHost[];
+    sshKeys: SshKeyInfo[];
 }
 
 // A message posted from a webview to its provider. Fields are optional; each command reads the ones it needs.
@@ -184,4 +191,7 @@ export interface WebviewMessage {
     memory?: string;
     allocation?: string;
     jobId?: string;
+    field?: string;
+    value?: string;
+    identityFile?: string;
 }

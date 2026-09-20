@@ -58,7 +58,7 @@
 				{
 					"type": "webview",
 					"id": "csbridge.hostsView",
-					"name": "SSH Hosts",
+					"name": "Resources",
 					"icon": "resources/csbridge.svg",
 					"when": "!csbridge.remote"
 				}
@@ -85,7 +85,7 @@
 			},
 			{
 				"command": "csbridge.refreshHosts",
-				"title": "Refresh SSH Hosts",
+				"title": "Refresh Resources",
 				"category": "CS Bridge",
 				"icon": "$(refresh)"
 			},
