@@ -109,7 +109,7 @@ function Root() {
 
     useEffect(() => {
         if (state?.isCloud) {
-            post({ command: 'pollCloud' });
+            post({ command: 'pollCloudStatus' });
         }
     }, [state?.isCloud]);
     return state

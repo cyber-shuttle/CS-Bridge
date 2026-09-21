@@ -39,8 +39,8 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private readonly monitor = new SessionMonitor();
     private sharedReady = false;
     private awsClient = new AWSClient()
-    protected cloudPollInterval: NodeJS.Timeout | null = null;
-    private pollIntervalTime = 10000
+    private cloudPollInterval: NodeJS.Timeout | null = null;
+    private pollIntervalTime = 15000
 
     // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
@@ -92,6 +92,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         this.monitor.dispose(); // window close: clear every per-session poll interval so none leak past teardown
         this.shared.forEach(d => d.dispose());
         void disposeAllTunnelClients(); // window close: free local ports (remote stays, reaped by linkspan)
+        if (this.cloudPollInterval) {
+            clearInterval(this.cloudPollInterval)
+            this.cloudPollInterval = null
+        }
     }
 
     // A dismissal only clears one field, so each is named by the field it clears.
@@ -131,6 +135,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         },
         connectTunnel: (_data, id) => void this.connectSession(id),
         removeSession: (_data, id) => this.confirmAndRemoveSession(id),
+        pollCloudStatus: (_data) => {
+            this.cloudPollInterval = setInterval(() => {
+                this.awsClient.pollInstances()
+                this.pushState()
+            }, this.pollIntervalTime);
+        }
     };
 
     protected handleMessage(data: WebviewMessage) {
@@ -223,17 +233,27 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     }
 
     public async startNewSession(): Promise<void> {
-        const cloudbank = {
+        let options = [{
             label: "Cloudbank",
-            description: "Launch compute resouce using Cloudbank Allocations"
-        }
-        const hpc = {
+            description: "Launch compute resouce using Cloudbank Allocations",
+        },
+        {
+            // This option will be removed after Custos integration is donE
+            label: "Add Cloudbank Token",
+            description: "Add Cloud Provider Tokens",
+        },
+        {
             label: "HPC",
             description: "Launch compute resouce using HPC Allocations"
         }
+        ]
+
+        if (!this.awsClient.isReady()) {
+            options = options.filter(op => op.label !== "Cloudbank")
+        }
 
         const platform = await vscode.window.showQuickPick(
-            [hpc, cloudbank]
+            options
         );
 
         if (!platform) { return; }
@@ -253,7 +273,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
             this.startSessionDraft(pick.label);
         }
 
-        if (platform.label === "Cloudbank") {
+        if (platform.label === "Add Cloudbank Token") {
             await this.awsClient.initEC2Client("us-east-1")
             this.pushState()
         }
