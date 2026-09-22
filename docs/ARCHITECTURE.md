@@ -76,7 +76,7 @@ Four layers, and nothing reaches past its neighbour.
   (`sessionProvider`, `sshHostProvider`, `statsProvider`) plus `summaryPanel`, over the `webviewProvider` base that
   renders the nonce-gated CSP shell each bundle loads into. `remoteSessionController` exists only inside a remote
   window, where it owns the walltime status bar and the hand-back to a local window.
-- **`src/control/*.ts`** — the cs-control client: sign-in (`AuthClient`), the typed API (`ControlClient`), the
+- **`src/control/*.ts`** — the cs-control client: device-code sign-in (`AuthClient`), the typed API (`ControlClient`), the
   transport and response checks (`request`) and the wire vocabulary the webviews name through `models.ts`
   (`types`). Nothing here imports `vscode`, so both clients unit-test directly against an injected `fetch`.
 - **`src/modules/*.ts`** — the capability layer. SSH (`sshSupport`, `sshShell`, `sshHostsStore`, `sshCommandParser`),

@@ -13,7 +13,7 @@ const signedIn = () => secretStore({ [CREDENTIAL_KEY]: JSON.stringify({ idToken:
 
 function clientOver(answer: (call: Call) => Response, secrets = signedIn()) {
     const { calls, fetch } = recordingFetch(answer);
-    const auth = new AuthClient({ secrets, baseUrl: () => BASE, openExternal: () => Promise.reject(new Error('not used')) }, fetch);
+    const auth = new AuthClient({ secrets, baseUrl: () => BASE }, fetch);
     return { calls, secrets, control: new ControlClient(auth, fetch) };
 }
 

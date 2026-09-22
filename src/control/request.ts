@@ -1,10 +1,10 @@
 // The one place a cs-control HTTP call is made. cs-control requires an Origin on every request and
-// accepts loopback HTTP ones, so the extension presents the same loopback origin its sign-in callback
-// listens on; the operator lists it with `csctl serve --allowed-origin`. Every refusal arrives as
-// {"error":{"code","message"}} and leaves here as a ControlError, so no caller handles a Response.
+// accepts loopback HTTP ones, so the extension presents a loopback origin; the operator lists it with
+// `csctl serve --allowed-origin`. Nothing listens there: an editor is not a browser, and sign-in uses a
+// device code rather than a redirect. Every refusal arrives as {"error":{"code","message"}} and leaves
+// here as a ControlError, so no caller handles a Response.
 
-export const CALLBACK_PORT = 8046;
-export const CONTROL_ORIGIN = `http://127.0.0.1:${CALLBACK_PORT}`;
+export const CONTROL_ORIGIN = 'http://127.0.0.1';
 
 export type Fetch = typeof globalThis.fetch;
 

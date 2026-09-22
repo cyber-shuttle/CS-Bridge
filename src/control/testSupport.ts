@@ -1,6 +1,5 @@
 // Shared fakes for the two control-client tests: a recording fetch, a SecretStorage-shaped map and
-// an unsigned id token. Nothing here reaches the network except the loopback callback the sign-in
-// test drives itself.
+// an unsigned id token. Nothing here reaches the network.
 import type { Fetch } from './request';
 
 export interface Call {

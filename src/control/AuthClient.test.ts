@@ -1,61 +1,85 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AuthClient, CALLBACK_URI } from './AuthClient';
+import { AuthClient } from './AuthClient';
 import { Call, errorResponse, idToken, jsonResponse, recordingFetch, secretStore } from './testSupport';
 
 const BASE = 'https://control.example/api/v1';
 const CREDENTIAL_KEY = 'csbridge.control.credential';
 const TOKEN = idToken({ sub: 'u1', email: 'alice@example.edu' });
-const CONFIG = { authorizationEndpoint: 'https://cilogon.org/authorize', clientId: 'cilogon:/client_id/x', scope: 'openid email offline_access' };
 
 const path = (call: Call) => call.url.slice(BASE.length + 1);
 const stored = (secrets: ReturnType<typeof secretStore>) => JSON.parse(secrets.values.get(CREDENTIAL_KEY) ?? 'null');
 
-// Answers the redirect the way the browser would, from the authorize URL the flow just built.
-async function visitCallback(authorizeUrl: string): Promise<void> {
-    const authorize = new URL(authorizeUrl);
-    const response = await fetch(`${CALLBACK_URI}?code=the-code&state=${encodeURIComponent(authorize.searchParams.get('state') ?? '')}`);
-    assert.equal(response.status, 200);
-    await response.text();
+const AUTHORIZATION = {
+    handle: 'h'.repeat(43),
+    userCode: 'QFP-7N3-VQF',
+    verificationUri: 'https://cilogon.org/device/',
+    verificationUriComplete: 'https://cilogon.org/device/?user_code=QFP-7N3-VQF',
+    expiresInSeconds: 900,
+    intervalSeconds: 5,
+};
+
+// The device grant polls, so every test drives the clock and the wait instead of really sleeping.
+function deviceAuth(answer: (call: Call) => Response, secrets = secretStore()) {
+    const { calls, fetch: fetchFake } = recordingFetch(answer);
+    let waited = 0;
+    const auth = new AuthClient({ secrets, baseUrl: () => BASE }, fetchFake, () => 1_000_000, (ms) => { waited += ms; return Promise.resolve(); });
+    return { auth, calls, secrets, waited: () => waited };
 }
 
-test('signing in exchanges the callback code with its verifier and stores the credential', async () => {
-    const secrets = secretStore();
-    let authorizeUrl = '';
-    const { calls, fetch: fetchFake } = recordingFetch(call =>
-        (path(call) === 'oauth/config' ? jsonResponse(CONFIG) : jsonResponse({ idToken: TOKEN, refreshToken: 'r1', expiresInSeconds: 900 })));
+test('signing in starts a device authorization and polls it to a stored credential', async () => {
+    let polls = 0;
+    const { auth, calls, secrets, waited } = deviceAuth((call) => {
+        if (path(call) === 'oauth/authorizations') { return jsonResponse(AUTHORIZATION); }
+        polls++;
+        return polls === 1
+            ? jsonResponse({ status: 'pending', intervalSeconds: 5 })
+            : jsonResponse({ idToken: TOKEN, refreshToken: 'r1', expiresInSeconds: 900 });
+    });
 
-    const auth = new AuthClient({
-        secrets,
-        baseUrl: () => BASE,
-        openExternal: async (url) => { authorizeUrl = url; await visitCallback(url); },
-    }, fetchFake, () => 1_000_000);
-    await auth.signIn();
+    const authorization = await auth.startSignIn();
+    assert.equal(authorization.userCode, 'QFP-7N3-VQF');
+    assert.equal(await auth.awaitSignIn(authorization, () => false), true);
 
-    const authorize = new URL(authorizeUrl);
-    assert.equal(authorize.origin + authorize.pathname, CONFIG.authorizationEndpoint);
-    assert.equal(authorize.searchParams.get('client_id'), CONFIG.clientId);
-    assert.equal(authorize.searchParams.get('redirect_uri'), CALLBACK_URI);
-    assert.equal(authorize.searchParams.get('code_challenge_method'), 'S256');
-    assert.ok(authorize.searchParams.get('code_challenge'));
-
-    const exchange = calls[1];
-    assert.equal(path(exchange), 'oauth/exchange');
-    assert.equal(exchange.method, 'POST');
-    const body = exchange.body as { code: string; codeVerifier: string; redirectUri: string };
-    assert.equal(body.code, 'the-code');
-    assert.equal(body.redirectUri, CALLBACK_URI);
-    assert.ok(body.codeVerifier.length >= 43 && body.codeVerifier.length <= 128);
-    assert.notEqual(body.codeVerifier, authorize.searchParams.get('code_challenge'));
-
+    assert.deepEqual(calls.map(path), [
+        'oauth/authorizations',
+        `oauth/authorizations/${AUTHORIZATION.handle}/poll`,
+        `oauth/authorizations/${AUTHORIZATION.handle}/poll`,
+    ]);
+    assert.deepEqual(calls.map(c => c.method), ['POST', 'POST', 'POST']);
+    assert.deepEqual(calls.map(c => c.body), [undefined, undefined, undefined]);
+    assert.equal(calls[0].headers.Origin, 'http://127.0.0.1');
+    assert.equal(waited(), 10_000);
     assert.deepEqual(stored(secrets), { idToken: TOKEN, refreshToken: 'r1', expiresAt: 1_000_000 + 900_000 });
     assert.deepEqual(await auth.account(), { sub: 'u1', email: 'alice@example.edu', name: undefined });
+});
+
+test('an authorization the daemon no longer holds ends sign-in without a credential', async () => {
+    const { auth, secrets } = deviceAuth(call =>
+        (path(call) === 'oauth/authorizations' ? jsonResponse(AUTHORIZATION) : errorResponse(404, 'not_found', 'authorization was not found')));
+
+    await assert.rejects(auth.awaitSignIn(await auth.startSignIn(), () => false), /authorization was not found/);
+    assert.equal(secrets.values.size, 0);
+});
+
+test('cancelling stops polling and stores nothing', async () => {
+    let polls = 0;
+    const { auth, secrets } = deviceAuth((call) => {
+        if (path(call) === 'oauth/authorizations') { return jsonResponse(AUTHORIZATION); }
+        polls++;
+        return jsonResponse({ status: 'pending', intervalSeconds: 5 });
+    });
+
+    const authorization = await auth.startSignIn();
+    assert.equal(await auth.awaitSignIn(authorization, () => polls >= 2), false);
+    assert.equal(polls, 2);
+    assert.equal(secrets.values.size, 0);
 });
 
 test('a credential near expiry refreshes once however many callers ask', async () => {
     const secrets = secretStore({ [CREDENTIAL_KEY]: JSON.stringify({ idToken: 'old', refreshToken: 'r1', expiresAt: 1_000 }) });
     const { calls, fetch: fetchFake } = recordingFetch(() => jsonResponse({ idToken: TOKEN, expiresInSeconds: 900 }));
-    const auth = new AuthClient({ secrets, baseUrl: () => BASE, openExternal: () => Promise.reject(new Error('not used')) }, fetchFake, () => 1_000_000);
+    const auth = new AuthClient({ secrets, baseUrl: () => BASE }, fetchFake, () => 1_000_000);
 
     assert.deepEqual(await Promise.all([auth.token(), auth.token(), auth.token()]), [TOKEN, TOKEN, TOKEN]);
     assert.deepEqual(calls.map(path), ['oauth/refresh']);
@@ -68,7 +92,7 @@ test('a refused refresh signs out rather than leaving a half-valid credential', 
     const secrets = secretStore({ [CREDENTIAL_KEY]: JSON.stringify({ idToken: 'old', refreshToken: 'r1', expiresAt: 1_000 }) });
     const { fetch: fetchFake } = recordingFetch(() => errorResponse(400, 'invalid_grant', 'refresh refused'));
     let changes = 0;
-    const auth = new AuthClient({ secrets, baseUrl: () => BASE, openExternal: () => Promise.reject(new Error('not used')) }, fetchFake, () => 1_000_000);
+    const auth = new AuthClient({ secrets, baseUrl: () => BASE }, fetchFake, () => 1_000_000);
     auth.onDidChange(() => { changes++; });
 
     assert.equal(await auth.token(), undefined);
@@ -80,7 +104,7 @@ test('a refused refresh signs out rather than leaving a half-valid credential', 
 test('a credential with no refresh token signs out instead of retrying', async () => {
     const secrets = secretStore({ [CREDENTIAL_KEY]: JSON.stringify({ idToken: 'old', expiresAt: 1_000 }) });
     const { calls, fetch: fetchFake } = recordingFetch(() => jsonResponse({}));
-    const auth = new AuthClient({ secrets, baseUrl: () => BASE, openExternal: () => Promise.reject(new Error('not used')) }, fetchFake, () => 1_000_000);
+    const auth = new AuthClient({ secrets, baseUrl: () => BASE }, fetchFake, () => 1_000_000);
 
     assert.equal(await auth.token(), undefined);
     assert.equal(calls.length, 0);
@@ -91,7 +115,7 @@ test('signing out clears the credential and tells the views', async () => {
     const secrets = secretStore({ [CREDENTIAL_KEY]: JSON.stringify({ idToken: TOKEN, expiresAt: 9_000_000 }) });
     const { fetch: fetchFake } = recordingFetch(() => jsonResponse({}));
     let changes = 0;
-    const auth = new AuthClient({ secrets, baseUrl: () => BASE, openExternal: () => Promise.reject(new Error('not used')) }, fetchFake, () => 1_000_000);
+    const auth = new AuthClient({ secrets, baseUrl: () => BASE }, fetchFake, () => 1_000_000);
     auth.onDidChange(() => { changes++; });
 
     assert.equal(await auth.token(), TOKEN);

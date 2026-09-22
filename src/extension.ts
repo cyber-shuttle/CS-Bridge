@@ -40,7 +40,6 @@ export async function activate(context: vscode.ExtensionContext) {
     const auth = new AuthClient({
         secrets: context.secrets,
         baseUrl: () => vscode.workspace.getConfiguration('csbridge').get<string>('controlUrl', ''),
-        openExternal: url => Promise.resolve(vscode.env.openExternal(vscode.Uri.parse(url))),
     });
     const control = new ControlClient(auth);
     const sessionProvider = new SessionProvider(context.extensionUri, id);
@@ -85,8 +84,24 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.info('CS Bridge extension activated');
 }
 
+// The device grant's user-facing half: show the code, send the user to the issuer, then wait. Cancelling
+// the progress notification abandons the wait; the code simply expires at the issuer.
 async function signIn(auth: AuthClient): Promise<void> {
-    try { await auth.signIn(); }
+    try {
+        const authorization = await auth.startSignIn();
+        const open = await vscode.window.showInformationMessage(
+            `Enter the code ${authorization.userCode} at ${authorization.verificationUri} to finish signing in to CyberShuttle.`,
+            { modal: true }, 'Copy code and open',
+        );
+        if (!open) { return; }
+        await vscode.env.clipboard.writeText(authorization.userCode);
+        await vscode.env.openExternal(vscode.Uri.parse(authorization.verificationUriComplete));
+        const signedIn = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Waiting for CyberShuttle sign-in with code ${authorization.userCode}`, cancellable: true },
+            (_progress, token) => auth.awaitSignIn(authorization, () => token.isCancellationRequested),
+        );
+        if (signedIn) { void vscode.window.showInformationMessage(`Signed in to CyberShuttle as ${await auth.accountName()}.`); }
+    }
     catch (err) { vscode.window.showErrorMessage(`CyberShuttle sign-in failed: ${errMsg(err)}`); }
 }
 

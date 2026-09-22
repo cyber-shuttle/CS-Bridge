@@ -1,18 +1,13 @@
-// CILogon's authorization-code flow with PKCE, finished by cs-control because only it holds the
-// client secret. VS Code is a native client, so the browser redirect lands on a one-shot loopback
-// server rather than a page; the port is fixed because CILogon matches the redirect URI exactly.
-// The credential lives in SecretStorage, refresh is single-flight, and anything that fails signs
-// out, since a half-valid token is worse than a view that plainly says signed out. Tokens, codes
-// and verifiers are never logged.
-import * as http from 'node:http';
-import { once } from 'node:events';
-import { createHash, randomBytes } from 'node:crypto';
-import { CALLBACK_PORT, CONTROL_ORIGIN, controlRequest, unexpected, type Fetch } from './request';
+// Sign-in runs CILogon's device grant, brokered by cs-control because only it holds the client secret.
+// An editor cannot receive a redirect, so the user types a short code at the issuer instead and this
+// polls cs-control until the grant is approved; the upstream device code never reaches the client.
+// The credential lives in SecretStorage, refresh is single-flight, and anything that fails signs out,
+// since a half-valid token is worse than a view that plainly says signed out. Tokens and user codes
+// are never logged.
+import { ControlError, controlRequest, unexpected, type Fetch, type RequestOptions } from './request';
 
-export const CALLBACK_URI = `${CONTROL_ORIGIN}/callback`;
 const CREDENTIAL_KEY = 'csbridge.control.credential';
 const REFRESH_MARGIN_MS = 60_000;
-const SIGN_IN_TIMEOUT_MS = 5 * 60_000;
 
 // vscode.SecretStorage satisfies this; tests pass a map.
 export interface SecretStore {
@@ -24,7 +19,16 @@ export interface SecretStore {
 export interface AuthDeps {
     secrets: SecretStore;
     baseUrl: () => string;
-    openExternal: (url: string) => Promise<unknown>;
+}
+
+// What the caller shows the user: the code to type and the page to open.
+export interface DeviceAuthorization {
+    handle: string;
+    userCode: string;
+    verificationUri: string;
+    verificationUriComplete: string;
+    expiresInSeconds: number;
+    intervalSeconds: number;
 }
 
 export interface Account {
@@ -39,12 +43,6 @@ interface Credential {
     expiresAt: number;
 }
 
-interface OAuthConfig {
-    authorizationEndpoint: string;
-    clientId: string;
-    scope: string;
-}
-
 interface OAuthTokens {
     idToken: string;
     refreshToken?: string;
@@ -57,7 +55,12 @@ export class AuthClient {
     private refreshing: Promise<void> | undefined;
     private readonly listeners: Array<() => void> = [];
 
-    constructor(private readonly deps: AuthDeps, private readonly fetchImpl: Fetch = globalThis.fetch, private readonly now: () => number = Date.now) { }
+    constructor(
+        private readonly deps: AuthDeps,
+        private readonly fetchImpl: Fetch = globalThis.fetch,
+        private readonly now: () => number = Date.now,
+        private readonly sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+    ) { }
 
     public get baseUrl(): string {
         return this.deps.baseUrl();
@@ -87,29 +90,46 @@ export class AuthClient {
         return this.credential?.idToken;
     }
 
-    public async signIn(): Promise<void> {
-        const config = (await this.call('oauth/config')) as OAuthConfig;
-        const verifier = randomBytes(32).toString('base64url');
-        const state = randomBytes(16).toString('base64url');
-        const callback = await awaitCallback(state);
+    public async startSignIn(): Promise<DeviceAuthorization> {
+        const authorization = (await this.call('oauth/authorizations', { method: 'POST' })) as DeviceAuthorization;
+        if (typeof authorization?.handle !== 'string' || typeof authorization.userCode !== 'string'
+            || typeof authorization.verificationUriComplete !== 'string') {
+            throw unexpected('sign-in response');
+        }
+        return authorization;
+    }
+
+    // Polls until the user approves the code, answering false when they give up rather than throwing; a
+    // rejected, consumed or expired authorization is an error, because the sign-in cannot be resumed.
+    public async awaitSignIn(authorization: DeviceAuthorization, cancelled: () => boolean): Promise<boolean> {
+        const deadline = this.now() + authorization.expiresInSeconds * 1000;
+        let interval = authorization.intervalSeconds;
+        while (!cancelled()) {
+            await this.sleep(Math.max(interval, 1) * 1000);
+            if (cancelled()) { return false; }
+            if (this.now() > deadline) { throw new Error('The CyberShuttle sign-in code expired.'); }
+            const answer = await this.poll(authorization.handle, interval);
+            if (answer === undefined) { return true; }
+            interval = answer;
+        }
+        return false;
+    }
+
+    // One poll: the interval to wait next while pending, or undefined once the credential is stored.
+    private async poll(handle: string, interval: number): Promise<number | undefined> {
+        let answer: unknown;
         try {
-            const authorize = new URL(config.authorizationEndpoint);
-            authorize.search = new URLSearchParams({
-                response_type: 'code',
-                client_id: config.clientId,
-                redirect_uri: CALLBACK_URI,
-                scope: config.scope,
-                state,
-                code_challenge: createHash('sha256').update(verifier).digest('base64url'),
-                code_challenge_method: 'S256',
-            }).toString();
-            await this.deps.openExternal(authorize.toString());
-            const code = await callback.code;
-            await this.store(await this.tokens('oauth/exchange', { code, codeVerifier: verifier, redirectUri: CALLBACK_URI }));
+            answer = await this.call(`oauth/authorizations/${encodeURIComponent(handle)}/poll`, { method: 'POST' });
         }
-        finally {
-            callback.close();
+        catch (error) {
+            // Only a poll the daemon judged too early is retried, at the pace it already asked for.
+            if (error instanceof ControlError && error.status === 429) { return interval; }
+            throw error;
         }
+        const pending = answer as { status?: string; intervalSeconds?: number };
+        if (pending?.status === 'pending') { return pending.intervalSeconds ?? interval; }
+        await this.store(asTokens(answer));
+        return undefined;
     }
 
     public async signOut(): Promise<void> {
@@ -131,13 +151,11 @@ export class AuthClient {
     }
 
     private async tokens(path: string, body: Record<string, string>): Promise<OAuthTokens> {
-        const tokens = (await this.call(path, body)) as OAuthTokens;
-        if (typeof tokens?.idToken !== 'string' || typeof tokens.expiresInSeconds !== 'number') { throw unexpected('sign-in response'); }
-        return tokens;
+        return asTokens(await this.call(path, { body }));
     }
 
-    private call(path: string, body?: Record<string, string>): Promise<unknown> {
-        return controlRequest(this.fetchImpl, this.baseUrl, path, { body });
+    private call(path: string, options: RequestOptions = {}): Promise<unknown> {
+        return controlRequest(this.fetchImpl, this.baseUrl, path, options);
     }
 
     private async store(tokens: OAuthTokens): Promise<void> {
@@ -163,6 +181,12 @@ export class AuthClient {
     }
 }
 
+function asTokens(value: unknown): OAuthTokens {
+    const tokens = value as OAuthTokens;
+    if (typeof tokens?.idToken !== 'string' || typeof tokens.expiresInSeconds !== 'number') { throw unexpected('sign-in response'); }
+    return tokens;
+}
+
 const isCredential = (value: unknown): value is Credential =>
     typeof (value as Credential)?.idToken === 'string' && typeof (value as Credential)?.expiresAt === 'number';
 
@@ -178,37 +202,4 @@ function decodeAccount(idToken: string): Account | undefined {
     catch {
         return undefined;
     }
-}
-
-// The redirect target, alive for one answer, returned once its port is bound so the browser is never
-// sent somewhere nothing is listening. The port is freed whether the flow completes, fails or is
-// abandoned.
-async function awaitCallback(state: string): Promise<{ code: Promise<string>; close: () => void }> {
-    let resolve!: (code: string) => void;
-    let reject!: (error: Error) => void;
-    const code = new Promise<string>((res, rej) => { resolve = res; reject = rej; });
-
-    const server = http.createServer((req, res) => {
-        const url = new URL(req.url ?? '/', CONTROL_ORIGIN);
-        const granted = url.searchParams.get('state') === state ? url.searchParams.get('code') : null;
-        res.writeHead(granted ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' }).end(
-            `<!DOCTYPE html><html><head><meta charset="utf-8"><title>CyberShuttle</title></head><body style="font-family:system-ui;padding:2rem">`
-            + `${granted ? 'Signed in to CyberShuttle. You can close this window.' : 'This sign-in callback did not match; start again from VS Code.'}</body></html>`,
-        );
-        if (granted) { resolve(granted); }
-        else { reject(new Error('The CyberShuttle sign-in callback did not match this request.')); }
-    });
-    server.on('error', reject);
-    server.listen(CALLBACK_PORT, '127.0.0.1');
-    await once(server, 'listening');
-
-    const timer = setTimeout(() => reject(new Error('CyberShuttle sign-in timed out.')), SIGN_IN_TIMEOUT_MS);
-    return {
-        code,
-        close: () => {
-            clearTimeout(timer);
-            server.closeAllConnections();
-            server.close();
-        },
-    };
 }
