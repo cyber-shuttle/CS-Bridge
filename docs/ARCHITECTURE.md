@@ -76,7 +76,7 @@ Four layers, and nothing reaches past its neighbour.
   (`sessionProvider`, `sshHostProvider`, `statsProvider`) plus `summaryPanel`, over the `webviewProvider` base that
   renders the nonce-gated CSP shell each bundle loads into. `remoteSessionController` exists only inside a remote
   window, where it owns the walltime status bar and the hand-back to a local window.
-- **`src/control.ts`** — the cs-control client: device-code sign-in, the credential in SecretStorage, and the SSH
+- **`src/control.ts`** — the cs-plane client: device-code sign-in, the credential in SecretStorage, and the SSH
   host, key and run routes the Resources and Stats views use.
 - **`src/modules/*.ts`** — the capability layer. SSH (`sshSupport`, `sshShell`, `sshHostsStore`, `sshCommandParser`),
   Slurm (`slurmLaunch`, `slurmParse`, `slurmSupport`), linkspan's HTTP client (`linkspanSupport`), Dev Tunnels
