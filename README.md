@@ -11,12 +11,12 @@ CS Bridge is a VS Code extension for working on high-performance computing (HPC)
 
 ## Features
 
-- **CyberShuttle resources** — **CS Bridge: Log in to CyberShuttle** approves a device code in the browser; the Resources view then manages the SSH hosts and keys your account holds in cs-plane. Sessions still launch on hosts in `~/.ssh/config`.
+- **CyberShuttle resources** — **CS Bridge: Log in to CyberShuttle** approves a device code in the browser; the Resources view then manages the SSH hosts and keys your account holds in cs-control. Sessions still launch on hosts in `~/.ssh/config`.
 - **Job form** — partition, allocation, CPUs, memory, GPUs and walltime are chosen once; CS Bridge writes and submits the batch script.
 - **Live metrics** — the session card shows the job state and its current CPU, memory and GPU use.
 - **Persistent sessions** — a job outlives its VS Code window; **Connect** opens a new window on the same job.
 - **Session reuse** — a finished session can be started again, unchanged or edited.
-- **Utilization history** — the Stats view records the CPU and memory efficiency of every run, including those cs-plane recorded for your account.
+- **Utilization history** — the Stats view records the CPU and memory efficiency of every run, including those cs-control recorded for your account.
 - **No inbound ports** — connections go through a Microsoft Dev Tunnel, so the cluster opens no port.
 
 ## Supported Clusters

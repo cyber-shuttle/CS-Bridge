@@ -8,8 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- CyberShuttle login by device code, a Resources view over the account's cs-plane SSH hosts and keys, and
-  cs-plane runs in the Stats view.
+- CyberShuttle login by device code, a Resources view over the account's cs-control SSH hosts and keys, and
+  cs-control runs in the Stats view.
 
 ## [0.1.7] - 2026-09-14
 

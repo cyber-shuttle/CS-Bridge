@@ -28,7 +28,7 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
 }
 
 // Newest wins, ties go to the release. A release is X.Y.Z; a build ahead of one is X.Y.Z.<commit>, so it yields
-// once that release ships and never ties another build. Anything else is not a version. cs-plane matches this.
+// once that release ships and never ties another build. Anything else is not a version. cs-control matches this.
 const INSTALLED = /^(\d+)\.(\d+)\.(\d+)(\.[0-9a-f]{7,40})?$/;
 const RELEASED = /^(\d+)\.(\d+)\.(\d+)$/;
 
@@ -65,7 +65,7 @@ export async function linkspanIsUpToDate(session: SlurmSession, run: RemoteRunne
     return false;
 }
 
-// uname to the release asset. cs-plane maps the same three machines in
+// uname to the release asset. cs-control maps the same three machines in
 // provisionScript and refuses anything else by name; an unmapped arch would
 // otherwise build a URL that 404s, which reads as a network fault rather than
 // as a machine Linkspan is not released for.
@@ -84,7 +84,7 @@ export async function installLinkspan(session: SlurmSession, run: RemoteRunner, 
     const downloadUrl = `https://github.com/cyber-shuttle/linkspan/releases/latest/download/linkspan_Linux_${arch}.tar.gz`;
     log.info(`Downloading Linkspan from ${downloadUrl} for architecture ${arch}`);
     // Staged and moved, so an interrupted download never becomes the binary a job
-    // execs -- cs-plane's provisionScript installs the same way. The directory
+    // execs -- cs-control's provisionScript installs the same way. The directory
     // and the binary stay owner-only: nothing else on a shared login node needs them.
     const install = [
         'set -eu',

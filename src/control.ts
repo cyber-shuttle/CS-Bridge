@@ -1,7 +1,7 @@
 // CyberShuttle's control plane, as the Resources and Stats views use it. Sign-in is CILogon's device grant,
-// relayed by cs-plane because it holds the client secret: the user approves a short code in the browser while
+// relayed by cs-control because it holds the client secret: the user approves a short code in the browser while
 // this redeems it. The credential lives in SecretStorage and refreshes single-flight; a 401 or a failed refresh
-// signs out. cs-plane wants an Origin on every request and accepts this loopback one.
+// signs out. cs-control wants an Origin on every request and accepts this loopback one.
 import type * as vscode from 'vscode';
 import type { SshHost } from './models';
 
@@ -37,7 +37,7 @@ export class Control {
 
     public onDidChange(listener: () => void): void { this.listeners.push(listener); }
 
-    // Display only: cs-plane verifies the id token on every call.
+    // Display only: cs-control verifies the id token on every call.
     public async accountName(): Promise<string | undefined> {
         const idToken = (await this.load())?.idToken;
         if (!idToken) { return undefined; }

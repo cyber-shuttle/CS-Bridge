@@ -5,7 +5,7 @@ import { WebviewProvider, confirmModal } from './webviewProvider';
 import { Control } from './control';
 
 // Webview provider for the Resources view: the SSH hosts and keys the signed-in CyberShuttle account holds in
-// cs-plane. Only hosts cs-plane wrote (`managed`) may be removed, so they render as the editable source.
+// cs-control. Only hosts cs-control wrote (`managed`) may be removed, so they render as the editable source.
 export class SshHostProvider extends WebviewProvider {
     public static readonly viewType = 'csbridge.hostsView';
     protected readonly viewKind = 'hosts' as const;
@@ -56,7 +56,7 @@ export class SshHostProvider extends WebviewProvider {
         });
     }
 
-    // The private key is read once and handed to cs-plane; nothing here keeps or logs it.
+    // The private key is read once and handed to cs-control; nothing here keeps or logs it.
     private async addSshKey(): Promise<void> {
         const name = await ask('Name for this key, e.g. delta-key');
         const file = name ? (await vscode.window.showOpenDialog({ openLabel: 'Add key' }))?.[0] : undefined;

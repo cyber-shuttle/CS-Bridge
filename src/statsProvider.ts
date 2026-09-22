@@ -40,7 +40,7 @@ export class StatsProvider extends WebviewProvider {
 
     public refresh(): void { void this.pushState(); }
 
-    // Runs cs-plane recorded for the signed-in account join the local history, grouped under their host.
+    // Runs cs-control recorded for the signed-in account join the local history, grouped under their host.
     protected async pushState(): Promise<void> {
         const remote = await this.control.listRuns().catch(() => []);
         const state: StatsState = {

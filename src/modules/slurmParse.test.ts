@@ -150,10 +150,10 @@ test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launch
         'unset precedes linkspan invocation');
 });
 
-// This table is the twin of cs-plane's classifySchedulerState (subsystems/session/reconcile.go).
+// This table is the twin of cs-control's classifySchedulerState (internal/control/reconcile.go).
 // The two must agree: they watch the same scheduler for the same allocations, and a state only
 // one of them knows is a state one of them silently holds on. Change both together.
-test('classifies every scheduler state cs-plane classifies', () => {
+test('classifies every scheduler state cs-control classifies', () => {
     const expected: Record<string, SlurmJobStatus> = {
         PENDING: SlurmJobStatus.QUEUED, REQUEUED: SlurmJobStatus.QUEUED, REQUEUE_FED: SlurmJobStatus.QUEUED,
         REQUEUE_HOLD: SlurmJobStatus.QUEUED, SUSPENDED: SlurmJobStatus.QUEUED, STOPPED: SlurmJobStatus.QUEUED,
