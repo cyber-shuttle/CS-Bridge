@@ -3,16 +3,11 @@ import { useState } from 'preact/hooks';
 import { useWebviewState, post } from '@/ui/platform/vscode';
 import { Stack, Row, Text, Icon, Chip } from '@/ui/components/base';
 import { EfficiencyChip } from '@/ui/components/StatsView';
-import { SectionHeading, SignInPanel } from '@/ui/components/Control';
 import { groupRunsBySession } from '@/ui/logic/metrics';
-import { fmtTime } from '@/ui/logic/session';
 import type { StatsState, SessionRunRecord } from '@/models';
-import type { Run } from '@/control/types';
-
-const when = (at: string | number | undefined): string =>
-    at === undefined ? '—' : new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 function RunItem({ run }: { run: SessionRunRecord }) {
+    const when = new Date(run.endedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     return (
         <Row
             justify="space-between"
@@ -22,7 +17,7 @@ function RunItem({ run }: { run: SessionRunRecord }) {
             onClick={() => post({ command: 'openRunSummary', sessionId: run.sessionId, jobId: run.jobId })}
         >
             <Row gap={6} style={{ minWidth: 0 }}>
-                <Text size={12} ellipsis>{when(run.endedAt)}</Text>
+                <Text size={12} ellipsis>{when}</Text>
                 <Text muted size={11} style={{ flexShrink: 0 }}>{run.finalStatus}</Text>
             </Row>
             <Row gap={4} style={{ flexShrink: 0 }}>
@@ -51,60 +46,16 @@ function SessionGroup({ runs }: { runs: SessionRunRecord[] }) {
     );
 }
 
-// Slurm's accounting lands a beat after a job ends, so a fresh run carries no stats at all.
-function ControlRunItem({ run }: { run: Run }) {
-    const stats = run.stats;
-    const detail = [
-        stats?.elapsedSeconds !== undefined ? fmtTime(stats.elapsedSeconds * 1000) : '',
-        stats?.maxRss ? `${stats.maxRss} / ${stats.requestedMemory ?? '—'}` : '',
-    ].filter(Boolean).join(' · ');
-    return (
-        <Stack gap={1} pad="3px 0 3px 22px">
-            <Row justify="space-between" gap={8}>
-                <Row gap={6} style={{ minWidth: 0 }}>
-                    <Text size={12} ellipsis>{run.sessionId} #{run.seq}</Text>
-                    <Text muted size={11} style={{ flexShrink: 0 }}>{run.finalState}</Text>
-                </Row>
-                {stats ? (
-                    <Row gap={4} style={{ flexShrink: 0 }}>
-                        <EfficiencyChip label="CPU" pct={stats.cpuEfficiencyPct} />
-                        <EfficiencyChip label="Mem" pct={stats.memoryEfficiencyPct} />
-                    </Row>
-                ) : null}
-            </Row>
-            <Text muted size={11}>{when(run.startedAt)} → {when(run.endedAt)}</Text>
-            {detail ? <Text muted size={11}>{detail}</Text> : null}
-        </Stack>
-    );
-}
-
-function ControlRuns({ state }: { state: StatsState }) {
-    if (!state.account) { return <SignInPanel note="Sign in to see the runs CyberShuttle recorded for your account." />; }
-    if (state.controlError) { return <Text size={12} color="var(--vscode-errorForeground)">{state.controlError}</Text>; }
-    if (state.controlRuns.length === 0) { return <Text muted style={{ margin: '4px 0' }}>No CyberShuttle runs yet.</Text>; }
-    return (
-        <>
-            {[...state.controlRuns]
-                .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
-                .map(run => <ControlRunItem key={`${run.sessionId}:${run.seq}`} run={run} />)}
-        </>
-    );
-}
-
 function Root() {
     const state = useWebviewState<StatsState>();
-    if (!state) { return <Stack pad="8px"><Text muted>Loading…</Text></Stack>; }
+    const runs = state?.runs;
+    if (!runs) { return <Stack pad="8px"><Text muted>Loading…</Text></Stack>; }
+    if (runs.length === 0) {
+        return <Stack pad="8px"><Text muted>No finished runs yet — utilization appears here once a session ends.</Text></Stack>;
+    }
     return (
-        <Stack gap={8} pad="4px 8px">
-            <Stack gap={6}>
-                {state.runs.length === 0
-                    ? <Text muted>No finished runs yet — utilization appears here once a session ends.</Text>
-                    : groupRunsBySession(state.runs).map(group => <SessionGroup key={group[0].sessionId} runs={group} />)}
-            </Stack>
-            <Stack>
-                <SectionHeading label="CYBERSHUTTLE RUNS" />
-                <ControlRuns state={state} />
-            </Stack>
+        <Stack gap={6} pad="4px 8px">
+            {groupRunsBySession(runs).map(group => <SessionGroup key={group[0].sessionId} runs={group} />)}
         </Stack>
     );
 }

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Logger, errMsg } from './logger';
+import { Control } from './control';
 import { initSessionStore, mutateWindowPids, getAllSessions } from './extensionStore';
 import { csHostAlias } from './modules/sshHostsStore';
 import { isPidAlive } from './modules/fsSupport';
@@ -7,8 +8,6 @@ import { SessionProvider } from './sessionProvider';
 import { SshHostProvider } from './sshHostProvider';
 import { StatsProvider } from './statsProvider';
 import { SshManager } from './modules/sshSupport';
-import { AuthClient } from './control/AuthClient';
-import { ControlClient } from './control/ControlClient';
 import { RemoteSessionController } from './remoteSessionController';
 import { consumePendingSummary } from './summaryPanel';
 
@@ -37,14 +36,10 @@ export async function activate(context: vscode.ExtensionContext) {
     void vscode.commands.executeCommand('setContext', 'csbridge.remote', isRemoteWindow);
 
     SshManager.initInstance(context.extensionUri);
-    const auth = new AuthClient({
-        secrets: context.secrets,
-        baseUrl: () => vscode.workspace.getConfiguration('csbridge').get<string>('controlUrl', ''),
-    });
-    const control = new ControlClient(auth);
     const sessionProvider = new SessionProvider(context.extensionUri, id);
-    const sshHostProvider = new SshHostProvider(context.extensionUri, auth, control);
-    const statsProvider = new StatsProvider(context.extensionUri, auth, control);
+    const control = new Control(context.secrets);
+    const sshHostProvider = new SshHostProvider(context.extensionUri, control);
+    const statsProvider = new StatsProvider(context.extensionUri, control);
     context.subscriptions.push(
         sessionProvider,
         vscode.window.registerWebviewViewProvider(SessionProvider.viewType, sessionProvider),
@@ -53,12 +48,12 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.newSession', () => sessionProvider.startNewSession()),
         vscode.commands.registerCommand('csbridge.switchAccount', () => sessionProvider.switchAccount()),
         vscode.commands.registerCommand('csbridge.addHost', () => sshHostProvider.addSshHost()),
-        vscode.commands.registerCommand('csbridge.refreshHosts', () => sshHostProvider.refresh()),
+        vscode.commands.registerCommand('csbridge.refreshHosts', () => sshHostProvider.refreshSshHosts()),
         vscode.commands.registerCommand('csbridge.refreshStats', () => statsProvider.refresh()),
         vscode.commands.registerCommand('csbridge.clearRunHistory', () => statsProvider.clearHistory()),
         vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
-        vscode.commands.registerCommand('csbridge.signIn', () => signIn(auth)),
-        vscode.commands.registerCommand('csbridge.signOut', () => auth.signOut()),
+        vscode.commands.registerCommand('csbridge.signIn', () => signIn(control)),
+        vscode.commands.registerCommand('csbridge.signOut', () => control.signOut()),
     );
 
     void sessionProvider.reattachLiveSessions();
@@ -84,22 +79,18 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.info('CS Bridge extension activated');
 }
 
-// The device grant's user-facing half: show the code, send the user to the issuer, then wait. Cancelling
-// the progress notification abandons the wait; the code simply expires at the issuer.
-async function signIn(auth: AuthClient): Promise<void> {
+// Shows the device code, opens the issuer's page with it filled in, and waits for approval; cancelling the
+// progress notification abandons the wait and the code expires at the issuer.
+async function signIn(control: Control): Promise<void> {
     try {
-        const authorization = await auth.startSignIn();
-        const open = await vscode.window.showInformationMessage(
-            `Approve the code ${authorization.userCode} in your browser to finish signing in to CyberShuttle.`,
-            { modal: true }, 'Open browser',
-        );
+        const code = await control.startSignIn();
+        const open = await vscode.window.showInformationMessage(`Approve the code ${code.userCode} in your browser to sign in to CyberShuttle.`, { modal: true }, 'Open browser');
         if (!open) { return; }
-        await vscode.env.openExternal(vscode.Uri.parse(authorization.verificationUriComplete));
-        const signedIn = await vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title: `Waiting for CyberShuttle sign-in with code ${authorization.userCode}`, cancellable: true },
-            (_progress, token) => auth.awaitSignIn(authorization, () => token.isCancellationRequested),
+        await vscode.env.openExternal(vscode.Uri.parse(code.verificationUriComplete));
+        await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: `Waiting for CyberShuttle sign-in with code ${code.userCode}`, cancellable: true },
+            (_progress, token) => control.awaitSignIn(code, () => token.isCancellationRequested),
         );
-        if (signedIn) { void vscode.window.showInformationMessage(`Signed in to CyberShuttle as ${await auth.accountName()}.`); }
     }
     catch (err) { vscode.window.showErrorMessage(`CyberShuttle sign-in failed: ${errMsg(err)}`); }
 }

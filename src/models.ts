@@ -1,4 +1,4 @@
-import type { Run, SshHost as ControlSshHost, SshKey as ControlSshKey } from './control/types';
+import type { SshKey } from './control';
 
 export interface SlurmSession extends Session {
     jobId: string;
@@ -143,9 +143,6 @@ export interface SessionRunRecord {
 
 export interface StatsState {
     runs: SessionRunRecord[];
-    account?: string;
-    controlRuns: Run[];
-    controlError?: string;
 }
 
 export interface SummaryState {
@@ -172,13 +169,10 @@ export interface SessionsState {
     alert: { title: string; message: string } | null;
 }
 
-// The Resources view is cs-control's alone: `account` set is the whole of "signed in", and `error`
-// carries the last failed operation's message so the view can show it instead of a toast.
 export interface HostsState {
-    account?: string;
-    hosts: ControlSshHost[];
-    keys: ControlSshKey[];
-    error?: string;
+    sshHosts: SshHost[];
+    sshKeys: SshKey[];
+    account?: string; // unset while signed out of CyberShuttle
 }
 
 // A message posted from a webview to its provider. Fields are optional; each command reads the ones it needs.
@@ -194,5 +188,4 @@ export interface WebviewMessage {
     memory?: string;
     allocation?: string;
     jobId?: string;
-    key?: string;
 }

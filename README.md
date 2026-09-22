@@ -11,12 +11,12 @@ CS Bridge is a VS Code extension for working on high-performance computing (HPC)
 
 ## Features
 
-- **CyberShuttle resources** — log in to CyberShuttle and the Resources view manages the SSH hosts and login keys your account holds there. Sessions still launch on the hosts in your own `~/.ssh/config`.
+- **CyberShuttle resources** — **CS Bridge: Log in to CyberShuttle** approves a device code in the browser; the Resources view then manages the SSH hosts and keys your account holds in cs-control. Sessions still launch on hosts in `~/.ssh/config`.
 - **Job form** — partition, allocation, CPUs, memory, GPUs and walltime are chosen once; CS Bridge writes and submits the batch script.
 - **Live metrics** — the session card shows the job state and its current CPU, memory and GPU use.
 - **Persistent sessions** — a job outlives its VS Code window; **Connect** opens a new window on the same job.
 - **Session reuse** — a finished session can be started again, unchanged or edited.
-- **Utilization history** — the Stats view records the CPU and memory efficiency of every run, and lists the runs CyberShuttle recorded for your account.
+- **Utilization history** — the Stats view records the CPU and memory efficiency of every run, including those cs-control recorded for your account.
 - **No inbound ports** — connections go through a Microsoft Dev Tunnel, so the cluster opens no port.
 
 ## Supported Clusters
@@ -61,18 +61,6 @@ After a run ends, the Stats view records its CPU and memory efficiency.
 <img src="https://raw.githubusercontent.com/cyber-shuttle/CS-Bridge/HEAD/docs/media/04-utilization.png" alt="Past runs and their utilization" width="480">
 
 The full design is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## CyberShuttle login
-
-The Resources view and the CyberShuttle section of the Stats view are served by cs-control. Sign in with
-**CS Bridge: Log in to CyberShuttle**: the extension shows a short code and opens CILogon's device page with it
-filled in, then waits while you approve it there. Hosts, login keys and run history all come from cs-control;
-nothing in either view reads or writes the local `~/.ssh/config`.
-
-| What | Value |
-|---|---|
-| Setting | `csbridge.controlUrl`, default `https://jupyterapi.cybershuttle.org/api/v1` |
-| Origin `csctl serve --allowed-origin` must accept | `http://127.0.0.1` |
 
 ## Files and Paths
 

@@ -1,10 +1,7 @@
-import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { parse, LineType } from 'ssh-config';
 import { SshHost } from '../models';
-import { SshConfigEntry } from './sshCommandParser';
-import { lockedUpdateTextFile } from './fsSupport';
 
 export const USER_SSH_CONFIG_PATH = path.join(os.homedir(), '.ssh', 'config');
 export const SYSTEM_SSH_CONFIG_PATH = process.platform === 'win32'
@@ -106,32 +103,10 @@ export function parseHostsFromConfigText(text: string): SshHost[] {
     return hosts;
 }
 
-export function addHostToConfigText(text: string, entry: SshConfigEntry): string {
-    const config = parse(text);
-    config.remove({ Host: entry.Host }); // replace-on-readd: clean recreate, no duplicates
-    config.prepend(entry, true); // top of file, after any Include lines
-    return config.toString();
-}
-
-export function removeHostFromConfigText(text: string, name: string): string {
-    const config = parse(text);
-    config.remove({ Host: name });
-    return config.toString();
-}
-
 export function mergeHostsByPriority(...lists: SshHost[][]): SshHost[] {
     const byName = new Map<string, SshHost>();
     for (const host of lists.flat()) {
         if (!byName.has(host.name)) { byName.set(host.name, host); } // keep-first: earlier lists win
     }
     return [...byName.values()];
-}
-
-export function addHostToConfigFile(filePath: string, entry: SshConfigEntry): void {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    lockedUpdateTextFile(filePath, text => addHostToConfigText(text ?? '', entry), 0o600);
-}
-
-export function removeHostFromConfigFile(filePath: string, name: string): void {
-    lockedUpdateTextFile(filePath, text => (text === undefined ? null : removeHostFromConfigText(text, name)), 0o600);
 }

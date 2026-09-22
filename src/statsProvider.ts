@@ -1,12 +1,10 @@
 import * as vscode from 'vscode';
 import { WebviewProvider, confirmModal } from './webviewProvider';
-import { StatsState, WebviewMessage } from './models';
+import { SessionRunRecord, StatsState, WebviewMessage } from './models';
 import { readAllRuns, clearAllRuns, watchSessionMetrics } from './modules/sessionMetricsStore';
 import { getSession } from './extensionStore';
 import { openSummaryPanel } from './summaryPanel';
-import { errMsg } from './logger';
-import { AuthClient } from './control/AuthClient';
-import { ControlClient } from './control/ControlClient';
+import { Control } from './control';
 
 export class StatsProvider extends WebviewProvider {
     public static readonly viewType = 'csbridge.statsView';
@@ -15,9 +13,9 @@ export class StatsProvider extends WebviewProvider {
     // The watch fires on every live tick too (shared file), so only re-render when the run history actually changed.
     private lastRunsJson = '';
 
-    constructor(extensionUri: vscode.Uri, private readonly auth: AuthClient, private readonly control: ControlClient) {
+    constructor(extensionUri: vscode.Uri, private readonly control: Control) {
         super(extensionUri);
-        auth.onDidChange(() => void this.pushState());
+        control.onDidChange(() => void this.pushState());
         watchSessionMetrics(() => {
             const json = JSON.stringify(readAllRuns());
             if (json === this.lastRunsJson) { return; }
@@ -28,7 +26,6 @@ export class StatsProvider extends WebviewProvider {
 
     protected handleMessage(data: WebviewMessage): void {
         if (data.command === 'ready') { void this.pushState(); return; }
-        if (data.command === 'signIn') { void vscode.commands.executeCommand('csbridge.signIn'); return; }
         if (data.command === 'openRunSummary' && data.sessionId) {
             const session = getSession(data.sessionId);
             const run = readAllRuns().find(r => r.sessionId === data.sessionId && r.jobId === data.jobId);
@@ -43,14 +40,16 @@ export class StatsProvider extends WebviewProvider {
 
     public refresh(): void { void this.pushState(); }
 
-    // Local run history is this window's own; the CyberShuttle section is every run cs-control
-    // recorded for the account, across machines, and is simply absent while signed out.
+    // Runs cs-control recorded for the signed-in account join the local history, grouped under their host.
     protected async pushState(): Promise<void> {
-        const state: StatsState = { runs: readAllRuns(), account: await this.auth.accountName(), controlRuns: [] };
-        if (state.account) {
-            try { state.controlRuns = await this.control.listRuns(); }
-            catch (err) { state.controlError = errMsg(err); }
-        }
+        const remote = await this.control.listRuns().catch(() => []);
+        const state: StatsState = {
+            runs: [...readAllRuns(), ...remote.map(run => ({
+                sessionId: run.sessionId, cluster: run.sshHost, jobId: `#${run.seq}`, endedAt: Date.parse(run.endedAt),
+                finalStatus: run.finalState.toLowerCase() as SessionRunRecord['finalStatus'], allocation: run.account, queue: run.partition,
+                stats: run.stats && { cpuEfficiencyPct: run.stats.cpuEfficiencyPct, memEfficiencyPct: run.stats.memoryEfficiencyPct },
+            }))],
+        };
         this.view?.webview.postMessage({ command: 'state', state });
     }
 }

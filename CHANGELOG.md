@@ -8,11 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **CyberShuttle login** (`CS Bridge: Log in to CyberShuttle`) signs in through CILogon and cs-control with a
-  device code shown in the editor. The Resources view then manages the SSH hosts and login keys the account
-  holds in CyberShuttle — add, edit, test and remove a host by pasting the `ssh` command that works, and add
-  or remove a stored login key. The Stats view gains a CyberShuttle section listing the runs cs-control
-  recorded for the account. The control API base URL is `csbridge.controlUrl`.
+- CyberShuttle login by device code, a Resources view over the account's cs-control SSH hosts and keys, and
+  cs-control runs in the Stats view.
 
 ## [0.1.7] - 2026-09-14
 
