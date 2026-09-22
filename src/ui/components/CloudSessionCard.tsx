@@ -1,7 +1,7 @@
 import { Row, Stack, Text, Card, ActionIcon, Button, Chip } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 import { CloudInstanceInfo } from '@/models';
-import type { CSSProperties} from 'preact';
+import type { CSSProperties } from 'preact';
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
 export function CloudSessionCard({ instance: instance }: { instance: CloudInstanceInfo }) {
@@ -21,7 +21,7 @@ export function CloudSessionCard({ instance: instance }: { instance: CloudInstan
                 <Text weight={600}>{instance.name}</Text>
                 <Chip label={instance.instanceType ?? ""} />
                 <Row gap={4} style={{ marginLeft: 'auto' }}>
-                    <ActionIcon name="close" ariaLabel="Remove Instance" size={14} onClick={() => post({ command: 'remove-instance', sessionId: instance.instanceID, name: instance.name })} />
+                    {instance.state !== "terminated" && <ActionIcon name="close" ariaLabel="Remove Instance" size={14} onClick={() => post({ command: 'removeCloudInstance', instanceId: instance.instanceID, instanceName: instance.name })} />}
                 </Row>
             </Row>
             <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
@@ -31,10 +31,10 @@ export function CloudSessionCard({ instance: instance }: { instance: CloudInstan
                     <Chip label={instance.publicIp ?? ""} />
                     <Row style={statusStyle}>{instance.state}</Row>
                     <Row gap={6} style={{ marginLeft: 'auto', flexShrink: 0, zoom: 0.85 }}>
-                        {instance.state === "running" && <Button icon="terminal" onClick={() => post({ command: 'terminal', host: instance.publicIp })}>Terminal</Button>}
-                        {instance.state === "running" && <Button icon="remote" onClick={() => post({ command: 'remote', name: instance.name, host: instance.publicIp, sessionId: instance.instanceID })}>Remote</Button>}
-                        {instance.state === "running" && <Button icon="stop" onClick={() => post({ command: 'stop-instance', sessionId: instance.instanceID, name: instance.name })}>Stop</Button>}
-                        {instance.state === "stopped" && <Button icon="play" onClick={() => post({ command: 'start-instance', sessionId: instance.instanceID })}>Start</Button>}
+                        {instance.state === "running" && <Button icon="terminal" onClick={() => post({ command: 'sshIntoCloudInstance', instanceIp: instance.publicIp })}>Terminal</Button>}
+                        {instance.state === "running" && <Button icon="remote" onClick={() => post({ command: 'startRemoteForloudInstance', instanceName: instance.name, instanceIp: instance.publicIp, instanceId: instance.instanceID })}>Remote</Button>}
+                        {instance.state === "running" && <Button icon="stop" onClick={() => post({ command: 'stopCloudInstance', instanceId: instance.instanceID })}>Stop</Button>}
+                        {instance.state === "stopped" && <Button icon="play" onClick={() => post({ command: 'restartCloudInstance', instanceId: instance.instanceID })}>Start</Button>}
                     </Row>
                 </Row>
             </Stack>

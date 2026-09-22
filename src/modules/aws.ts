@@ -19,6 +19,7 @@ import { addSshConfigEntryAWS, removeSshConfigEntryAWS, SshManager } from '../mo
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
 import path from "path";
+import { confirmModal } from '@/webviewProvider';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const CS_SSH_CONFIG_PATH = path.join(homedir(), '.cybershuttle', 'ssh_config');
@@ -301,7 +302,7 @@ export default class AWSClient {
         }
     }
 
-    public async doInstanceActions(action: InstanceActions, instanceID: string): Promise<void> {
+    public async doInstanceActions(action: InstanceActions, instanceID: string, instanceName: string): Promise<void> {
         if (this.client === null) {
             throw new Error("EC2 Client is not initialized")
         }
@@ -345,11 +346,27 @@ export default class AWSClient {
             }
             console.log(msg);
             this.toast(title, msg, false)
+
+            if (action === InstanceActions.Remove) {
+                await this.removeSshConfigEntryAWS(instanceID, instanceName)
+            }
+
         } catch (error) {
             const errMsg = `Error ${title}: ${error}`
             console.error(errMsg);
             vscode.window.showErrorMessage(errMsg)
         }
+    }
+
+    public async removeInstance(instanceID: string, instanceName: string): Promise<void> {
+        console.log("Start Removing Instance")
+        const confirmed = await confirmModal('Remove Instnace?', 'Remove',
+            'This stops and terminates the instance')
+        if (!confirmed) {
+            console.log("Cancel remove")
+            return;
+        }
+        await this.doInstanceActions(InstanceActions.Remove, instanceID, instanceName)
     }
 
     public getInstances(): CloudInstanceInfo[] {
@@ -402,25 +419,29 @@ export default class AWSClient {
                     }
                 }
             }
+
+            this.instances = instances
+            console.log("Cloud SSH Hosts: ", this.hosts)
         } catch (error) {
             console.error("Get instances failed:", error);
         }
-        this.instances = instances
 
     }
 
     public openTerminal(ip: string): void {
         const hostString = `ec2-user@${ip}`
         vscode.window.createTerminal({ name: ip, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(ip), "-i", this.PRIVATE_KEY_PATH, hostString] }).show();
+
     }
 
     public async openRemoteSession(id: string, name: string, ip: string): Promise<void> {
-        const hosts = SshManager.getInstance().getCSHosts()
+        this.hosts = SshManager.getInstance().getCSHosts()
         console.log("Checking SSH Config")
-        if (hosts.find(host => host.hostname === ip)) {
+        if (this.hosts.find(host => host.hostname === ip)) {
             console.log("Found existing entry")
         } else {
             await addSshConfigEntryAWS(id, name, ip, 22, this.PRIVATE_KEY_PATH)
+            this.hosts = SshManager.getInstance().getCSHosts()
         }
 
         const sshConfig = vscode.workspace.getConfiguration('remote.SSH');

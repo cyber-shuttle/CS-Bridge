@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
-import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
+import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError, InstanceActions } from './models';
 import { WebviewProvider, confirmModal } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, hasSessionKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
@@ -40,7 +40,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private sharedReady = false;
     private awsClient = new AWSClient()
     private cloudPollInterval: NodeJS.Timeout | null = null;
-    private pollIntervalTime = 15000
+    private pollIntervalTime = 10000
 
     // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
@@ -140,7 +140,32 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 this.awsClient.pollInstances()
                 this.pushState()
             }, this.pollIntervalTime);
-        }
+        },
+        launchCloudInstance: (_data) => this.awsClient.launchEC2Instance(),
+        stopCloudInstance: (_data) => {
+            if (_data.instanceId) {
+                this.awsClient.doInstanceActions(InstanceActions.Stop, _data.instanceId, "")
+            }
+        },
+        restartCloudInstance: (_data) => {
+            if (_data.instanceId) {
+                this.awsClient.doInstanceActions(InstanceActions.Start, _data.instanceId, "")
+            }
+        },
+        removeCloudInstance: (_data,) => {
+            if (_data.instanceId && _data.instanceName) {
+                this.awsClient.removeInstance(_data.instanceId, _data.instanceName)
+            }
+        },
+        sshIntoCloudInstance: (_data) => this.awsClient.openTerminal(_data.instanceIp ?? ""),
+        startRemoteForloudInstance: async (_data) => {
+            if (_data.instanceId && _data.instanceName && _data.instanceIp) {
+
+                console.log("Launching Remote Session")
+                await this.awsClient.openRemoteSession(_data.instanceId, _data.instanceName, _data.instanceIp)
+            }
+        },
+
     };
 
     protected handleMessage(data: WebviewMessage) {
@@ -276,6 +301,11 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (platform.label === "Add Cloudbank Token") {
             await this.awsClient.initEC2Client("us-east-1")
             this.pushState()
+        }
+
+        if (platform.label === "Cloudbank") {
+            await this.awsClient.launchEC2Instance()
+
         }
 
     }

@@ -186,6 +186,9 @@ export interface WebviewMessage {
     memory?: string;
     allocation?: string;
     jobId?: string;
+    instanceIp?: string;
+    instanceId?: string;
+    instanceName?: string;
 }
 
 export interface CloudInstanceInfo {

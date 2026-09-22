@@ -66,9 +66,9 @@ export class CloudProvider extends WebviewProvider {
     }
 
     protected async handleMessage(data: WebviewMessage): Promise<void> {
-        const instanceName = data.name ?? ""
-        const instanceID = data.sessionId ?? ""
-        const instanceIP = data.host ?? ""
+        const instanceName = data.instanceName ?? ""
+        const instanceID = data.instanceId ?? ""
+        const instanceIP = data.instanceIp ?? ""
         switch (data.command) {
             case "ready":
                 const hosts = SshManager.getInstance().getCSHosts()
@@ -87,7 +87,7 @@ export class CloudProvider extends WebviewProvider {
                     this.pollInternval = setInterval(() => this.getInstances(), 10000) // poll every 10 secs, change later
                 }
                 break;
-            case "stop-instance":
+            case "stopCloudInstance":
                 if (instanceID !== "") {
 
                     await this.doInstanceActions(InstanceActions.Stop, instanceID)
@@ -95,14 +95,14 @@ export class CloudProvider extends WebviewProvider {
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
                 break
-            case "start-instance":
+            case "restartCloudInstance":
                 if (instanceID !== "") {
                     await this.doInstanceActions(InstanceActions.Start, instanceID)
                 } else (
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
                 break
-            case "remove-instance":
+            case "removeCloudInstance":
                 if (instanceID !== "") {
                     const confirmed = await confirmModal('Remove Instnace?', 'Remove',
                         'This stops and terminates the instance')
@@ -117,7 +117,7 @@ export class CloudProvider extends WebviewProvider {
                     vscode.window.showErrorMessage("Error: No instance ID provided")
                 )
                 break
-            case "terminal":
+            case "sshIntoCloudInstance":
                 console.log("Opening terminal")
                 if (instanceIP !== "") {
                     this.openTerminal(instanceIP)
@@ -125,7 +125,7 @@ export class CloudProvider extends WebviewProvider {
                     vscode.window.showErrorMessage("Error: No instance IP provided")
                 }
                 break
-            case "remote":
+            case "startRemoteForloudInstance":
                 console.log("Opening remote session")
                 if (instanceIP !== "") {
                     this.openRemoteSession(instanceID, instanceName, instanceIP)
