@@ -90,7 +90,7 @@ test('submitJobToSlurm records the job without touching status, and throws on mi
         /Failed to parse job ID/);
 });
 
-// cs-control's provisionScript refuses an unmapped machine by name (error=architecture).
+// cs-plane's provisionScript refuses an unmapped machine by name (error=architecture).
 // Building a release URL from it instead would 404 and read as a network fault.
 test('installLinkspan refuses a machine linkspan is not released for', async () => {
     await assert.rejects(

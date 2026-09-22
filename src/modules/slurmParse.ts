@@ -80,7 +80,7 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
     return { status: classifySchedulerState(state), elapsedSec };
 }
 
-// The scheduler's vocabulary in one place, mirroring cs-control's own table. An
+// The scheduler's vocabulary in one place, mirroring cs-plane's own table. An
 // absent state reads as UNKNOWN, which the monitor holds rather than treating as
 // job death, so an unlisted state strands a session until its wall time.
 // SUSPENDED and STOPPED still hold an allocation, so they read as QUEUED.

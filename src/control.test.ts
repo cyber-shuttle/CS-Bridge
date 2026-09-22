@@ -39,7 +39,7 @@ test('device sign-in redeems the code until approved and stores the credential',
     assert.equal(await client.accountName(), 'alice@example.edu');
 });
 
-test('resources use their cs-control routes with the bearer, refreshing once when near expiry', async () => {
+test('resources use their cs-plane routes with the bearer, refreshing once when near expiry', async () => {
     const { calls, client } = control((path, method) => (path === 'oauth/refresh'
         ? json({ idToken: TOKEN, expiresInSeconds: 900 })
         : method === 'GET' ? json({ hosts: [], keys: [], runs: [] }) : new Response(null, { status: 204 })), { idToken: 'old', refreshToken: 'r1', expiresAt: 0 });
