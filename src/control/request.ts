@@ -22,7 +22,7 @@ export interface RequestOptions {
 }
 
 export async function controlRequest(fetchImpl: Fetch, base: string, path: string, options: RequestOptions = {}): Promise<unknown> {
-    const headers: Record<string, string> = { Origin: CONTROL_ORIGIN, Accept: 'application/json' };
+    const headers: Record<string, string> = { Origin: CONTROL_ORIGIN };
     if (options.token) { headers['Authorization'] = `Bearer ${options.token}`; }
     if (options.body !== undefined) { headers['Content-Type'] = 'application/json'; }
 
@@ -33,17 +33,15 @@ export async function controlRequest(fetchImpl: Fetch, base: string, path: strin
     });
     if (response.status === 204) { return undefined; }
     const value = await response.json().catch(() => undefined);
-    if (!response.ok) { throw envelopeError(response.status, value); }
+    if (!response.ok) {
+        const error = (value as { error?: { code?: unknown; message?: unknown } } | undefined)?.error;
+        throw new ControlError(
+            response.status,
+            typeof error?.code === 'string' ? error.code : `http_${response.status}`,
+            typeof error?.message === 'string' ? error.message : `CyberShuttle returned ${response.status}.`,
+        );
+    }
     return value;
-}
-
-function envelopeError(status: number, value: unknown): ControlError {
-    const error = (value as { error?: { code?: unknown; message?: unknown } } | undefined)?.error;
-    return new ControlError(
-        status,
-        typeof error?.code === 'string' ? error.code : `http_${status}`,
-        typeof error?.message === 'string' ? error.message : `CyberShuttle returned ${status}.`,
-    );
 }
 
 export const unexpected = (what: string): ControlError =>

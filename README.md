@@ -65,16 +65,14 @@ The full design is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## CyberShuttle login
 
 The Resources view and the CyberShuttle section of the Stats view are served by cs-control. Sign in with
-**CS Bridge: Log in to CyberShuttle**: the extension shows a short code, copies it and opens CILogon's device
-page, then waits while you approve it there. No redirect URI is registered and nothing listens on a local
-port. Hosts, login keys and run history all come from cs-control; nothing in either view reads or writes the
-local `~/.ssh/config`.
+**CS Bridge: Log in to CyberShuttle**: the extension shows a short code and opens CILogon's device page with it
+filled in, then waits while you approve it there. Hosts, login keys and run history all come from cs-control;
+nothing in either view reads or writes the local `~/.ssh/config`.
 
 | What | Value |
 |---|---|
 | Setting | `csbridge.controlUrl`, default `https://jupyterapi.cybershuttle.org/api/v1` |
 | Origin `csctl serve --allowed-origin` must accept | `http://127.0.0.1` |
-| CILogon client requirement | the device flow enabled |
 
 ## Files and Paths
 

@@ -32,7 +32,6 @@ function HostItem({ host }: { host: SshHost }) {
             </Row>
             {open ? (
                 <Stack gap={4} pad="0 0 6px 22px">
-                    <DetailRow label="Address">{address(host)}</DetailRow>
                     <DetailRow label="Key">{host.key ?? host.identityFile ?? '—'}</DetailRow>
                     {host.extraDirectives.length ? (
                         <DetailRow label="Options"><Stack gap={1}>{host.extraDirectives.map(d => <div key={d}>{d}</div>)}</Stack></DetailRow>

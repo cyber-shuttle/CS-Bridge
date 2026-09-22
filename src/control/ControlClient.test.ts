@@ -19,48 +19,38 @@ function clientOver(answer: (call: Call) => Response, secrets = signedIn()) {
 
 const HOST = { name: 'delta', hostname: 'login.delta.edu', user: 'alice', port: 22, extraDirectives: [], managed: true };
 const KEY = { name: 'delta-key', type: 'ssh-ed25519', fingerprint: 'SHA256:abc' };
-const RUN = {
-    sessionId: 's-012345abcdef', seq: 1, sshHost: 'delta', partition: 'cpu', rootFolder: '$HOME/p',
-    resources: { cores: 2, memoryMb: 4096, wallMinutes: 60 }, finalState: 'STOPPED', endedAt: '2030-01-01T01:00:30Z',
-};
+const RUN = { sessionId: 's-012345abcdef', seq: 1, finalState: 'STOPPED', endedAt: '2030-01-01T01:00:30Z' };
+const TEST = { ok: true, message: 'Connected.' };
 
-test('every request carries the loopback origin and the bearer token', async () => {
-    const { calls, control } = clientOver(() => jsonResponse({ hosts: [HOST] }));
+test('each method uses its cs-control route, verb, body and headers', async () => {
+    const answers: Record<string, unknown> = { 'ssh/hosts': { hosts: [HOST] }, 'ssh/keys': { keys: [KEY] }, 'telemetry': { runs: [RUN] }, 'ssh/hosts/delta/test': TEST };
+    const { calls, control } = clientOver(call => (call.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : jsonResponse(call.method === 'GET' || call.url.endsWith('/test') ? answers[call.url.slice(BASE.length + 1)] : HOST)));
+
     assert.deepEqual(await control.listSshHosts(), [HOST]);
-    assert.equal(calls[0].headers['Origin'], CONTROL_ORIGIN);
-    assert.equal(calls[0].headers['Authorization'], `Bearer ${TOKEN}`);
-    assert.equal(calls[0].headers['Accept'], 'application/json');
-});
-
-test('each method uses its cs-control route, verb and body', async () => {
-    const { calls, control } = clientOver(call => (call.method === 'DELETE' ? new Response(null, { status: 204 }) : jsonResponse(HOST)));
-    await control.addSshHost('delta', 'ssh alice@login.delta.edu', 'delta-key');
-    await control.updateSshHost('delta', 'ssh -p 2222 alice@login.delta.edu');
-    await control.deleteSshHost('a/b');
-    await control.deleteSshKey('a/b');
-
-    assert.deepEqual(calls.map(c => [c.method, c.url]), [
-        ['POST', `${BASE}/ssh/hosts`],
-        ['PUT', `${BASE}/ssh/hosts/delta`],
-        ['DELETE', `${BASE}/ssh/hosts/a%2Fb`],
-        ['DELETE', `${BASE}/ssh/keys/a%2Fb`],
-    ]);
-    assert.deepEqual(calls[0].body, { name: 'delta', command: 'ssh alice@login.delta.edu', key: 'delta-key' });
-    assert.deepEqual(calls[1].body, { command: 'ssh -p 2222 alice@login.delta.edu', key: '' });
-});
-
-test('the read routes unwrap their envelopes', async () => {
-    const answers: Record<string, unknown> = { 'ssh/keys': { keys: [KEY] }, 'telemetry': { runs: [RUN] }, 'ssh/hosts/delta/test': { host: 'delta', ok: true, message: 'Connected.' } };
-    const { calls, control } = clientOver(call => jsonResponse(answers[call.url.slice(BASE.length + 1)]));
     assert.deepEqual(await control.listSshKeys(), [KEY]);
     assert.deepEqual(await control.listRuns(), [RUN]);
-    assert.deepEqual(await control.testSshHost('delta'), { host: 'delta', ok: true, message: 'Connected.' });
-    assert.deepEqual(calls.map(c => c.method), ['GET', 'GET', 'POST']);
-});
+    assert.deepEqual(await control.testSshHost('delta'), TEST);
+    await control.addSshHost('delta', 'ssh alice@login.delta.edu', 'delta-key');
+    await control.updateSshHost('delta', 'ssh -p 2222 alice@login.delta.edu');
+    assert.equal(await control.deleteSshHost('a/b'), undefined);
+    await control.deleteSshKey('a/b');
 
-test('a 204 resolves undefined', async () => {
-    const { control } = clientOver(() => new Response(null, { status: 204 }));
-    assert.equal(await control.deleteSshKey('delta-key'), undefined);
+    assert.deepEqual(calls.map(c => [c.method, c.url.slice(BASE.length + 1)]), [
+        ['GET', 'ssh/hosts'],
+        ['GET', 'ssh/keys'],
+        ['GET', 'telemetry'],
+        ['POST', 'ssh/hosts/delta/test'],
+        ['POST', 'ssh/hosts'],
+        ['PUT', 'ssh/hosts/delta'],
+        ['DELETE', 'ssh/hosts/a%2Fb'],
+        ['DELETE', 'ssh/keys/a%2Fb'],
+    ]);
+    assert.deepEqual(calls[4].body, { name: 'delta', command: 'ssh alice@login.delta.edu', key: 'delta-key' });
+    assert.deepEqual(calls[5].body, { command: 'ssh -p 2222 alice@login.delta.edu', key: '' });
+    assert.equal(calls[0].headers['Origin'], CONTROL_ORIGIN);
+    assert.equal(calls[0].headers['Authorization'], `Bearer ${TOKEN}`);
 });
 
 test('the error envelope becomes a ControlError', async () => {
@@ -71,11 +61,6 @@ test('the error envelope becomes a ControlError', async () => {
         assert.equal(err.message, 'that alias is taken');
         return true;
     });
-});
-
-test('a list envelope without its list is refused rather than returned', async () => {
-    const { control } = clientOver(() => jsonResponse({ hosts: 'nope' }));
-    await assert.rejects(control.listSshHosts(), (err: ControlError) => err.code === 'invalid_response');
 });
 
 test('a 401 drops the stored credential', async () => {

@@ -90,11 +90,10 @@ async function signIn(auth: AuthClient): Promise<void> {
     try {
         const authorization = await auth.startSignIn();
         const open = await vscode.window.showInformationMessage(
-            `Enter the code ${authorization.userCode} at ${authorization.verificationUri} to finish signing in to CyberShuttle.`,
-            { modal: true }, 'Copy code and open',
+            `Approve the code ${authorization.userCode} in your browser to finish signing in to CyberShuttle.`,
+            { modal: true }, 'Open browser',
         );
         if (!open) { return; }
-        await vscode.env.clipboard.writeText(authorization.userCode);
         await vscode.env.openExternal(vscode.Uri.parse(authorization.verificationUriComplete));
         const signedIn = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: `Waiting for CyberShuttle sign-in with code ${authorization.userCode}`, cancellable: true },

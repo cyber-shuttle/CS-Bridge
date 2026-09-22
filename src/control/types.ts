@@ -1,7 +1,6 @@
-// The cs-control wire vocabulary, as docs/API.md in cs-control defines it. It lives apart from the
-// client so the webviews can name these shapes through `models.ts` without pulling the client, its
-// fetch or its node imports into a browser bundle. Optional fields are the ones cs-control omits
-// when unset, which is most of them: a host it did not resolve carries only its name.
+// The parts of cs-control's wire vocabulary (docs/API.md there) these views read. It lives apart from the
+// client so the webviews can name these shapes without pulling the client or its node imports into a
+// browser bundle. Optional fields are the ones cs-control omits when unset.
 
 export interface SshHost {
     name: string;
@@ -21,13 +20,11 @@ export interface SshKey {
 }
 
 export interface SshHostTest {
-    host: string;
     ok: boolean;
     message: string;
 }
 
 export interface RunStats {
-    cores?: number;
     requestedMemory?: string;
     elapsedSeconds?: number;
     maxRss?: string;
@@ -40,13 +37,7 @@ export interface RunStats {
 export interface Run {
     sessionId: string;
     seq: number;
-    sshHost: string;
-    account?: string;
-    partition: string;
-    rootFolder: string;
-    resources: { cores: number; memoryMb: number; wallMinutes: number; gpuType?: string; gpuCount?: number };
     finalState: string;
-    error?: string;
     startedAt?: string;
     endedAt: string;
     stats?: RunStats;
