@@ -51,18 +51,15 @@ export class Control {
 
     // Redeems the device code every interval until the user approves it; false if they cancel first.
     public async awaitSignIn(code: DeviceCode, cancelled: () => boolean): Promise<boolean> {
-        let interval = code.intervalSeconds;
         while (!cancelled()) {
-            await new Promise(resolve => setTimeout(resolve, interval * 1000));
+            await new Promise(resolve => setTimeout(resolve, code.intervalSeconds * 1000));
             if (cancelled()) { return false; }
             try {
                 await this.store(await this.request('oauth/exchange', 'POST', { deviceCode: code.deviceCode }) as Tokens);
                 return true;
             }
             catch (err) {
-                const reason = err instanceof ControlError ? err.code : '';
-                if (reason === 'rate_limited') { interval += 5; }
-                else if (reason !== 'authorization_pending') { throw err; }
+                if (!(err instanceof ControlError) || err.code !== 'authorization_pending') { throw err; }
             }
         }
         return false;
