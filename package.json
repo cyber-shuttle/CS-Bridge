@@ -31,6 +31,16 @@
 	],
 	"main": "./out/extension.js",
 	"contributes": {
+		"configuration": {
+			"title": "CS Bridge",
+			"properties": {
+				"csbridge.controlUrl": {
+					"type": "string",
+					"default": "https://jupyterapi.cybershuttle.org/api/v1",
+					"description": "CyberShuttle control API base URL"
+				}
+			}
+		},
 		"viewsContainers": {
 			"activitybar": [
 				{
@@ -78,8 +88,18 @@
 				"icon": "$(add)"
 			},
 			{
+				"command": "csbridge.signIn",
+				"title": "Log in to CyberShuttle",
+				"category": "CS Bridge"
+			},
+			{
+				"command": "csbridge.signOut",
+				"title": "Log out of CyberShuttle",
+				"category": "CS Bridge"
+			},
+			{
 				"command": "csbridge.addHost",
-				"title": "Add SSH Host",
+				"title": "Add CyberShuttle SSH Host",
 				"category": "CS Bridge",
 				"icon": "$(add)"
 			},
@@ -170,7 +190,7 @@
 		"check-types": "tsc -p ./ && tsc -p src/ui/tsconfig.json",
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix",
-		"test": "node --import tsx --test src/*.test.ts src/modules/*.test.ts src/ui/logic/*.test.ts",
+		"test": "node --import tsx --test src/*.test.ts src/control/*.test.ts src/modules/*.test.ts src/ui/logic/*.test.ts",
 		"package": "npx @vscode/vsce package",
 		"install-ext": "node -e \"const p=require('./package.json');require('child_process').execFileSync('code',['--install-extension',p.name+'-'+p.version+'.vsix'],{stdio:'inherit'})\"",
 		"dev": "npm install && npm run package && npm run install-ext"

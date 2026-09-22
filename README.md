@@ -11,12 +11,12 @@ CS Bridge is a VS Code extension for working on high-performance computing (HPC)
 
 ## Features
 
-- **Resources** — hosts and keys come from `~/.ssh/config`. Paste an `ssh` command to add a host, or edit one in place.
+- **CyberShuttle resources** — log in to CyberShuttle and the Resources view manages the SSH hosts and login keys your account holds there. Sessions still launch on the hosts in your own `~/.ssh/config`.
 - **Job form** — partition, allocation, CPUs, memory, GPUs and walltime are chosen once; CS Bridge writes and submits the batch script.
 - **Live metrics** — the session card shows the job state and its current CPU, memory and GPU use.
 - **Persistent sessions** — a job outlives its VS Code window; **Connect** opens a new window on the same job.
 - **Session reuse** — a finished session can be started again, unchanged or edited.
-- **Utilization history** — the Stats view records the CPU and memory efficiency of every run.
+- **Utilization history** — the Stats view records the CPU and memory efficiency of every run, and lists the runs CyberShuttle recorded for your account.
 - **No inbound ports** — connections go through a Microsoft Dev Tunnel, so the cluster opens no port.
 
 ## Supported Clusters
@@ -62,6 +62,19 @@ After a run ends, the Stats view records its CPU and memory efficiency.
 
 The full design is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## CyberShuttle login
+
+The Resources view and the CyberShuttle section of the Stats view are served by cs-control. Sign in with
+**CS Bridge: Log in to CyberShuttle**: CILogon opens in the browser and redirects to a loopback server this
+extension runs for that one answer. Hosts, login keys and run history all come from cs-control; nothing in
+either view reads or writes the local `~/.ssh/config`.
+
+| What | Value |
+|---|---|
+| Setting | `csbridge.controlUrl`, default `https://jupyterapi.cybershuttle.org/api/v1` |
+| Redirect URI the CILogon client must list | `http://127.0.0.1:8046/callback` |
+| Origin `csctl serve --allowed-origin` must accept | `http://127.0.0.1:8046` |
+
 ## Files and Paths
 
 **Local**
@@ -71,8 +84,7 @@ The full design is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - `~/.cybershuttle/ssh_config` defines the per-session SSH aliases and is included from `~/.ssh/config`.
 - `~/.cybershuttle/ssh_keys/` holds the per-session SSH keys.
 - `~/.cybershuttle/ssh_control/` holds the ControlMaster sockets.
-- `~/.ssh/config.csbridge-backup` is the copy of `~/.ssh/config` taken before its first Resources edit.
-- VS Code keeps the Microsoft account token in the operating system keychain.
+- VS Code keeps the Microsoft account token and the CyberShuttle credential in the operating system keychain.
 
 **Remote**
 

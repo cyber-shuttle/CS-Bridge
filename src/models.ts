@@ -1,3 +1,5 @@
+import type { Run, SshHost as ControlSshHost, SshKey as ControlSshKey } from './control/types';
+
 export interface SlurmSession extends Session {
     jobId: string;
     queue: string;
@@ -60,17 +62,12 @@ export type PromptObserver = (event: 'opened' | 'answered') => void;
 
 export class PromptCancelledError extends Error {}
 
-// One alias as `ssh -G` resolves it. Keys are lowercase, values verbatim, a repeated key keeps printed order.
-export interface SSHHost {
-    Name: string;
-    Config: Record<string, string[]>;
-}
-
-export interface SshKeyInfo {
-    path: string;
-    fingerprint: string; // '' when the key is missing
-    status: 'private' | 'public-only' | 'missing';
-    hosts: string[];
+export interface SshHost {
+    name: string;
+    hostname?: string;
+    user?: string;
+    extraDirectives?: string[]; // "Key Value" ssh_config lines other than HostName/User
+    source?: 'user' | 'system'; // user is editable, system is read-only
 }
 
 export interface SlurmClusterInfo {
@@ -146,6 +143,9 @@ export interface SessionRunRecord {
 
 export interface StatsState {
     runs: SessionRunRecord[];
+    account?: string;
+    controlRuns: Run[];
+    controlError?: string;
 }
 
 export interface SummaryState {
@@ -172,10 +172,13 @@ export interface SessionsState {
     alert: { title: string; message: string } | null;
 }
 
+// The Resources view is cs-control's alone: `account` set is the whole of "signed in", and `error`
+// carries the last failed operation's message so the view can show it instead of a toast.
 export interface HostsState {
-    converted: boolean;
-    sshHosts: SSHHost[];
-    sshKeys: SshKeyInfo[];
+    account?: string;
+    hosts: ControlSshHost[];
+    keys: ControlSshKey[];
+    error?: string;
 }
 
 // A message posted from a webview to its provider. Fields are optional; each command reads the ones it needs.
@@ -191,7 +194,5 @@ export interface WebviewMessage {
     memory?: string;
     allocation?: string;
     jobId?: string;
-    field?: string;
-    value?: string;
-    identityFile?: string;
+    key?: string;
 }

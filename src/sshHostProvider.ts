@@ -1,136 +1,118 @@
-// Resources view provider. Read-only until the user confirms the one-time conversion; after that every edit
-// goes through validateAndCommit. An emptied field drops its directive, since ssh -G rejects or replaces an
-// empty value.
 import * as vscode from 'vscode';
-import { HostsState, SSHHost, WebviewMessage } from './models';
+import { readFile } from 'node:fs/promises';
+import { HostsState, WebviewMessage } from './models';
 import { WebviewProvider, confirmModal } from './webviewProvider';
 import { errMsg } from './logger';
-import { SshManager } from './modules/sshSupport';
-import { sshCommandToConfig, assertValidHost, SshConfigEntry } from './modules/sshCommandParser';
-import { discoverKeys } from './modules/sshKeyStore';
-import { systemRunner } from './modules/commandRunner';
-import { USER_SSH_CONFIG_PATH, isConverted, convertToCanonical, importHosts, validateAndCommit } from './modules/sshHostsStore';
+import { AuthClient } from './control/AuthClient';
+import { ControlClient } from './control/ControlClient';
+import type { SshKey } from './control/types';
 
-const EDITABLE_FIELDS = new Set(['hostname', 'user', 'port', 'proxyjump', 'forwardagent']);
-
-const setDirective = (host: SSHHost, key: string, values: string[]): void => {
-    if (values.length) { host.Config[key] = values; }
-    else { delete host.Config[key]; }
-};
-
+// The Resources view shows what the signed-in CyberShuttle account owns in cs-control: its SSH
+// hosts and the login keys assigned to them. It reads and writes nothing locally, and offers only
+// the operations cs-control has, so a host is added or corrected by pasting the ssh command that
+// works and letting the server parse it. A failed call leaves its message in the view, where the
+// row it belongs to still is, rather than in a notification.
 export class SshHostProvider extends WebviewProvider {
     public static readonly viewType = 'csbridge.hostsView';
     protected readonly viewKind = 'hosts' as const;
 
+    // The keys the view last showed, so a key pick never re-fetches what is already on screen.
+    private keys: SshKey[] = [];
+
+    constructor(extensionUri: vscode.Uri, private readonly auth: AuthClient, private readonly control: ControlClient) {
+        super(extensionUri);
+        auth.onDidChange(() => void this.pushState());
+    }
+
     protected handleMessage(data: WebviewMessage): void {
+        const name = data.name ?? '';
         switch (data.command) {
-            case 'ready': this.pushState(); break;
-            case 'convert': void this.ensureConverted().then(() => this.pushState()); break;
-            case 'removeSshHost': void this.removeSshHost(data.name ?? ''); break;
-            case 'openTerminal': this.openTerminal(data.name ?? ''); break;
-            case 'renameHost': void this.mutateHost(data.name ?? '', (h) => { h.Name = data.value ?? h.Name; }); break;
-            case 'editHostField': void this.mutateHost(data.name ?? '', (h) => { if (EDITABLE_FIELDS.has(data.field ?? '')) { setDirective(h, data.field!, data.value ? [data.value] : []); } }); break;
-            case 'addIdentityFile': void this.mutateHost(data.name ?? '', (h) => { (h.Config.identityfile ??= []).push(data.identityFile ?? ''); }, data.identityFile); break;
-            case 'removeIdentityFile': void this.mutateHost(data.name ?? '', h => setDirective(h, 'identityfile', (h.Config.identityfile ?? []).filter(f => f !== data.identityFile))); break;
+            case 'ready': void this.pushState(); break;
+            case 'signIn': void vscode.commands.executeCommand('csbridge.signIn'); break;
+            case 'signOut': void vscode.commands.executeCommand('csbridge.signOut'); break;
+            case 'testHost': void this.attempt(() => this.testHost(name)); break;
+            case 'editHost': void this.attempt(() => this.editHost(name, data.key)); break;
+            case 'deleteHost': void this.attempt(() => this.deleteHost(name)); break;
+            case 'addKey': void this.attempt(() => this.addKey()); break;
+            case 'deleteKey': void this.attempt(() => this.deleteKey(name)); break;
             default: this.logger.warn('Unknown command from hosts webview:', data);
         }
     }
 
-    protected pushState(): void {
+    protected async pushState(error = ''): Promise<void> {
         if (!this.view) { return; }
-        const sshHosts = importHosts(systemRunner);
-        const state: HostsState = { converted: isConverted(), sshHosts, sshKeys: discoverKeys(sshHosts, systemRunner) };
+        const state: HostsState = { account: await this.auth.accountName(), hosts: [], keys: [], error };
+        if (state.account) {
+            try { [state.hosts, state.keys] = await Promise.all([this.control.listSshHosts(), this.control.listSshKeys()]); }
+            catch (err) { state.error ||= errMsg(err); }
+        }
+        this.keys = state.keys;
         this.view.webview.postMessage({ command: 'state', state });
     }
 
-    // Rides the host's ControlMaster socket (Unix), so a shell on an already-authenticated host costs no second 2FA push.
-    private openTerminal(name: string): void {
-        vscode.window.createTerminal({ name, shellPath: 'ssh', shellArgs: [...SshManager.getInstance().buildControlMasterArgs(name), name] }).show();
-    }
+    public refresh(): void { void this.pushState(); }
 
-    // Title-bar action: re-read so hosts added externally (e.g. via Remote-SSH) appear without a window reload.
-    public refreshSshHosts(): void {
-        this.pushState();
-    }
-
-    private async ensureConverted(): Promise<boolean> {
-        if (isConverted()) { return true; }
-        const ok = await confirmModal(
-            'Convert ~/.ssh/config for CS Bridge?',
-            'Convert',
-            'CS Bridge rewrites ~/.ssh/config into a flattened, machine-managed form so hosts and keys can be edited here. '
-            + 'The original is saved once to ~/.ssh/config.csbridge-backup. This runs only once.',
-        );
-        if (!ok) { return false; }
-        try { convertToCanonical(systemRunner); }
-        catch (err) { this.showError('SSH config conversion failed', err); return false; }
-        return true;
-    }
-
-    // Every write to ~/.ssh/config: converted first, validated, then the view refreshed either way.
-    private async commit(errorTitle: string, edit: Parameters<typeof validateAndCommit>[1]): Promise<boolean> {
-        if (!(await this.ensureConverted())) { return false; }
-        let ok = true;
-        try { validateAndCommit(systemRunner, edit); }
-        catch (err) { this.showError(errorTitle, err); ok = false; }
-        this.pushState();
-        return ok;
-    }
-
-    private mutateHost(alias: string, mutate: (h: SSHHost) => void, keyPath?: string): Promise<boolean> {
-        return this.commit('SSH host edit rejected', (hosts) => {
-            const host = hosts.find(h => h.Name === alias);
-            if (!host) { throw new Error(`Host '${alias}' not found`); }
-            if (keyPath !== undefined && !discoverKeys(hosts, systemRunner).some(k => k.path === keyPath && k.status === 'private')) {
-                throw new Error(`'${keyPath}' is not an assignable private key`);
-            }
-            mutate(host);
-            return { hosts, edited: host.Name };
+    public async addSshHost(): Promise<void> {
+        await this.attempt(async () => {
+            if (!await this.auth.accountName()) { throw new Error('Log in to CyberShuttle first.'); }
+            const name = await ask('Add SSH host', 'Alias for this host, e.g. delta');
+            if (!name) { return; }
+            const command = await ask('Add SSH host', 'The ssh command that works, e.g. ssh -J bastion alice@login.delta.edu');
+            if (!command) { return; }
+            await this.control.addSshHost(name, command, await this.pickKey());
         });
     }
 
-    public async addSshHost(): Promise<void> {
-        if (!(await this.ensureConverted())) { return; }
-
-        const command = (await vscode.window.showInputBox({
-            title: 'Enter SSH Connection Command',
-            placeHolder: 'E.g. ssh hello@microsoft.com -A',
-            ignoreFocusOut: true,
-        }))?.trim();
+    // cs-control stores the resolved host, not the command that made it, so an edit starts empty.
+    private async editHost(name: string, currentKey?: string): Promise<void> {
+        const command = await ask(`Edit ${name}`, 'The ssh command that works');
         if (!command) { return; }
-
-        let entry: SshConfigEntry;
-        try {
-            entry = sshCommandToConfig(command);
-            assertValidHost(entry);
-        }
-        catch (err) {
-            vscode.window.showErrorMessage(errMsg(err));
-            return;
-        }
-
-        const { Host, ...rest } = entry;
-        const config = Object.fromEntries(Object.entries(rest).map(([key, value]) => [key.toLowerCase(), [value]]));
-        const added = await this.commit('Failed to save SSH host', hosts => ({ hosts: [...hosts.filter(h => h.Name !== Host), { Name: Host, Config: config }], edited: Host }));
-        if (!added) { return; }
-
-        const choice = await vscode.window.showInformationMessage('Host added!', 'Open Config', 'Connect');
-        if (choice === 'Open Config') {
-            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(USER_SSH_CONFIG_PATH));
-        }
-        else if (choice === 'Connect') {
-            void vscode.commands.executeCommand('csbridge.newSessionOnHost', Host);
-        }
+        await this.control.updateSshHost(name, command, await this.pickKey(currentKey));
     }
 
-    private async removeSshHost(name: string): Promise<void> {
-        if (!(await this.ensureConverted())) { return; }
-        const choice = await vscode.window.showWarningMessage(
-            `Remove SSH host '${name}'?`,
-            { modal: true, detail: 'This removes the Host entry from ~/.ssh/config.' },
-            'Remove',
-        );
-        if (choice !== 'Remove') { return; }
-        await this.commit(`Failed to remove SSH host ${name}`, hosts => ({ hosts: hosts.filter(h => h.Name !== name) }));
+    private async testHost(name: string): Promise<void> {
+        const result = await this.control.testSshHost(name);
+        if (!result.ok) { throw new Error(result.message); }
+        vscode.window.showInformationMessage(`${name}: ${result.message}`);
     }
+
+    private async deleteHost(name: string): Promise<void> {
+        if (!await confirmModal(`Remove SSH host '${name}' from CyberShuttle?`, 'Remove')) { return; }
+        await this.control.deleteSshHost(name);
+    }
+
+    // The private bytes are read once and handed to cs-control; nothing keeps or logs them.
+    private async addKey(): Promise<void> {
+        const name = await ask('Add SSH key', 'Name for this key, e.g. delta-key');
+        if (!name) { return; }
+        const picked = await vscode.window.showOpenDialog({ title: 'Select a private key', canSelectMany: false, openLabel: 'Add key' });
+        if (!picked?.length) { return; }
+        await this.control.addSshKey(name, await readFile(picked[0].fsPath, 'utf-8'));
+    }
+
+    private async deleteKey(name: string): Promise<void> {
+        if (!await confirmModal(`Remove SSH key '${name}' from CyberShuttle?`, 'Remove', 'Every host using it is unassigned.')) { return; }
+        await this.control.deleteSshKey(name);
+    }
+
+    // Escape means no key.
+    private async pickKey(current?: string): Promise<string> {
+        if (this.keys.length === 0) { return ''; }
+        return await vscode.window.showQuickPick(this.keys.map(k => k.name), {
+            title: 'Login key',
+            placeHolder: current ? `Currently ${current}; Escape to unassign` : 'Choose a stored key, or Escape for none',
+        }) ?? '';
+    }
+
+    // One failure path for every action: show what cs-control said, then re-render off its state.
+    private async attempt(action: () => Promise<void>): Promise<void> {
+        let error = '';
+        try { await action(); }
+        catch (err) { error = errMsg(err); }
+        await this.pushState(error);
+    }
+}
+
+async function ask(title: string, placeHolder: string): Promise<string> {
+    return (await vscode.window.showInputBox({ title, placeHolder, ignoreFocusOut: true }))?.trim() ?? '';
 }
