@@ -154,7 +154,7 @@ export default class AWSClient {
 
             await this.client.send(new RunInstancesCommand({
                 ImageId: "ami-0001e312b82212f65", // Not sure how many options to show 
-                InstanceType: "t3.micro",
+                InstanceType: "t3.medium",
                 KeyName: keyName,
                 SecurityGroupIds: [securityGroupID],
                 MinCount: 1,
@@ -382,23 +382,23 @@ export default class AWSClient {
 
         const config = {
             client: this.client,
-            input: {
-                Filters: [
-                    {
-                        Name: "tag:Environment",
-                        Values: ["CS-Bridge"]
-                    },
-                    // filter out terminated status
-                    {
-                        Name: "instance-state-name",
-                        Values: ["pending", "running", "shutting-down", "stopping", "stopped"]
-                    }
-                ]
-            }
+            pageSize: 15,
         };
+        const params = {
+            Filters: [
+                {
+                    Name: "tag:Environment",
+                    Values: ["CS-Bridge"]
+                },
+                {
+                    Name: "instance-state-name",
+                    Values: ["pending", "running", "shutting-down", "stopping", "stopped"]
+                }
+            ]
+        }
         console.log("Fetching instances ....")
         try {
-            const paginator = paginateDescribeInstances(config, {});
+            const paginator = paginateDescribeInstances(config, params);
 
             for await (const page of paginator) {
                 if (page.Reservations) {
@@ -422,6 +422,7 @@ export default class AWSClient {
 
             this.instances = instances
             console.log("Cloud SSH Hosts: ", this.hosts)
+            console.log("Cloud Instances: ", this.instances)
         } catch (error) {
             console.error("Get instances failed:", error);
         }
