@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
-import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError, InstanceActions } from './models';
+import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError, InstanceActions, CloudFormOptions, CloudFormState } from './models';
 import { WebviewProvider, confirmModal } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, hasSessionKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
@@ -41,6 +41,14 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private awsClient = new AWSClient()
     private cloudPollInterval: NodeJS.Timeout | null = null;
     private pollIntervalTime = 10000
+    private cloudForm: CloudFormState= null
+    private cloudFormOptions: Record<string, CloudFormOptions> = {
+        "aws": {
+            image: [],
+            type: [],
+            region: []
+        }
+    }
 
     // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
@@ -104,6 +112,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         dismissPreview: () => { this.previewSession = null; },
         dismissAlert: () => { this.alert = null; },
         dismissEditSession: () => { this.editingId = null; },
+        dismissCloudForm: () => { this.cloudForm = null; },
     };
 
     private readonly handlers: Record<string, (data: WebviewMessage, id: string) => void> = {
@@ -304,7 +313,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         }
 
         if (platform.label === "Cloudbank") {
-            await this.awsClient.launchEC2Instance()
+            this.cloudForm = "loading"
+            await this.pushState()
+            this.cloudFormOptions.aws = await this.awsClient.getOptions()
+            this.cloudForm = "ready"
+            await this.pushState()
+            // await this.awsClient.launchEC2Instance()
 
         }
 
@@ -397,7 +411,9 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 validating: this.validating,
                 alert: this.alert,
                 isCloud: this.awsClient.isReady(),
-                cloudSessions: this.awsClient.getInstances()
+                cloudSessions: this.awsClient.getInstances(),
+                cloudForm: this.cloudForm,
+                cloudFormOptions: this.cloudFormOptions.aws
             };
 
             view.webview.postMessage({ command: 'state', state });

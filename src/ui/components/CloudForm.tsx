@@ -1,44 +1,18 @@
 import { useState } from 'preact/hooks';
-import type { ComponentChildren } from 'preact';
-import { Stack, Text, Button, SingleSelect, Option } from '@/ui/components/base';
+import { Stack, Button } from '@/ui/components/base';
+import { Select } from '@/ui/components/HostForm'
 import { post } from '@/ui/platform/vscode';
+import { CloudFormOptions } from '@/models';
 
-export type CloudFormInitial = {
-    instanceType?: string;
-    osImage?: string;
-    region?: string
-    vendor: string
-};
 
-interface CloudOptions {
-    images: string[][],
-    instanceTypes: string[][],
-    vendors: string[][]
-    regions: string[][]
-}
 
-interface Props {
-    options: CloudOptions
-    validating?: boolean;
-}
 
-function Select({ label, value, onChange, options, children }: { label: string; value: string; onChange: (v: string) => void; options?: string[][]; children?: ComponentChildren }) {
-    return (
-        <Stack gap={2}>
-            <Text weight={600} size={12}>{label}</Text>
-            <SingleSelect value={value} style={{ width: '100%', maxWidth: 'none' }} onChange={onChange}>
-                {options ? options.map(([v, l]) => <Option key={v} value={v}>{l}</Option>) : children}
-            </SingleSelect>
-        </Stack>
-    );
-}
+export function CloudForm({ options, vendors }: { options: CloudFormOptions, vendors: string[][] }) {
 
-function CloudFormFields({ options, validating }: { options: CloudOptions, validating?: boolean }) {
-
-    const [osImageName, setOsImageName] = useState("");
-    const [instanceType, setInstanceType] = useState("");
-    const [region, setRegion] = useState("");
-    const [vendor, setVendor] = useState("");
+    const [osImageName, setOsImageName] = useState("AMI");
+    const [instanceType, setInstanceType] = useState("t3.medium");
+    const [region, setRegion] = useState("us-east-1");
+    const [vendor, setVendor] = useState("AWS");
 
 
     const submit = () => {
@@ -49,18 +23,15 @@ function CloudFormFields({ options, validating }: { options: CloudOptions, valid
 
     return (
         <Stack gap={4}>
-
-            <Select label="Instance Type" value={instanceType} onChange={setInstanceType} options={options.instanceTypes} />
-            <Select label="OS Image" value={osImageName} onChange={setOsImageName} options={options.images} />
-            <Select label="Region" value={region} onChange={setRegion} options={options.regions} />
-            <Select label="vendor" value={vendor} onChange={setVendor} options={options.vendors} />
-            <Button onClick={submit} disabled={validating}>
+            <Select label="vendor" value={vendor} onChange={setVendor} options={vendors} />
+            <Select label="Instance Type" value={instanceType} onChange={setInstanceType} options={options.type} />
+            <Select label="OS Image" value={osImageName} onChange={setOsImageName} options={options.image} />
+            <Select label="Region" value={region} onChange={setRegion} options={options.region} />
+            <Button onClick={submit} disabled={!vendor && !instanceType && !osImageName && !region}>
+                Submit
             </Button>
         </Stack>
     );
 }
 
-export function CloudForm({ options, validating }: Props) {
-    <CloudFormFields options={options} validating={validating} />;
-}
 

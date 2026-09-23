@@ -29,7 +29,7 @@ const WALL_OPTIONS: [string, string][] = [
     ['04:00:00', '4 hours'], ['08:00:00', '8 hours'], ['12:00:00', '12 hours'], ['24:00:00', '24 hours'],
 ];
 
-function Select({ label, value, onChange, options, children }: { label: string; value: string; onChange: (v: string) => void; options?: string[][]; children?: ComponentChildren }) {
+export function Select({ label, value, onChange, options, children }: { label: string; value: string; onChange: (v: string) => void; options?: string[][]; children?: ComponentChildren }) {
     return (
         <Stack gap={2}>
             <Text weight={600} size={12}>{label}</Text>
