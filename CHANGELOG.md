@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-09-24
+
+Requires linkspan 0.21.0.
+
 ### Fixed
 
 - Sessions launch with Linkspan 0.21.0 and newer, which replaced the tunnel flags and dropped the socket listener.
@@ -13,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Removed
 
 - Editing a session and the terminal shortcut in the SSH Hosts view.
+- The launch and stop progress notifications, the *Action needed* status for SSH prompts, and the offer to start a
+  session after adding a host.
 
 ## [0.1.7] - 2026-09-14
 
@@ -237,7 +243,8 @@ Initial release of **CS Bridge** — remote HPC development from VS Code. Publis
 - Status bar countdown and progress toasts for active sessions
 - esbuild-based build producing a single bundled, minified `out/extension.js` (`tsc` used for type-checking only)
 
-[Unreleased]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.7...HEAD
+[Unreleased]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.8...HEAD
+[0.1.8]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.7...0.1.8
 [0.1.7]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.6...0.1.7
 [0.1.6]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.5...0.1.6
 [0.1.5]: https://github.com/cyber-shuttle/CS-Bridge/compare/0.1.4...0.1.5
