@@ -42,9 +42,7 @@ function CloudConfigCard({ state, icon, muted, onDismiss }: { state: SessionsSta
                     <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
                 </Row>
             </Row>
-
-            {formState === "loading" && <Row gap={6} pad="8px"><Spinner size={16} />Fetching Form Options</Row>}
-            {formState !== "loading" && <CloudForm options={options} vendors={[["AWS", "AWS"]]} />}
+            <CloudForm formState={formState} options={options} vendors={[["AWS", "AWS"]]} />
         </Card>
     );
 }

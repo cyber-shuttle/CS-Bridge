@@ -191,14 +191,16 @@ export interface WebviewMessage {
     instanceIp?: string;
     instanceId?: string;
     instanceName?: string;
+    cloudLaunchParams?: CloudLaunchParams
 }
 
 export interface CloudInstanceInfo {
-    name: string | undefined
-    instanceID: string | undefined;
-    state: string | undefined;
-    instanceType: string | undefined;
-    publicIp: string | undefined;
+    name: string
+    instanceID: string;
+    state: string;
+    instanceType: string;
+    publicIp: string;
+    vendor: string
 }
 
 export interface CloudProviderState {
@@ -219,7 +221,14 @@ export enum InstanceActions {
     Remove,
 }
 
-export type CloudFormState =  "aws" | "gcp"| "azure" | "loading" | "ready" | null
+export type CloudFormState = "aws" | "loading" | "ready" | null
+export type CloudLaunchParams = {
+    image: string
+    type: string
+    region: string
+    vendor: string
+
+}
 export interface CloudFormOptions {
     image: string[][]
     type: string[][]

@@ -14,6 +14,7 @@ import {
     TerminateInstancesCommand,
     DescribeRegionsCommand,
     paginateDescribeInstanceTypes,
+    _InstanceType,
 } from "@aws-sdk/client-ec2";
 
 import { CloudFormOptions, CloudInstanceInfo, InstanceActions, SshHost } from "../models";
@@ -116,7 +117,7 @@ export default class AWSClient {
         this.clients[region] = client
     }
     // Entire workflow for launching EC2 instance
-    public async launchEC2Instance(): Promise<void> {
+    public async launchEC2Instance(image: string, type: string): Promise<void> {
 
         vscode.window.withProgress(
             {
@@ -145,8 +146,8 @@ export default class AWSClient {
                         await sleep(2500)
                     }
                     progress.report({ message: "Creating Instnace..." });
-                    this.createInstance(this.KEY_NAME, securityGroupID)
-                    sleep(3000)
+                    this.createInstance(image, type, this.KEY_NAME, securityGroupID);
+                    sleep(3000);
                     progress.report({ message: "Instance is running." });
                 } catch (error: any) {
                     vscode.window.showErrorMessage("Failed to launch instance");
@@ -157,7 +158,7 @@ export default class AWSClient {
 
     // Create EC2 Instance
     // add options for image, and instance type later
-    protected async createInstance(keyName: string, securityGroupID: string): Promise<void> {
+    protected async createInstance(imageID: string, instanceType: string, keyName: string, securityGroupID: string): Promise<void> {
         if (this.defaultClient === null) {
             throw new Error("EC2 Client is not initialized")
         }
@@ -165,8 +166,8 @@ export default class AWSClient {
         try {
 
             await this.defaultClient.send(new RunInstancesCommand({
-                ImageId: "ami-0001e312b82212f65", // Not sure how many options to show 
-                InstanceType: "t3.medium",
+                ImageId: imageID,
+                InstanceType: instanceType as _InstanceType,
                 KeyName: keyName,
                 SecurityGroupIds: [securityGroupID],
                 MinCount: 1,
@@ -418,11 +419,12 @@ export default class AWSClient {
                         if (reservation.Instances) {
                             reservation.Instances.map(instance => {
                                 const inst: CloudInstanceInfo = {
-                                    instanceID: instance.InstanceId,
-                                    instanceType: instance.InstanceType,
-                                    name: instance.Tags?.find(value => value.Key == "Name")?.Value,
-                                    state: instance.State?.Name,
-                                    publicIp: instance.PublicIpAddress
+                                    instanceID: instance.InstanceId ?? "",
+                                    instanceType: instance.InstanceType ?? "",
+                                    name: instance.Tags?.find(value => value.Key == "Name")?.Value ?? "",
+                                    state: instance.State?.Name ?? "",
+                                    publicIp: instance.PublicIpAddress ?? "",
+                                    vendor: "aws"
                                 }
                                 instances.push(inst)
 
@@ -536,8 +538,7 @@ export default class AWSClient {
     }
 
     public async getOptions(): Promise<CloudFormOptions> {
-        await this.getEnabledRegions()
-        await this.getInstanceTypes()
+        await Promise.allSettled([this.getEnabledRegions(), this.getInstanceTypes()])
         return {
             image: this.images,
             type: this.types.map(type => [type, type]),

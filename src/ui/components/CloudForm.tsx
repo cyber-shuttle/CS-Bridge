@@ -1,13 +1,17 @@
 import { useState } from 'preact/hooks';
-import { Stack, Button } from '@/ui/components/base';
+import { Stack, Button, Row, Spinner } from '@/ui/components/base';
 import { Select } from '@/ui/components/HostForm'
 import { post } from '@/ui/platform/vscode';
-import { CloudFormOptions } from '@/models';
+import { CloudFormState, CloudFormOptions } from '@/models';
 
 
 
 
-export function CloudForm({ options, vendors }: { options: CloudFormOptions, vendors: string[][] }) {
+export function CloudForm({ formState, options, vendors }: { formState: CloudFormState, options: CloudFormOptions, vendors: string[][] }) {
+
+    if (formState === "loading") {
+        return <Row gap={6} pad="8px"><Spinner size={16} />Loading Form Options</Row>
+    }
 
     const [osImageName, setOsImageName] = useState(options.image[0][0]);
     const [instanceType, setInstanceType] = useState("t3.medium");
@@ -17,7 +21,13 @@ export function CloudForm({ options, vendors }: { options: CloudFormOptions, ven
 
     const submit = () => {
         post({
-            command: "launchInstance"
+            command: "launchCloudInstance",
+            cloudLaunchParams: {
+                image: osImageName,
+                type: instanceType,
+                region: region,
+                vendor: vendor
+            }
         });
     };
 
@@ -32,6 +42,9 @@ export function CloudForm({ options, vendors }: { options: CloudFormOptions, ven
             </Button>
         </Stack>
     );
+    // }
+
+
 }
 
 
