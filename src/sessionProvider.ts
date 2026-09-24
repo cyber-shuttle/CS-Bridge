@@ -170,7 +170,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         startRemoteForloudInstance: async (_data) => {
             if (_data.instanceId && _data.instanceName && _data.instanceIp) {
 
-                console.log("Launching Remote Session")
+                this.logger.info("Launching Remote Session")
                 await this.awsClient.openRemoteSession(_data.instanceId, _data.instanceName, _data.instanceIp)
             }
         },

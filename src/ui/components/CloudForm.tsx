@@ -9,7 +9,7 @@ import { CloudFormOptions } from '@/models';
 
 export function CloudForm({ options, vendors }: { options: CloudFormOptions, vendors: string[][] }) {
 
-    const [osImageName, setOsImageName] = useState("AMI");
+    const [osImageName, setOsImageName] = useState(options.image[0][0]);
     const [instanceType, setInstanceType] = useState("t3.medium");
     const [region, setRegion] = useState("us-east-1");
     const [vendor, setVendor] = useState("AWS");

@@ -22,10 +22,13 @@ import { writeFileSync, unlinkSync, existsSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { confirmModal } from '@/webviewProvider';
+import { Logger } from '@/logger';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const CS_SSH_CONFIG_PATH = path.join(homedir(), '.cybershuttle', 'ssh_config');
 export default class AWSClient {
+
+    protected readonly logger = Logger.getInstance();
     protected readonly KEY_NAME = "cs-aws-generated-key";
     private defaultClient: EC2Client | null = null;
     private readonly securityGroupName = "CS-Brige VSCode Ext SSH Access"
@@ -179,7 +182,7 @@ export default class AWSClient {
                 ]
             }));
         } catch (errors) {
-            console.log("Failed to create instance: ", errors)
+            this.logger.info("Failed to create instance: ", errors)
         }
 
     }
@@ -187,7 +190,7 @@ export default class AWSClient {
     private async generateSSHKeyPair(): Promise<void> {
         try {
             if (!existsSync(this.PRIVATE_KEY_PATH)) {
-                console.log(`Creating key pair: ${this.KEY_NAME}...`);
+                this.logger.info(`Creating key pair: ${this.KEY_NAME}...`);
                 const keyPairResponse = await this.defaultClient?.send(
                     new CreateKeyPairCommand({
                         KeyName: this.KEY_NAME,
@@ -198,20 +201,20 @@ export default class AWSClient {
                 const privateKey = keyPairResponse?.KeyMaterial;
                 if (privateKey !== undefined) {
                     writeFileSync(this.PRIVATE_KEY_PATH, privateKey, { mode: 0o600 });
-                    console.log(`Private key safely written to ${this.PRIVATE_KEY_PATH}`);
+                    this.logger.info(`Private key safely written to ${this.PRIVATE_KEY_PATH}`);
                 } else {
-                    console.log("Error: Response from key pair generation is undefined");
+                    this.logger.info("Error: Response from key pair generation is undefined");
                 }
             } else {
-                console.log(
+                this.logger.info(
                     "Dectecting Keys Exists. ...Skipping Key Pair generation. ",
                 );
             }
         } catch (error) {
             if (error instanceof Error) {
-                console.error(`Error (${error.name}):`, error.message,);
+                this.logger.error(`Error (${error.name}):`, error.message,);
             } else {
-                console.error("An unknown error occurred:", error);
+                this.logger.error("An unknown error occurred:", error);
             }
         }
     }
@@ -221,16 +224,16 @@ export default class AWSClient {
             throw new Error("EC2 Client is not initialized")
         }
         try {
-            console.log("Removing Key Pair from AWS");
+            this.logger.info("Removing Key Pair from AWS");
             const command = new DeleteKeyPairCommand({ KeyName: keyName });
             await this.defaultClient?.send(command);
-            console.log("Removing local copy of key");
+            this.logger.info("Removing local copy of key");
             unlinkSync(this.PRIVATE_KEY_PATH);
         } catch (error) {
             if (error instanceof EC2ServiceException) {
-                console.error(`AWS Error [${error.name}]: ${error.message}`);
+                this.logger.error(`AWS Error [${error.name}]: ${error.message}`);
             } else {
-                console.error(`Unhandled Error ${error}`);
+                this.logger.error(`Unhandled Error ${error}`);
             }
         }
     }
@@ -255,15 +258,15 @@ export default class AWSClient {
 
             const securityGroups = data.SecurityGroups;
             if (this.securityGroupName.length === 0) {
-                console.log("Did not find exisitng group")
+                this.logger.info("Did not find exisitng group")
                 return ""
             } else {
-                console.log("Found Exisitng Sec Group")
+                this.logger.info("Found Exisitng Sec Group")
                 return securityGroups?.at(0)?.GroupName ?? ""
             }
 
         } catch (error) {
-            console.error("Failed to get Security Groups:", error);
+            this.logger.error("Failed to get Security Groups:", error);
         }
         return ""
 
@@ -281,7 +284,7 @@ export default class AWSClient {
 
             const createResponse = await this.defaultClient.send(createCommand);
             const groupID = createResponse.GroupId;
-            console.log(`Created Security Group with ID: ${groupID}`);
+            this.logger.info(`Created Security Group with ID: ${groupID}`);
 
             const sshGroupCommand = new AuthorizeSecurityGroupIngressCommand({
                 GroupId: groupID,
@@ -301,12 +304,12 @@ export default class AWSClient {
             });
 
             await this.defaultClient.send(sshGroupCommand);
-            console.log("Inbound SSH rule attached to the new group.");
+            this.logger.info("Inbound SSH rule attached to the new group.");
             return groupID ?? ""
 
 
         } catch (error) {
-            console.error("Creating SSH Sec Group failed:", error);
+            this.logger.error("Creating SSH Sec Group failed:", error);
             return ""
         }
     }
@@ -353,7 +356,7 @@ export default class AWSClient {
                     title = "Remove Instance"
                     break
             }
-            console.log(msg);
+            this.logger.info(msg);
             this.toast(title, msg, false)
 
             if (action === InstanceActions.Remove) {
@@ -362,17 +365,17 @@ export default class AWSClient {
 
         } catch (error) {
             const errMsg = `Error ${title}: ${error}`
-            console.error(errMsg);
+            this.logger.error(errMsg);
             vscode.window.showErrorMessage(errMsg)
         }
     }
 
     public async removeInstance(instanceID: string, instanceName: string): Promise<void> {
-        console.log("Start Removing Instance")
+        this.logger.info("Start Removing Instance")
         const confirmed = await confirmModal('Remove Instnace?', 'Remove',
             'This stops and terminates the instance')
         if (!confirmed) {
-            console.log("Cancel remove")
+            this.logger.info("Cancel remove")
             return;
         }
         await this.doInstanceActions(InstanceActions.Remove, instanceID, instanceName)
@@ -405,7 +408,7 @@ export default class AWSClient {
                 }
             ]
         }
-        console.log("Fetching instances ....")
+        this.logger.info("Fetching instances ....")
         try {
             const paginator = paginateDescribeInstances(config, params);
 
@@ -430,10 +433,10 @@ export default class AWSClient {
             }
 
             this.instances = instances
-            console.log("Cloud SSH Hosts: ", this.hosts)
-            console.log("Cloud Instances: ", this.instances)
+            this.logger.info("Cloud SSH Hosts: ", this.hosts)
+            this.logger.info("Cloud Instances: ", this.instances)
         } catch (error) {
-            console.error("Get instances failed:", error);
+            this.logger.error("Get instances failed:", error);
         }
 
     }
@@ -446,9 +449,9 @@ export default class AWSClient {
 
     public async openRemoteSession(id: string, name: string, ip: string): Promise<void> {
         this.hosts = SshManager.getInstance().getCSHosts()
-        console.log("Checking SSH Config")
+        this.logger.info("Checking SSH Config")
         if (this.hosts.find(host => host.hostname === ip)) {
-            console.log("Found existing entry")
+            this.logger.info("Found existing entry")
         } else {
             await addSshConfigEntryAWS(id, name, ip, 22, this.PRIVATE_KEY_PATH)
             this.hosts = SshManager.getInstance().getCSHosts()
@@ -464,7 +467,7 @@ export default class AWSClient {
         });
 
 
-        console.log("Openning Remote Session")
+        this.logger.info("Openning Remote Session")
         await vscode.commands.executeCommand('vscode.openFolder', uri, {
             forceNewWindow: true
         });
@@ -472,7 +475,7 @@ export default class AWSClient {
     }
 
     protected async removeSshConfigEntryAWS(id: string, name: string): Promise<void> {
-        console.log(`Remove SSH Config for ${name} `)
+        this.logger.info(`Remove SSH Config for ${name} `)
         await removeSshConfigEntryAWS(id, name)
 
     }
@@ -495,7 +498,7 @@ export default class AWSClient {
 
 
         } catch (error) {
-            console.error("Error fetching regions:", error);
+            this.logger.error("Error fetching regions:", error);
         }
     }
 
@@ -528,7 +531,7 @@ export default class AWSClient {
             this.types.sort()
 
         } catch (error) {
-            console.error("Error executing filtered instance scan:", error);
+            this.logger.error("Error executing filtered instance scan:", error);
         }
     }
 
