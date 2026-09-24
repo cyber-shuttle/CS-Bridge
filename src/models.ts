@@ -21,10 +21,10 @@ interface Session {
     name: string;
     cluster: string;
     status:
-        | 'not_started' | 'submitting' | 'queued' | 'preparing'
-        | 'ready_to_connect' | 'connecting' | 'connected'
-        | 'stopping' | 'stopped' | 'failed'
-        | 'unreachable' | 'awaiting_input';
+    | 'not_started' | 'submitting' | 'queued' | 'preparing'
+    | 'ready_to_connect' | 'connecting' | 'connected'
+    | 'stopping' | 'stopped' | 'failed'
+    | 'unreachable' | 'awaiting_input';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
@@ -58,7 +58,7 @@ export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined)
 // letting the caller treat it as a deliberate interruption rather than a failure.
 export type PromptObserver = (event: 'opened' | 'answered') => void;
 
-export class PromptCancelledError extends Error {}
+export class PromptCancelledError extends Error { }
 
 export interface SshHost {
     name: string;
@@ -165,6 +165,10 @@ export interface SessionsState {
     previewSession: SlurmSession | null;
     validating: boolean;
     alert: { title: string; message: string } | null;
+    isCloud: boolean
+    cloudSessions: CloudInstanceInfo[]
+    cloudForm: CloudFormState
+    cloudFormOptions: CloudFormOptions
 }
 
 export interface HostsState {
@@ -184,4 +188,41 @@ export interface WebviewMessage {
     memory?: string;
     allocation?: string;
     jobId?: string;
+    instanceIp?: string;
+    instanceId?: string;
+    instanceName?: string;
 }
+
+export interface CloudInstanceInfo {
+    name: string | undefined
+    instanceID: string | undefined;
+    state: string | undefined;
+    instanceType: string | undefined;
+    publicIp: string | undefined;
+}
+
+export interface CloudProviderState {
+    name: string;
+    secretKey: string
+    accessKey: string
+    sessionToken: string
+    instances: CloudInstanceInfo[]
+    region: string
+    clientInit: boolean
+    sshHosts: SshHost[];
+
+}
+
+export enum InstanceActions {
+    Start,
+    Stop,
+    Remove,
+}
+
+export type CloudFormState =  "aws" | "gcp"| "azure" | "loading" | "ready" | null
+export interface CloudFormOptions {
+    image: string[][]
+    type: string[][]
+    region: string[][]
+}
+

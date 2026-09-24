@@ -5,7 +5,9 @@ import { post, useWebviewState } from '@/ui/platform/vscode';
 import { SessionCard, NowContext } from '@/ui/components/SessionCard';
 import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { parseGpuClass } from '@/ui/logic/cluster';
-import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
+import { Row, Stack, Text, Card, Icon, ActionIcon, Button, Spinner } from '@/ui/components/base';
+import { CloudSessionCard } from '../components/CloudSessionCard';
+import { CloudForm } from '../components/CloudForm';
 
 function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId, validating }: {
     icon: string; muted?: boolean; host: string; runtime: HostRuntime | undefined;
@@ -22,6 +24,27 @@ function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId, va
                 </Row>
             </Row>
             <HostForm host={host} runtime={runtime} initial={initial} saveId={saveId} validating={validating} />
+        </Card>
+    );
+}
+
+function CloudConfigCard({ state, icon, muted, onDismiss }: { state: SessionsState, icon: string, muted?: boolean, onDismiss: () => void }) {
+
+    const options = state.cloudFormOptions
+    const formState = state.cloudForm
+
+    return (
+        <Card>
+            <Row gap={6}>
+                <Icon name={icon} style={muted ? { color: 'var(--vscode-descriptionForeground)' } : undefined} />
+                <Text weight={600}>Instance Options</Text>
+                <Row gap={4} style={{ marginLeft: 'auto' }}>
+                    <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
+                </Row>
+            </Row>
+
+            {formState === "loading" && <Row gap={6} pad="8px"><Spinner size={16} />Fetching Form Options</Row>}
+            {formState !== "loading" && <CloudForm options={options} vendors={[["AWS", "AWS"]]} />}
         </Card>
     );
 }
@@ -88,10 +111,12 @@ function SessionsView({ state }: { state: SessionsState }) {
             {state.sessions.map(s => s.id === state.editingId
                 ? <ConfigCard key={s.id} icon="edit" host={s.cluster} runtime={state.hostRuntime[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} validating={state.validating} />
                 : <SessionCard key={s.id} session={s} />)}
-            {!state.sessions.length && !state.draftHost
+            {!state.sessions.length && !state.draftHost && !state.cloudSessions.length && !state.cloudForm
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
                 : null}
             <ScriptPreviewOverlay state={state} />
+            {state.cloudForm && <CloudConfigCard state={state} icon="circle-outline" muted onDismiss={() => post({ command: 'dismissCloudForm' })} />}
+            {state.cloudSessions.map(s => <CloudSessionCard key={s.instanceID} instance={s} />)}
             {state.alert ? <AlertOverlay alert={state.alert} /> : null}
         </>
     );
@@ -104,6 +129,12 @@ function Root() {
         const id = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(id);
     }, []);
+
+    useEffect(() => {
+        if (state?.isCloud) {
+            post({ command: 'pollCloudStatus' });
+        }
+    }, [state?.isCloud]);
     return state
         ? <NowContext.Provider value={now}><Stack pad="8px"><SessionsView state={state} /></Stack></NowContext.Provider>
         : null;

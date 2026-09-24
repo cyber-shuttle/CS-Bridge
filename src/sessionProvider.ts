@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
-import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
+import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError, InstanceActions, CloudFormOptions, CloudFormState } from './models';
 import { WebviewProvider, confirmModal } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, hasSessionKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
@@ -13,6 +13,7 @@ import { stopSession, SessionMonitor, launchSession, prepareLaunch } from './mod
 import { validateSlurmConfig } from './modules/slurmLaunch';
 import { slurmAccount } from './modules/slurmParse';
 import { isTerminal, isCloseable, isStoppable, isReattachable, isRelayLive, isWallTimeExpired } from './modules/sessionMachine';
+import AWSClient from "./modules/aws"
 
 // forceNew=false relies on VS Code deduping by workspace identity: it focuses the window already holding this URI.
 function openSessionWindow(sessionId: string, forceNew: boolean): void {
@@ -37,6 +38,17 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     private readonly opening = new Set<string>();
     private readonly monitor = new SessionMonitor();
     private sharedReady = false;
+    private awsClient = new AWSClient()
+    private cloudPollInterval: NodeJS.Timeout | null = null;
+    private pollIntervalTime = 10000
+    private cloudForm: CloudFormState= null
+    private cloudFormOptions: Record<string, CloudFormOptions> = {
+        "aws": {
+            image: [],
+            type: [],
+            region: []
+        }
+    }
 
     // Set in a remote window (session-scoped, observe-only); undefined in the sidebar.
     constructor(extensionUri: vscode.Uri, private readonly remoteSessionId?: string) {
@@ -88,6 +100,10 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         this.monitor.dispose(); // window close: clear every per-session poll interval so none leak past teardown
         this.shared.forEach(d => d.dispose());
         void disposeAllTunnelClients(); // window close: free local ports (remote stays, reaped by linkspan)
+        if (this.cloudPollInterval) {
+            clearInterval(this.cloudPollInterval)
+            this.cloudPollInterval = null
+        }
     }
 
     // A dismissal only clears one field, so each is named by the field it clears.
@@ -96,6 +112,7 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         dismissPreview: () => { this.previewSession = null; },
         dismissAlert: () => { this.alert = null; },
         dismissEditSession: () => { this.editingId = null; },
+        dismissCloudForm: () => { this.cloudForm = null; },
     };
 
     private readonly handlers: Record<string, (data: WebviewMessage, id: string) => void> = {
@@ -127,6 +144,37 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         },
         connectTunnel: (_data, id) => void this.connectSession(id),
         removeSession: (_data, id) => this.confirmAndRemoveSession(id),
+        pollCloudStatus: (_data) => {
+            this.cloudPollInterval = setInterval(() => {
+                this.awsClient.pollInstances()
+                this.pushState()
+            }, this.pollIntervalTime);
+        },
+        launchCloudInstance: (_data) => this.awsClient.launchEC2Instance(),
+        stopCloudInstance: (_data) => {
+            if (_data.instanceId) {
+                this.awsClient.doInstanceActions(InstanceActions.Stop, _data.instanceId, "")
+            }
+        },
+        restartCloudInstance: (_data) => {
+            if (_data.instanceId) {
+                this.awsClient.doInstanceActions(InstanceActions.Start, _data.instanceId, "")
+            }
+        },
+        removeCloudInstance: (_data,) => {
+            if (_data.instanceId && _data.instanceName) {
+                this.awsClient.removeInstance(_data.instanceId, _data.instanceName)
+            }
+        },
+        sshIntoCloudInstance: (_data) => this.awsClient.openTerminal(_data.instanceIp ?? ""),
+        startRemoteForloudInstance: async (_data) => {
+            if (_data.instanceId && _data.instanceName && _data.instanceIp) {
+
+                this.logger.info("Launching Remote Session")
+                await this.awsClient.openRemoteSession(_data.instanceId, _data.instanceName, _data.instanceIp)
+            }
+        },
+
     };
 
     protected handleMessage(data: WebviewMessage) {
@@ -219,18 +267,64 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
     }
 
     public async startNewSession(): Promise<void> {
-        const hosts = SshManager.getInstance().getMergedHosts();
-        if (hosts.length === 0) {
-            vscode.window.showInformationMessage('No SSH hosts configured yet — add one from the SSH Hosts view first.');
-            return;
+        let options = [{
+            label: "Cloudbank",
+            description: "Launch compute resouce using Cloudbank Allocations",
+        },
+        {
+            // This option will be removed after Custos integration is donE
+            label: "Add Cloudbank Token",
+            description: "Add Cloud Provider Tokens",
+        },
+        {
+            label: "HPC",
+            description: "Launch compute resouce using HPC Allocations"
         }
-        const pick = await vscode.window.showQuickPick(
-            hosts.map(h => ({ label: h.name, description: h.hostname ? `${h.user ? h.user + '@' : ''}${h.hostname}` : undefined })),
-            { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
+        ]
+
+        if (!this.awsClient.isReady()) {
+            options = options.filter(op => op.label !== "Cloudbank")
+        }
+
+        const platform = await vscode.window.showQuickPick(
+            options
         );
-        if (!pick) { return; }
-        this.startSessionDraft(pick.label);
+
+        if (!platform) { return; }
+
+        if (platform.label === "HPC") {
+
+            const hosts = SshManager.getInstance().getMergedHosts();
+            if (hosts.length === 0) {
+                vscode.window.showInformationMessage('No SSH hosts configured yet — add one from the SSH Hosts view first.');
+                return;
+            }
+            const pick = await vscode.window.showQuickPick(
+                hosts.map(h => ({ label: h.name, description: h.hostname ? `${h.user ? h.user + '@' : ''}${h.hostname}` : undefined })),
+                { title: 'New session', placeHolder: 'Select an SSH host to configure a session on' },
+            );
+            if (!pick) { return; }
+            this.startSessionDraft(pick.label);
+        }
+
+        if (platform.label === "Add Cloudbank Token") {
+            await this.awsClient.initEC2Client("us-east-1")
+            this.pushState()
+        }
+
+        if (platform.label === "Cloudbank") {
+            this.cloudForm = "loading"
+            await this.pushState()
+            this.cloudFormOptions.aws = await this.awsClient.getOptions()
+            this.cloudForm = "ready"
+            await this.pushState()
+            // await this.awsClient.launchEC2Instance()
+
+        }
+
     }
+
+
 
     public startSessionDraft(host: string): void {
         this.draftHost = host;
@@ -316,7 +410,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                 previewSession: this.previewSession,
                 validating: this.validating,
                 alert: this.alert,
+                isCloud: this.awsClient.isReady(),
+                cloudSessions: this.awsClient.getInstances(),
+                cloudForm: this.cloudForm,
+                cloudFormOptions: this.cloudFormOptions.aws
             };
+
             view.webview.postMessage({ command: 'state', state });
         }
         catch (error) {
