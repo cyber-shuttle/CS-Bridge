@@ -51,12 +51,10 @@ test('keepsInstalledLinkspan keeps only a real version that is ahead of the rele
     assert.equal(keepsInstalledLinkspan('0.15.12', ''), true); // no answer about the latest keeps what works
 });
 
-test('linkspanIsUpToDate passes the installed and latest versions the right way round', async () => {
-    const ahead = runner([{ match: 'releases/latest', stdout: 'v1.2.3' }, { match: '--version', stdout: '1.2.4' }]);
-    assert.equal(await linkspanIsUpToDate(session(), ahead, noopLog), true);
-
-    const stale = runner([{ match: 'releases/latest', stdout: 'v1.2.4' }, { match: '--version', stdout: '1.2.3' }]);
-    assert.equal(await linkspanIsUpToDate(session(), stale, noopLog), false);
+test('linkspanIsUpToDate keeps any installed Linkspan at or ahead of 0.21.0', async () => {
+    for (const [installed, kept] of [['0.21.0', true], ['0.22.3', true], ['0.20.9', false], ['', false]] as const) {
+        assert.equal(await linkspanIsUpToDate(session(), runner([{ match: '--version', stdout: installed }]), noopLog), kept, installed);
+    }
 });
 
 test('installLinkspan normalizes aarch64 and throws on a failed install', async () => {

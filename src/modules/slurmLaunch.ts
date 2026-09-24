@@ -31,6 +31,7 @@ export async function checkSlurmAvailability(session: SlurmSession, run: RemoteR
 // once that release ships and never ties another build. Anything else is not a version. cs-control matches this.
 const INSTALLED = /^(\d+)\.(\d+)\.(\d+)(\.[0-9a-f]{7,40})?$/;
 const RELEASED = /^(\d+)\.(\d+)\.(\d+)$/;
+const MINIMUM = '0.21.0';
 
 export function keepsInstalledLinkspan(local: string, latest: string): boolean {
     const here = INSTALLED.exec(local);
@@ -45,7 +46,6 @@ export function keepsInstalledLinkspan(local: string, latest: string): boolean {
 
 // A version-check failure returns false (→ reinstall) rather than throwing, so it never fails the launch.
 export async function linkspanIsUpToDate(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<boolean> {
-    const remoteVersionResult = await run.runRemoteCommand(session.cluster, `curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cyber-shuttle/linkspan/releases/latest 2>/dev/null | sed 's#.*/##'`);
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 
     if (localVersionResult.code !== 0) {
@@ -54,14 +54,11 @@ export async function linkspanIsUpToDate(session: SlurmSession, run: RemoteRunne
     }
 
     const localVersion = localVersionResult.stdout.trim().replace(/^v/, '');
-    // A failed lookup is no answer about the latest release, not proof there is none: keep what is installed.
-    const remoteVersion = (remoteVersionResult.code === 0 ? remoteVersionResult.stdout.trim() : '').replace(/^v/, '');
-
-    if (keepsInstalledLinkspan(localVersion, remoteVersion)) {
-        log.info(`Linkspan ${localVersion} on cluster ${session.cluster} is at or ahead of the latest release (${remoteVersion || 'unknown'}); keeping it`);
+    if (keepsInstalledLinkspan(localVersion, MINIMUM)) {
+        log.info(`Linkspan ${localVersion} on cluster ${session.cluster} is at or ahead of ${MINIMUM}; keeping it`);
         return true;
     }
-    log.info(`Linkspan is not installed or outdated on cluster ${session.cluster}. Local version: ${localVersion}, Latest version: ${remoteVersion}`);
+    log.info(`Linkspan is not installed or older than ${MINIMUM} on cluster ${session.cluster}. Local version: ${localVersion}`);
     return false;
 }
 

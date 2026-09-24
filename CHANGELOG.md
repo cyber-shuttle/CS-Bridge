@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Sessions launch with Linkspan 0.21.0 and newer, which replaced the tunnel flags and dropped the socket listener.
+
 ### Removed
 
 - Editing a session and the terminal shortcut in the SSH Hosts view.

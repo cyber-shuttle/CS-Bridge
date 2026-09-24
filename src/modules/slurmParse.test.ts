@@ -67,7 +67,7 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     assert.match(script, /^#SBATCH --partition=gpu$/m);
     assert.match(script, /^#SBATCH --account=acct1$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
-    assert.match(script, /--port 25000 --socket \/tmp\/csbridge-sess-1\.sock --tunnel-host-token 'tok' --tunnel-id 'tid' --tunnel-cluster 'use' -tunnel-enable/);
+    assert.match(script, /^LINKSPAN_TUNNEL_HOST_TOKEN='tok' "\$LINKSPAN_BIN" --port 25000 --tunnel-enable --tunnel-mode devtunnel --tunnel-devtunnel-args '--id tid --cluster use'$/m);
 });
 
 // The allocation every script test starts from; each names only what it varies.
@@ -146,7 +146,7 @@ test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launch
     assert.match(script, /^unset XDG_RUNTIME_DIR TMPDIR$/m);
 
     // linkspan must inherit the cleaned env, so the unset has to precede its invocation.
-    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('--tunnel-host-token'),
+    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('LINKSPAN_TUNNEL_HOST_TOKEN'),
         'unset precedes linkspan invocation');
 });
 

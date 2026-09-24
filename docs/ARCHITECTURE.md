@@ -37,7 +37,7 @@ Local VS Code                              Remote HPC cluster
    the tunnel id into the batch script (`slurmParse.ts`).
 3. **Slurm gate.** `checkSlurmAvailability` runs `sinfo` on the host; a non-zero exit aborts the launch. Slurm is
    mandatory (`slurmLaunch.ts`).
-4. **Agent install.** If `~/.cybershuttle/bin/linkspan` is missing or older than the latest release, `installLinkspan`
+4. **Agent install.** If `~/.cybershuttle/bin/linkspan` is missing or older than 0.21.0, `installLinkspan`
    fetches `linkspan_Linux_<arch>.tar.gz` from the linkspan GitHub release, stages it, and moves it into place mode
    `0700`. `uname -m` values `x86_64`, `aarch64` and `arm64` map to the two published assets
    (`linkspan_Linux_x86_64.tar.gz`, `linkspan_Linux_arm64.tar.gz`); anything else is refused by name.
