@@ -4,29 +4,44 @@ import { CloudInstanceInfo } from '@/models';
 import type { CSSProperties } from 'preact';
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
+
+
+// We will to integrate this to existing styling later
+const YELLOW = ["pending", "shutting-down", "stopping"]
+const ORANGE = ["stopped"]
+const GREEN = ["running"]
+
+
+const STATUS_ICON: Record<string, { name: string; spin?: boolean }> = {
+    "pending": { name: 'loading', spin: true },
+    "running": { name: 'circle-filled' },
+    "failed": { name: 'primitive-square' },
+    "stopped": { name: 'primitive-square' },
+    "stopping": { name: 'loading', spin: true },
+};
+function getStateColor(state: string) {
+    if (ORANGE.includes(state)) { return 'var(--vscode-charts-orange)'; }
+    if (YELLOW.includes(state)) { return 'var(--vscode-charts-yellow)'; }
+    if (GREEN.includes(state)) { return 'var(--vscode-charts-green)'; }
+    return 'var(--vscode-descriptionForeground)';
+}
 export function CloudSessionCard({ instance: instance }: { instance: CloudInstanceInfo }) {
-    // const { statusColor, canClose, actions } = statusDescriptor(session);
-    // const status = STATUS_ICON[session.status];
-    //
-    // const act = (a: SessionAction) => {
-    //     const command = COMMAND_FOR[a.kind];
-    //     if (command) { post({ command, sessionId: session.id }); 
-    // };
+    const stateColor = getStateColor(instance.state)
+    const stateInfo = STATUS_ICON[instance.state]
 
     return (
         <Card>
-            {/* Fixed height keeps the gap to the detail row constant whether or not the close button shows. */}
             <Row gap={6} style={{ minHeight: '20px' }}>
-                {/* <vscode-icon name={status.name} spin={status.spin || undefined} style={{ color: statusColor, flexShrink: 0, marginRight: '-3px' }}></vscode-icon> */}
+                <vscode-icon name={stateInfo.name} spin={stateInfo.spin || undefined} style={{ color: stateColor, flexShrink: 0, marginRight: '-3px' }}></vscode-icon>
                 <Text weight={600}>{instance.name}</Text>
                 <Chip label={instance.instanceType ?? ""} />
+                <Chip label={instance.vendor ?? ""} />
                 <Row gap={4} style={{ marginLeft: 'auto' }}>
                     {instance.state !== "terminated" && <ActionIcon name="close" ariaLabel="Remove Instance" size={14} onClick={() => post({ command: 'removeCloudInstance', instanceId: instance.instanceID, instanceName: instance.name })} />}
                 </Row>
             </Row>
             <div style={{ borderTop: '1px solid var(--vscode-panel-border)', marginBottom: '3px' }} />
             <Stack gap={6}>
-                {/* <ResourceStats session={session} /> */}
                 <Row gap={6}>
                     <Chip label={instance.publicIp ?? ""} />
                     <Row style={statusStyle}>{instance.state}</Row>

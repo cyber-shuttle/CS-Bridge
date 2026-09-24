@@ -5,7 +5,7 @@ import { post, useWebviewState } from '@/ui/platform/vscode';
 import { SessionCard, NowContext } from '@/ui/components/SessionCard';
 import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
 import { parseGpuClass } from '@/ui/logic/cluster';
-import { Row, Stack, Text, Card, Icon, ActionIcon, Button, Spinner } from '@/ui/components/base';
+import { Row, Stack, Text, Card, Icon, ActionIcon, Button} from '@/ui/components/base';
 import { CloudSessionCard } from '../components/CloudSessionCard';
 import { CloudForm } from '../components/CloudForm';
 
