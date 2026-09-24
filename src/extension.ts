@@ -49,7 +49,6 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('csbridge.refreshHosts', () => sshHostProvider.refreshSshHosts()),
         vscode.commands.registerCommand('csbridge.refreshStats', () => statsProvider.refresh()),
         vscode.commands.registerCommand('csbridge.clearRunHistory', () => statsProvider.clearHistory()),
-        vscode.commands.registerCommand('csbridge.newSessionOnHost', (host: string) => sessionProvider.startSessionDraft(host)),
     );
 
     void sessionProvider.reattachLiveSessions();

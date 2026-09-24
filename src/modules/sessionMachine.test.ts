@@ -9,10 +9,7 @@ test('status-category predicates classify each status correctly', () => {
 
     assert.equal(isCloseable('not_started'), true); // terminal + not_started
     assert.equal(isCloseable('stopped'), true);
-    assert.equal(isCloseable('awaiting_input'), false); // prompt still open
     assert.equal(isCloseable('queued'), false);
-
-    assert.equal(isStoppable('awaiting_input'), false); // waiting on the user, not running
 
     assert.equal(isStoppable('connected'), true); // can stop a live session
     assert.equal(isStoppable('queued'), true);
@@ -38,8 +35,8 @@ test('unreachableStatus downgrades only monitorable-offline statuses; never a re
     for (const s of ['ready_to_connect', 'connecting', 'connected'] as const) {
         assert.equal(unreachableStatus(s), undefined, `${s} must not downgrade`);
     }
-    // Terminal / not-yet-launched / launch-prompt states are left alone.
-    for (const s of ['stopped', 'failed', 'not_started', 'stopping', 'awaiting_input'] as const) {
+    // Terminal / not-yet-launched states are left alone.
+    for (const s of ['stopped', 'failed', 'not_started', 'stopping'] as const) {
         assert.equal(unreachableStatus(s), undefined, `${s} must not downgrade`);
     }
 });

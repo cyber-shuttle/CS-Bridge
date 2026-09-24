@@ -29,7 +29,7 @@ const COMMAND_FOR: Record<SessionAction['kind'], string | null> = {
 
 const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean }> = {
     // Bare-minimum glyph vocabulary — a dot at rest, a spinner in progress, a square for trouble;
-    // dotColor() carries the state distinction (grey idle · green live · yellow needs-action · orange error).
+    // dotColor() carries the state distinction (grey idle · green live · orange error).
     // A hollow circle is idle-but-not-live (not_started, ready_to_connect); a filled circle is live (connected).
     not_started: { name: 'circle-outline' },
     submitting: { name: 'loading', spin: true },
@@ -42,7 +42,6 @@ const STATUS_ICON: Record<ViewSession['status'], { name: string; spin?: boolean 
     failed: { name: 'primitive-square' },
     stopped: { name: 'primitive-square' },
     stopping: { name: 'loading', spin: true },
-    awaiting_input: { name: 'primitive-square' },
 };
 
 const statusStyle: CSSProperties = { color: 'var(--vscode-descriptionForeground)', fontSize: '12px', flexWrap: 'wrap', minWidth: 0 };
@@ -90,7 +89,6 @@ function StatusText({ session }: { session: ViewSession }) {
         case 'unreachable': return <Row style={statusStyle}><Text title={session.errorMessage || undefined}>{session.errorMessage ? `Unreachable: ${session.errorMessage}` : 'Cluster unreachable — retrying…'}</Text></Row>;
         case 'connecting': return <Row style={statusStyle}>Connecting…</Row>;
         case 'submitting': return <Row style={statusStyle}>Submitting…</Row>;
-        case 'awaiting_input': return <Row style={statusStyle}>Action needed — check the input box…</Row>;
         case 'queued':
             return <Row style={statusStyle}>Queued{session.submittedAt ? ` (${elapsedLabel(session.submittedAt, now)})` : ''}</Row>;
         case 'stopping': return <Row style={statusStyle}>Stopping…</Row>;
@@ -122,7 +120,6 @@ export function SessionCard({ session, remote }: Props) {
                 {!remote && canClose
                     ? (
                             <Row gap={4} style={{ marginLeft: 'auto' }}>
-                                <ActionIcon name="edit" ariaLabel="Edit session" size={14} onClick={() => post({ command: 'editSession', sessionId: session.id })} />
                                 <ActionIcon name="close" ariaLabel="Close session" size={14} onClick={() => post({ command: 'removeSession', sessionId: session.id })} />
                             </Row>
                         )

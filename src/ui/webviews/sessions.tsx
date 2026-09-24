@@ -1,15 +1,14 @@
 import { render } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import type { SessionsState, ViewSession, HostRuntime } from '@/models';
+import type { SessionsState, HostRuntime } from '@/models';
 import { post, useWebviewState } from '@/ui/platform/vscode';
 import { SessionCard, NowContext } from '@/ui/components/SessionCard';
-import { HostForm, type HostFormInitial } from '@/ui/components/HostForm';
-import { parseGpuClass } from '@/ui/logic/cluster';
+import { HostForm } from '@/ui/components/HostForm';
 import { Row, Stack, Text, Card, Icon, ActionIcon, Button } from '@/ui/components/base';
 
-function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId, validating }: {
+function ConfigCard({ icon, muted, host, runtime, onDismiss, validating }: {
     icon: string; muted?: boolean; host: string; runtime: HostRuntime | undefined;
-    onDismiss: () => void; initial?: HostFormInitial; saveId?: string; validating?: boolean;
+    onDismiss: () => void; validating?: boolean;
 }) {
     return (
         <Card>
@@ -21,25 +20,9 @@ function ConfigCard({ icon, muted, host, runtime, onDismiss, initial, saveId, va
                     <ActionIcon name="close" ariaLabel="Dismiss" onClick={onDismiss} />
                 </Row>
             </Row>
-            <HostForm host={host} runtime={runtime} initial={initial} saveId={saveId} validating={validating} />
+            <HostForm host={host} runtime={runtime} validating={validating} />
         </Card>
     );
-}
-
-function gpuInitial(gpuClass: string): Partial<HostFormInitial> {
-    const gpu = parseGpuClass(gpuClass);
-    return gpu ? { tab: 'gpu', gpuType: gpu.gpuType, gpuCount: gpu.gpuCount } : { tab: 'cpu' };
-}
-
-function editInitial(session: ViewSession): HostFormInitial {
-    return {
-        ...gpuInitial(session.gpuClass),
-        partName: session.queue,
-        allocation: session.allocation,
-        cpu: String(session.cpus),
-        memory: session.memory,
-        wall: session.wallTime,
-    };
 }
 
 function ScriptPreviewOverlay({ state }: { state: SessionsState }) {
@@ -85,9 +68,7 @@ function SessionsView({ state }: { state: SessionsState }) {
     return (
         <>
             {state.draftHost ? <ConfigCard key={state.draftHost} icon="circle-outline" muted host={state.draftHost} runtime={state.hostRuntime[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} validating={state.validating} /> : null}
-            {state.sessions.map(s => s.id === state.editingId
-                ? <ConfigCard key={s.id} icon="edit" host={s.cluster} runtime={state.hostRuntime[s.cluster]} onDismiss={() => post({ command: 'dismissEditSession' })} initial={editInitial(s)} saveId={s.id} validating={state.validating} />
-                : <SessionCard key={s.id} session={s} />)}
+            {state.sessions.map(s => <SessionCard key={s.id} session={s} />)}
             {!state.sessions.length && !state.draftHost
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
                 : null}

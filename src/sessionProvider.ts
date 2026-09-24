@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { uuidv7 } from 'uuidv7';
 import { errMsg } from './logger';
-import { HostRuntime, SlurmSession, SessionsState, WebviewMessage, PromptObserver, PromptCancelledError } from './models';
+import { HostRuntime, SlurmSession, SessionsState, WebviewMessage } from './models';
 import { WebviewProvider, confirmModal } from './webviewProvider';
 import { removeSshConfigEntry, addSshConfigEntry, hasSessionKey, SshManager } from './modules/sshSupport';
 import { getSlurmClusterInfo } from './modules/slurmSupport';
@@ -30,7 +30,6 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
 
     private readonly hostRuntime = new Map<string, HostRuntime>();
     private draftHost: string | null = null;
-    private editingId: string | null = null;
     private previewSession: SlurmSession | null = null;
     private readonly shared: vscode.Disposable[] = [];
     private readonly connecting = new Set<string>();
@@ -95,30 +94,12 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         dismissDraftSession: () => { this.draftHost = null; },
         dismissPreview: () => { this.previewSession = null; },
         dismissAlert: () => { this.alert = null; },
-        dismissEditSession: () => { this.editingId = null; },
     };
 
     private readonly handlers: Record<string, (data: WebviewMessage, id: string) => void> = {
         ready: () => void this.pushState(),
         addSession: data => this.createSession(data),
-        editSession: (_data, id) => {
-            const s = this.requireSession(id, 'edit', true);
-            if (!s) { return; }
-            this.editingId = id;
-            void this.pushState();
-            this.fetchClusterInfo(s.cluster);
-        },
         refreshClusterInfo: data => this.fetchClusterInfo(data.host ?? '', true),
-        saveSession: (data, id) => {
-            const s = this.requireSession(id, 'save', true);
-            if (!s) { return; }
-            // copy: a rejected edit must not touch the stored session
-            const updated = { ...s, ...this.paramsFromData(data), batchScript: undefined };
-            void this.validateThenPersist(updated, () => {
-                updateSession(updated);
-                this.editingId = null;
-            });
-        },
         prepareLaunchSession: (_data, id) => { this.prepareLaunchSession(id).catch(() => void this.pushState()); },
         launchSession: (_data, id) => this.submitSession(id),
         stopSessionExecution: (_data, id) => this.stopSessionExecution(id),
@@ -281,13 +262,11 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
         if (!force && this.hostRuntime.get(host)?.phase === 'ready') { void this.pushState(); return; }
         this.logger.info(`Fetching Slurm cluster info for host: ${host}`);
         this.setHostRuntime(host, { phase: 'loading' });
-        // The auth box (if any) surfaces during the fetch: reflect it on the draft form, treat a dismiss as an interruption.
-        const observer: PromptObserver = e => this.setHostRuntime(host, { phase: e === 'opened' ? 'awaiting' : 'loading' });
-        getSlurmClusterInfo(host, observer)
+        getSlurmClusterInfo(host)
             .then(info => this.setHostRuntime(host, { phase: 'ready', info }))
             .catch((error) => {
                 this.logger.error('Error fetching Slurm cluster info:', error);
-                this.setHostRuntime(host, { phase: 'error', message: error instanceof PromptCancelledError ? 'Interrupted — input dismissed' : errMsg(error) });
+                this.setHostRuntime(host, { phase: 'error', message: errMsg(error) });
             });
     }
 
@@ -311,7 +290,6 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
                     // newest first (uuidv7 ids are time-ordered)
                     .sort((a, b) => b.id.localeCompare(a.id)),
                 draftHost: this.draftHost,
-                editingId: this.editingId,
                 hostRuntime: Object.fromEntries(this.hostRuntime),
                 previewSession: this.previewSession,
                 validating: this.validating,
@@ -421,39 +399,26 @@ export class SessionProvider extends WebviewProvider implements vscode.Disposabl
 
     // The real stop (via stopSession), shared by the sidebar Stop and the summary consumer finishing a handed-off session.
     public finishInterruptedStop(session: SlurmSession): void {
-        // No success toast: a clean stop is silent (the summary/card reflects it); only a failure surfaces via runSessionTask.
-        this.runSessionTask(session, `Stopping Session ${session.name}...`, 'stop',
-            p => stopSession(session, this.monitor, p), 'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.');
+        this.runSessionTask(session, 'stop', () => stopSession(session, this.monitor),
+            'Please check the cluster to ensure the job has stopped and clean up any resources if necessary.');
     }
 
     private submitSession(sessionId: string) {
         const session = this.requireSession(sessionId, 'launch', false);
         if (!session) { return; }
         this.previewSession = null;
-        const preLaunchStatus = session.status; // dismissing the auth box reverts here, not to a dead-end state
         session.startedAt = undefined; // fresh launch: re-anchor the wall-time countdown when the new job starts running
         setStatus(session, 'submitting', '');
         void this.pushState();
-        // An SSH auth box during launch shows on the card as awaiting_input, reverting to submitting once answered.
-        const observer: PromptObserver = (e) => { setStatus(session, e === 'opened' ? 'awaiting_input' : 'submitting'); void this.pushState(); };
-        this.runSessionTask(session, `Launching Session ${session.name}...`, 'launch',
-            p => launchSession(session, this.monitor, p, observer), 'Please clean up any resources on the cluster if necessary.', preLaunchStatus);
+        this.runSessionTask(session, 'launch', () => launchSession(session, this.monitor),
+            'Please clean up any resources on the cluster if necessary.');
     }
 
-    // Dismissing the progress notification marks the session stopped; a failure marks it failed and shows a dialog.
-    private runSessionTask(session: SlurmSession, title: string, verb: string, run: (progress: vscode.Progress<{ message?: string }>) => Promise<void>, cleanupHint: string, promptCancelStatus: SlurmSession['status'] = 'stopped'): void {
-        const task = vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (progress, token) => {
-            token.onCancellationRequested(() => setStatus(session, 'stopped'));
-            await run(progress);
-        });
-        Promise.resolve(task).then(() => {
+    // A failure marks the session failed and shows a dialog.
+    private runSessionTask(session: SlurmSession, verb: string, run: () => Promise<void>, cleanupHint: string): void {
+        run().then(() => {
             void this.pushState();
         }).catch((error) => {
-            if (error instanceof PromptCancelledError) { // a deliberate dismiss, not a failure: revert to the pre-launch state, no error dialog
-                setStatus(session, promptCancelStatus, '');
-                void this.pushState();
-                return;
-            }
             const detail = `Failed to ${verb} session: ${errMsg(error)}`;
             this.logger.error(`${detail} (id ${session.id})`, error);
             vscode.window.showErrorMessage(`${detail}. ${cleanupHint}`);

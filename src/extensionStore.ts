@@ -38,8 +38,6 @@ export function initSessionStore(): string {
     for (const s of sessions) {
         // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
         if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
-        // A launch prompt that outlived its window can't be answered anymore; the launch never happened, so revert to not_started.
-        if (s.status === 'awaiting_input') { s.status = 'not_started'; }
     }
     logger.info(`Loaded ${sessions.length} session(s) from ${sessionsDir}`);
     return sessionsDir;

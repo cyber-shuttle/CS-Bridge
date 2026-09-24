@@ -15,7 +15,7 @@ CS Bridge is a VS Code extension for working on high-performance computing (HPC)
 - **Job form** — partition, allocation, CPUs, memory, GPUs and walltime are chosen once; CS Bridge writes and submits the batch script.
 - **Live metrics** — the session card shows the job state and its current CPU, memory and GPU use.
 - **Persistent sessions** — a job outlives its VS Code window; **Connect** opens a new window on the same job.
-- **Session reuse** — a finished session can be started again, unchanged or edited.
+- **Session reuse** — a finished session can be started again.
 - **Utilization history** — the Stats view records the CPU and memory efficiency of every run.
 - **No inbound ports** — connections go through a Microsoft Dev Tunnel, so the cluster opens no port.
 

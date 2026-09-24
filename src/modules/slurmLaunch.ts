@@ -49,7 +49,7 @@ export async function linkspanIsUpToDate(session: SlurmSession, run: RemoteRunne
     const localVersionResult = await run.runRemoteCommand(session.cluster, `~/.cybershuttle/bin/linkspan --version 2>/dev/null || echo ""`);
 
     if (localVersionResult.code !== 0) {
-        log.error(`Failed to check Linkspan version on cluster ${session.cluster}. Error: ${localVersionResult.stderr}`);
+        log.error(`Failed to check Linkspan version on cluster ${session.cluster} (exit ${localVersionResult.code})`);
         return false;
     }
 
@@ -108,7 +108,7 @@ export async function validateSlurmConfig(session: SlurmSession, run: RemoteRunn
     const scriptB64 = Buffer.from(buildSlurmScript(session, '')).toString('base64');
     const result = await run.runRemoteCommand(session.cluster, `echo '${scriptB64}' | base64 -d | sbatch --test-only`);
     ensureSuccess(result, `Cluster ${session.cluster} rejected the session configuration`);
-    log.info(`Cluster ${session.cluster} validated the session configuration: ${(result.stderr || result.stdout).trim()}`);
+    log.info(`Cluster ${session.cluster} validated the session configuration`);
 }
 
 export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
@@ -116,13 +116,12 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
 
     const scriptB64 = Buffer.from(session.batchScript).toString('base64');
     const submitCommand = `echo '${scriptB64}' | base64 -d | sbatch`;
-    log.info(`Submitting job to Slurm with command: ${submitCommand}`);
+    log.info(`Submitting job to Slurm for session ${session.name}`);
 
     const submitResult = await run.runRemoteCommand(session.cluster, submitCommand);
     ensureSuccess(submitResult, 'Job submission failed');
 
     const output = submitResult.stdout.trim();
-    log.info(`Job submission output: ${output}`);
     const jobIdMatch = output.match(/Submitted batch job (\d+)/);
     if (!jobIdMatch) { throw new Error(`Failed to parse job ID from sbatch output: ${output}`); }
 

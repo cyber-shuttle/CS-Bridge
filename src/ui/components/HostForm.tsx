@@ -5,22 +5,9 @@ import { partitionsForTab, hasTab, cpuOptions, memoryOptions, gpuOptions, gpuStr
 import { Row, Stack, Text, Spinner, Button, SingleSelect, Option } from '@/ui/components/base';
 import { post } from '@/ui/platform/vscode';
 
-export type HostFormInitial = {
-    tab?: ResourceTab;
-    partName?: string;
-    allocation?: string;
-    cpu?: string;
-    memory?: string;
-    gpuCount?: string;
-    gpuType?: string;
-    wall?: string;
-};
-
 interface Props {
     host: string;
     runtime: HostRuntime | undefined;
-    initial?: HostFormInitial;
-    saveId?: string; // when set, the form edits this session ("Save") instead of creating one ("Add")
     validating?: boolean;
 }
 
@@ -40,21 +27,20 @@ function Select({ label, value, onChange, options, children }: { label: string; 
     );
 }
 
-function HostFormFields({ host, info, initial, saveId, validating }: { host: string; info: SlurmClusterInfo; initial?: HostFormInitial; saveId?: string; validating?: boolean }) {
+function HostFormFields({ host, info, validating }: { host: string; info: SlurmClusterInfo; validating?: boolean }) {
     const tabs: ResourceTab[] = (['cpu', 'gpu'] as ResourceTab[]).filter(t => hasTab(info, t));
-    const initialTab = initial?.tab ?? tabs[0] ?? 'cpu';
+    const initialTab = tabs[0] ?? 'cpu';
     const initialParts = partitionsForTab(info, initialTab);
-    const initialPart = initialParts.find(p => p.name === initial?.partName) ?? initialParts[0];
+    const initialPart = initialParts[0];
 
     const [tab, setTab] = useState<ResourceTab>(initialTab);
-    // initialPart, not initial.partName: a partition the cluster dropped would stay selected and still submit.
     const [partName, setPartName] = useState(initialPart?.name ?? '');
-    const [allocation, setAllocation] = useState(initial?.allocation ?? info.accounts[0] ?? '');
-    const [cpuPick, setCpu] = useState(initial?.cpu ?? '');
-    const [memoryPick, setMemory] = useState(initial?.memory ?? '');
-    const [gpuCountPick, setGpuCount] = useState(initial?.gpuCount ?? '');
-    const [gpuTypePick, setGpuType] = useState(initial?.gpuType ?? '');
-    const [wall, setWall] = useState(initial?.wall ?? WALL_OPTIONS[0][0]);
+    const [allocation, setAllocation] = useState(info.accounts[0] ?? '');
+    const [cpuPick, setCpu] = useState('');
+    const [memoryPick, setMemory] = useState('');
+    const [gpuCountPick, setGpuCount] = useState('');
+    const [gpuTypePick, setGpuType] = useState('');
+    const [wall, setWall] = useState(WALL_OPTIONS[0][0]);
 
     const parts = partitionsForTab(info, tab);
     const partition = parts.find(p => p.name === partName) ?? parts[0];
@@ -75,8 +61,7 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
 
     const submit = () => {
         post({
-            command: saveId ? 'saveSession' : 'addSession',
-            sessionId: saveId,
+            command: 'addSession',
             host,
             cpus: cpu,
             memory,
@@ -120,13 +105,13 @@ function HostFormFields({ host, info, initial, saveId, validating }: { host: str
                 : null}
             <Select label="Wall Time" value={wall} onChange={setWall} options={WALL_OPTIONS} />
             <Button onClick={submit} disabled={validating}>
-                {validating ? <Row gap={4}><Spinner size={12} /> Validating…</Row> : (saveId ? 'Save' : 'Add')}
+                {validating ? <Row gap={4}><Spinner size={12} /> Validating…</Row> : 'Add'}
             </Button>
         </Stack>
     );
 }
 
-export function HostForm({ host, runtime, initial, saveId, validating }: Props) {
+export function HostForm({ host, runtime, validating }: Props) {
     switch (runtime?.phase) {
         case 'error':
             return (
@@ -136,8 +121,8 @@ export function HostForm({ host, runtime, initial, saveId, validating }: Props) 
                 </Stack>
             );
         case 'ready':
-            return <HostFormFields host={host} info={runtime.info} initial={initial} saveId={saveId} validating={validating} />;
-        default: // undefined | loading | awaiting — same spinner; the message says whether it needs you
-            return <Row gap={6} pad="8px"><Spinner size={16} /> {runtime?.phase === 'awaiting' ? 'Action needed — check the input box…' : 'Fetching runtime details…'}</Row>;
+            return <HostFormFields host={host} info={runtime.info} validating={validating} />;
+        default:
+            return <Row gap={6} pad="8px"><Spinner size={16} /> Fetching runtime details…</Row>;
     }
 }

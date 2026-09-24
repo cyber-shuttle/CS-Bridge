@@ -40,17 +40,15 @@ export function elapsedRunMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt
     return Math.max(0, total > 0 ? Math.min(raw, total) : raw);
 }
 
-// Colour buckets for the status dot: orange = error, yellow = needs-your-action, green = live.
+// Colour buckets for the status dot: orange = error, green = live.
 // Everything else (idle/pending/stopping/stopped) falls through to neutral grey.
 const ORANGE: SlurmSession['status'][] = ['failed', 'unreachable'];
-const YELLOW: SlurmSession['status'][] = ['awaiting_input'];
 const GREEN: SlurmSession['status'][] = ['ready_to_connect', 'connecting', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
 
 export function dotColor(status: SlurmSession['status']): string {
     if (ORANGE.includes(status)) { return 'var(--vscode-charts-orange)'; }
-    if (YELLOW.includes(status)) { return 'var(--vscode-charts-yellow)'; }
     if (GREEN.includes(status)) { return 'var(--vscode-charts-green)'; }
     return 'var(--vscode-descriptionForeground)';
 }

@@ -37,7 +37,6 @@ function HostItem({ host }: { host: SshHost }) {
                     ) : null}
                     {/* zoom 0.85 matches the Sessions-view action buttons (e.g. Connect). */}
                     <Row gap={6} justify="flex-end" pad="2px 0 0" style={{ zoom: 0.85 }}>
-                        <Button icon="terminal" onClick={() => post({ command: 'openTerminal', name: host.name })}>Terminal</Button>
                         {src === 'user' ? <Button icon="trash" onClick={() => post({ command: 'removeSshHost', name: host.name })}>Delete</Button> : null}
                     </Row>
                 </Stack>
