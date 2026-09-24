@@ -1,4 +1,4 @@
-import { SshHost, SlurmSession, PromptObserver, PromptCancelledError } from '../models';
+import { SshHost, SlurmSession } from '../models';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -30,7 +30,6 @@ type HostShell = {
     ready: Promise<void>;
     alive: boolean;
     connecting: boolean;
-    dismissed: boolean;
     current?: Pending;
 };
 
@@ -108,13 +107,12 @@ export class SshManager {
 
     // Every remote command rides the host's one persistent shell, established on demand and reused until it drops.
     // batch: a background poll won't open a new connection that would raise a Duo box it can't answer — it rides an
-    // existing shell or fails fast (caller retries). A user-driven (observer) call authenticates interactively.
-    public runRemoteCommand(hostName: string, command: string, observer?: PromptObserver, opts?: { batch?: boolean }): Promise<CommandResult> {
+    // existing shell or fails fast (caller retries). A user-driven call authenticates interactively.
+    public runRemoteCommand(hostName: string, command: string, opts?: { batch?: boolean }): Promise<CommandResult> {
         return this.enqueue(hostName, async () => {
             let shell: HostShell;
-            try { shell = await this.ensureShell(hostName, !!opts?.batch, observer); }
+            try { shell = await this.ensureShell(hostName, !!opts?.batch); }
             catch (err) {
-                if (err instanceof PromptCancelledError) { throw err; }
                 return { stdout: '', stderr: errMsg(err), code: 255 };
             }
             return this.runOnShell(shell, command);
@@ -141,10 +139,10 @@ export class SshManager {
         return next;
     }
 
-    private async ensureShell(hostName: string, batch: boolean, observer?: PromptObserver): Promise<HostShell> {
+    private async ensureShell(hostName: string, batch: boolean): Promise<HostShell> {
         let shell = this.shells.get(hostName);
         if (!shell || !shell.alive) {
-            shell = this.spawnShell(hostName, batch, observer);
+            shell = this.spawnShell(hostName, batch);
             this.shells.set(hostName, shell);
         }
         await shell.ready; // throws if this shell died during connect (auth failure / dismiss); caller maps it
@@ -179,7 +177,7 @@ export class SshManager {
         };
     }
 
-    private spawnShell(hostName: string, batch: boolean, observer?: PromptObserver): HostShell {
+    private spawnShell(hostName: string, batch: boolean): HostShell {
         const askpassDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-askpass-'));
         const env: NodeJS.ProcessEnv = { ...process.env, ...(batch ? {} : this.askpassEnvironment(askpassDir)) };
 
@@ -200,7 +198,7 @@ export class SshManager {
         let readyResolve!: () => void;
         let readyReject!: (e: Error) => void;
         const shell: HostShell = {
-            proc, askpassDir, alive: true, connecting: true, dismissed: false,
+            proc, askpassDir, alive: true, connecting: true,
             ready: new Promise<void>((res, rej) => { readyResolve = res; readyReject = rej; }),
         };
 
@@ -226,7 +224,7 @@ export class SshManager {
 
         proc.stdin!.write(`printf '\\n${READY_MARKER}\\n'\n`);
 
-        const poll = batch ? undefined : this.pollAskpass(shell, hostName, observer);
+        const poll = batch ? undefined : this.pollAskpass(shell, hostName);
         const stopPoll = (): void => { if (poll) { clearInterval(poll); } };
         shell.ready.then(stopPoll, stopPoll); // authentication is one-shot at connect
 
@@ -242,9 +240,7 @@ export class SshManager {
                 shell.current.resolve({ stdout: shell.current.outBuf, stderr: `${shell.current.errBuf}\nssh connection closed`, code: 255 });
             }
         };
-        proc.on('close', (code: number | null) => drop(() => shell.dismissed
-            ? new PromptCancelledError('Interrupted by user')
-            : new Error(`SSH connection to ${hostName} closed (exit ${code ?? 'null'})`)));
+        proc.on('close', (code: number | null) => drop(() => new Error(`SSH connection to ${hostName} closed (exit ${code ?? 'null'})`)));
         proc.on('error', (err: Error) => drop(() => err));
 
         return shell;
@@ -266,7 +262,7 @@ export class SshManager {
         });
     }
 
-    private pollAskpass(shell: HostShell, hostName: string, observer?: PromptObserver): NodeJS.Timeout {
+    private pollAskpass(shell: HostShell, hostName: string): NodeJS.Timeout {
         const handled = new Set<string>();
         const cancelFile = path.join(shell.askpassDir, 'cancel');
         return setInterval(async () => {
@@ -279,16 +275,11 @@ export class SshManager {
                 handled.add(file);
                 try {
                     const { id, prompt } = JSON.parse(fs.readFileSync(path.join(shell.askpassDir, file), 'utf-8'));
-                    observer?.('opened');
                     const password = await this.promptAuth(hostName, String(prompt));
                     if (password !== undefined) {
                         fs.writeFileSync(path.join(shell.askpassDir, `response-${id}`), password, 'utf-8');
-                        observer?.('answered');
                     }
                     else {
-                        // Only callers that opted into prompt handling (an observer) treat a dismiss as cancellation;
-                        // others just get the non-zero exit from the killed ssh.
-                        shell.dismissed = observer !== undefined;
                         fs.writeFileSync(cancelFile, '', 'utf-8');
                         shell.proc.kill();
                     }

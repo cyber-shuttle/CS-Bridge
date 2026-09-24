@@ -92,7 +92,7 @@ effect-light part into a `vscode`-free module and test that. `slurmLaunch` is th
 ## Session status model
 
 Statuses are `not_started`, `submitting`, `queued`, `preparing`, `ready_to_connect`, `connecting`, `connected`,
-`stopping`, `stopped`, `failed`, `unreachable`, `awaiting_input` (`models.ts`). The predicates that gate behaviour
+`stopping`, `stopped`, `failed`, `unreachable` (`models.ts`). The predicates that gate behaviour
 live in `sessionMachine.ts` as the single source of truth shared by the provider, the monitor and the webview:
 `isTerminal` (stopped/failed), `isCloseable` (terminal plus `not_started`), `isStoppable`, `isRelayLive`
 (`ready_to_connect`/`connecting`/`connected`). `computeStatusTransition(current, slurmStatus)` is the pure poll-loop
@@ -119,9 +119,7 @@ write goes through that locked read-modify-write: windows share these records, s
 drops another window's update. Only reattach references are persisted — `sshTunnelId`, `sshPort`, `region` and
 `apiPort`, the last so a reattached session health-pings the tunnel instead of polling the login node — while
 secrets and the ephemeral local port stay in memory. On load, `connected` and `connecting` demote to
-`ready_to_connect` (the relay is gone after a reload) and `awaiting_input` reverts to `not_started` (the prompt
-can no longer be answered). Utilization history
-lives separately, one file per session under `~/.cybershuttle/metrics/` (`sessionMetricsStore.ts`).
+`ready_to_connect` (the relay is gone after a reload). Utilization history lives separately, one file per session under `~/.cybershuttle/metrics/` (`sessionMetricsStore.ts`).
 
 A remote window recognises itself: `extension.ts` reads the workspace URI authority, and in an
 `ssh-remote+<alias>` window it scopes the Sessions view to that one session, observe-only, and sets the

@@ -1,5 +1,4 @@
-import { Metric, POLLING_INTERVAL_MS, SlurmJobStatus, SlurmSession, PromptObserver } from '../models';
-import * as vscode from 'vscode';
+import { Metric, POLLING_INTERVAL_MS, SlurmJobStatus, SlurmSession } from '../models';
 import { Logger, errMsg } from './../logger';
 import { updateSession, setStatus } from '../extensionStore';
 import { recordSessionRun, sacctStats } from '../sessionRunSupport';
@@ -7,7 +6,7 @@ import { SshManager } from './sshSupport';
 import { getMetricsViaSrun, getSlurmJobStatus } from './slurmSupport';
 import { buildSlurmScript } from './slurmParse';
 import { computeStatusTransition, isRelayLive, isTerminal, isWallTimeExpired, unreachableStatus, StatusTransition } from './sessionMachine';
-import { checkSlurmAvailability, linkspanIsUpToDate, installLinkspan, submitJobToSlurm, RemoteRunner } from './slurmLaunch';
+import { checkSlurmAvailability, linkspanIsUpToDate, installLinkspan, submitJobToSlurm } from './slurmLaunch';
 import { disconnectSessionFromTunnel, disposeTunnelClient, ensureDevTunnel, ensureRemoteSession, isTunnelClientConnected, linkspanEndpoint, removeDevTunnel } from './tunnelSupport';
 import { getHealth, getMetrics } from './linkspanSupport';
 import { appendMetric, writeSessionStats, resetLive } from './sessionMetricsStore';
@@ -239,28 +238,20 @@ export async function prepareLaunch(session: SlurmSession): Promise<void> {
     updateSession(session);
 }
 
-export async function launchSession(session: SlurmSession, monitor: SessionMonitor, progress: vscode.Progress<{ message?: string }>, observer: PromptObserver): Promise<void> {
+export async function launchSession(session: SlurmSession, monitor: SessionMonitor): Promise<void> {
     logger.info(sessionLine(session.name, `initiating launch`));
-    const run: RemoteRunner = { runRemoteCommand: (host, command) => SshManager.getInstance().runRemoteCommand(host, command, observer) };
-
-    progress.report({ message: 'Checking Slurm availability on cluster' });
+    const run = SshManager.getInstance();
     await checkSlurmAvailability(session, run, logger);
-
-    progress.report({ message: 'Checking Linkspan installation on cluster' });
     if (!await linkspanIsUpToDate(session, run, logger)) {
-        progress.report({ message: 'Installing Linkspan on cluster' });
         await installLinkspan(session, run, logger);
     }
-
-    progress.report({ message: 'Submitting job to Slurm...' });
     await submitJobToSlurm(session, run, logger);
     setStatus(session, 'queued');
     monitor.startMonitoring(session);
 }
 
-export async function stopSession(session: SlurmSession, monitor: SessionMonitor, progress: vscode.Progress<{ message?: string }>): Promise<void> {
+export async function stopSession(session: SlurmSession, monitor: SessionMonitor): Promise<void> {
     logger.info(sessionLine(session.name, `stopping`));
-    progress.report({ message: 'Stopping session...' });
 
     let stopError: Error | undefined;
     try {

@@ -41,10 +41,9 @@ function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) 
     return { status, ...extra } as ViewSession;
 }
 
-test('dotColor: orange error, yellow needs-action, green live, grey otherwise', () => {
+test('dotColor: orange error, green live, grey otherwise', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-charts-orange)');
     assert.equal(dotColor('unreachable'), 'var(--vscode-charts-orange)');
-    assert.equal(dotColor('awaiting_input'), 'var(--vscode-charts-yellow)');
     assert.equal(dotColor('ready_to_connect'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connecting'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
@@ -62,7 +61,6 @@ test('sessionActions returns the right buttons per status', () => {
     assert.equal(sessionActions(sess('unreachable'))[1].label, 'Reconnect'); // Connect rebuilds the relay → off the login node
     assert.deepEqual(sessionActions(sess('stopped')), [{ kind: 'start', label: 'Start', icon: 'play' }]);
     assert.deepEqual(sessionActions(sess('stopping')).map(a => a.kind), []); // stop in flight: spinner only, no Stop button
-    assert.deepEqual(sessionActions(sess('awaiting_input')).map(a => a.kind), []); // the input box is the action
 });
 
 test('connected session: Current when this window, else Switch/Connect by window liveness', () => {

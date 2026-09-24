@@ -14,8 +14,7 @@ export interface SlurmSession extends Session {
 
 // Lifecycle: not_started → submitting → queued → preparing (job + Step-1 sshd/tunnel) →
 // ready_to_connect → connecting → connected; unreachable on a dropped link or cluster outage; stopping → stopped/failed.
-// Job end (completed or wall-time killed) → stopped (restartable). An SSH auth prompt during launch shows as
-// awaiting_input (reverts to submitting once answered); dismissing it reverts to the pre-launch state.
+// Job end (completed or wall-time killed) → stopped (restartable).
 interface Session {
     id: string;
     name: string;
@@ -24,7 +23,7 @@ interface Session {
         | 'not_started' | 'submitting' | 'queued' | 'preparing'
         | 'ready_to_connect' | 'connecting' | 'connected'
         | 'stopping' | 'stopped' | 'failed'
-        | 'unreachable' | 'awaiting_input';
+        | 'unreachable';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
@@ -52,13 +51,6 @@ export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined)
     const { sshTunnelId, sshPort, region, apiPort } = ci;
     return { sshTunnelId, sshPort, region, apiPort };
 }
-
-// A remote command reports its SSH auth box opening and being answered so the caller can reflect
-// "awaiting input" on the UI; a dismissed box instead rejects the command with PromptCancelledError,
-// letting the caller treat it as a deliberate interruption rather than a failure.
-export type PromptObserver = (event: 'opened' | 'answered') => void;
-
-export class PromptCancelledError extends Error {}
 
 export interface SshHost {
     name: string;
@@ -152,7 +144,6 @@ export interface SummaryState {
 // A host's runtime-details fetch is in exactly one phase; the draft form renders straight off it.
 export type HostRuntime =
     | { phase: 'loading' }
-    | { phase: 'awaiting' } // an SSH auth box is open
     | { phase: 'error'; message: string }
     | { phase: 'ready'; info: SlurmClusterInfo };
 
@@ -160,7 +151,6 @@ export interface SessionsState {
     isRemote: boolean;
     sessions: ViewSession[];
     draftHost: string | null;
-    editingId: string | null;
     hostRuntime: Record<string, HostRuntime>;
     previewSession: SlurmSession | null;
     validating: boolean;
