@@ -20,12 +20,16 @@ and say whether we can reproduce it before any fix ships.
 CS Bridge runs in your local VS Code and drives a cluster you already have SSH access to. These are the boundaries
 it is built around; a report is most useful when it shows one of them failing.
 
-- The private half of a session key never leaves the local machine; only the public half is handed to the agent.
+- The private half of a session key never leaves the local machine; only the public half is handed to cs-plane. The
+  key and the session capability the ProxyCommand reads are mode `0600`, and the capability is never on a command line.
 - The only writes to `~/.ssh/config` are the `Include ~/.cybershuttle/ssh_config` line and the `Host` entries you
   add or remove yourself in the SSH Hosts view. Per-session aliases go to `~/.cybershuttle/ssh_config`.
-- The job receives a token scoped to hosting one Dev Tunnel, never an account credential, and that token is not
-  written to the cluster filesystem.
-- Authentication is VS Code's Microsoft provider; CS Bridge runs no OAuth server and stores no token of its own.
+- The job receives a link token or a Dev Tunnel host token scoped to its cs-plane session, never an account
+  credential. It reaches linkspan only through `sbatch`'s exported environment, never the batch script, a command
+  line, a file or the log. A linkspan without it cannot link.
+- Authentication is CILogon's device grant, relayed by cs-plane; the credential is kept only in VS Code's
+  SecretStorage and sent only to cs-plane. cs-plane never reaches the cluster and never sees SSH credentials, session
+  private keys or the remote window's decrypted SSH traffic.
 - The agent binary is fetched over HTTPS with no signature check, and everything CS Bridge runs remotely runs as
   the submitting user with no privilege that user does not already have.
 

@@ -1,9 +1,9 @@
 import type { SlurmSession, ViewSession } from '@/models';
 import { isTerminal, isStoppable, wallMs } from '@/modules/sessionMachine';
 
-export { wallMs }; // shared with the monitor via the vscode-free sessionMachine
+export { wallMs }; // shared with remoteSessionController via the vscode-free sessionMachine
 
-type ActionKind = 'start' | 'stop' | 'switch' | 'connect' | 'current' | 'opening';
+type ActionKind = 'start' | 'stop' | 'connect' | 'current' | 'opening';
 
 export interface SessionAction {
     kind: ActionKind;
@@ -42,7 +42,7 @@ export function elapsedRunMs(session: Pick<SlurmSession, 'wallTime' | 'startedAt
 
 // Colour buckets for the status dot: orange = error, green = live.
 // Everything else (idle/pending/stopping/stopped) falls through to neutral grey.
-const ORANGE: SlurmSession['status'][] = ['failed', 'unreachable'];
+const ORANGE: SlurmSession['status'][] = ['failed'];
 const GREEN: SlurmSession['status'][] = ['ready_to_connect', 'connecting', 'connected'];
 
 const STOP: SessionAction = { kind: 'stop', label: 'Stop', icon: 'debug-stop' };
@@ -60,17 +60,13 @@ export function sessionActions(session: ViewSession): SessionAction[] {
     const actions: SessionAction[] = [];
     if (isStoppable(s)) { actions.push(STOP); }
     if (s === 'connected') {
-        if (session.isCurrent) { actions.push({ kind: 'current', label: 'Current', icon: 'check' }); }
-        else if (session.windowAlive) { actions.push({ kind: 'switch', label: 'Switch', icon: 'arrow-swap' }); }
-        else if (session.opening) { actions.push({ kind: 'opening', label: 'Opening…', icon: 'loading' }); }
-        else { actions.push({ kind: 'switch', label: 'Connect', icon: 'arrow-swap' }); }
+        actions.push({ kind: 'current', label: 'Current', icon: 'check' });
     }
     else if (s === 'connecting') {
         actions.push({ kind: 'opening', label: 'Connecting…', icon: 'loading' });
     }
-    else if (s === 'ready_to_connect' || s === 'unreachable') {
-        // For 'unreachable', Reconnect rebuilds the relay via the tunnel API → back to relay-live, off the login-node path.
-        actions.push({ kind: 'connect', label: s === 'ready_to_connect' ? 'Connect' : 'Reconnect', icon: 'arrow-swap' });
+    else if (s === 'ready_to_connect') {
+        actions.push({ kind: 'connect', label: 'Connect', icon: 'arrow-swap' });
     }
     return actions;
 }

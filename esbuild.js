@@ -50,7 +50,7 @@ async function main() {
 		platform: 'node',
 		target: 'node20',
 		outfile: 'out/extension.js',
-		external: ['vscode', 'node-rsa'],
+		external: ['vscode'],
 	});
 
 	// One bundle per sidebar view; each gets its own root and is loaded by data-view-less HTML keyed on the view name.

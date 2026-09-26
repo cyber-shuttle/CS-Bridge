@@ -26,14 +26,12 @@ export abstract class WebviewProvider implements vscode.WebviewViewProvider {
             msgSub.dispose();
             visSub.dispose();
         });
-        this.onResolved();
         webview.html = renderHtml(webview, this.extensionUri, this.viewKind);
     }
 
     // Override hooks (default no-op):
     protected handleMessage(_data: WebviewMessage): void { }
     protected pushState(): void | Promise<void> { }
-    protected onResolved(): void { }
 
     protected showError(message: string, error: unknown): void {
         this.logger.error(message, error);

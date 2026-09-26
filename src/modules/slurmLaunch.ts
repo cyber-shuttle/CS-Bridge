@@ -1,5 +1,5 @@
 import { SlurmSession } from '../models';
-import { buildSlurmScript } from './slurmParse';
+import { buildSlurmScript, shellQuote } from './slurmParse';
 
 // RemoteRunner/LogSink are injected (SshManager and Logger satisfy them structurally) so the steps below
 // are unit-testable with fakes, free of SSH and vscode.
@@ -108,11 +108,12 @@ export async function validateSlurmConfig(session: SlurmSession, run: RemoteRunn
     log.info(`Cluster ${session.cluster} validated the session configuration`);
 }
 
-export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner, log: LogSink): Promise<void> {
+export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner, log: LogSink, env: Record<string, string>): Promise<void> {
     if (!session.batchScript) { throw new Error(`Session ${session.name}: missing batch script`); }
 
     const scriptB64 = Buffer.from(session.batchScript).toString('base64');
-    const submitCommand = `echo '${scriptB64}' | base64 -d | sbatch`;
+    const assignments = Object.entries(env).map(([name, value]) => `${name}=${shellQuote(value)}`).join(' ');
+    const submitCommand = `echo '${scriptB64}' | base64 -d | ${assignments} sbatch --export=ALL,${Object.keys(env).join(',')}`;
     log.info(`Submitting job to Slurm for session ${session.name}`);
 
     const submitResult = await run.runRemoteCommand(session.cluster, submitCommand);
@@ -122,7 +123,7 @@ export async function submitJobToSlurm(session: SlurmSession, run: RemoteRunner,
     const jobIdMatch = output.match(/Submitted batch job (\d+)/);
     if (!jobIdMatch) { throw new Error(`Failed to parse job ID from sbatch output: ${output}`); }
 
-    session.batchScript = undefined; // held the tunnel host token; sbatch has it now
+    session.batchScript = undefined;
     session.jobId = jobIdMatch[1];
     session.submittedAt = Date.now();
     log.info(`Job submitted successfully with Job ID: ${session.jobId}`);

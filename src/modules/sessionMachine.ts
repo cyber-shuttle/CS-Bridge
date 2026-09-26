@@ -20,33 +20,25 @@ export interface StatusTransition {
     error?: string;
 }
 
-// Session-status categories — the single source of truth shared by the provider, monitor, and webview UI.
+// Session-status categories — the single source of truth shared by the provider, the poll, and webview UI.
 const TERMINAL: Status[] = ['stopped', 'failed'];
 // 'stopping' is excluded so Stop neither shows nor re-triggers while a stop is already in flight.
-const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'ready_to_connect', 'connecting', 'connected', 'unreachable'];
+const STOPPABLE: Status[] = ['submitting', 'queued', 'preparing', 'ready_to_connect', 'connecting', 'connected'];
 const RELAY_LIVE: Status[] = ['ready_to_connect', 'connecting', 'connected'];
 // The relay-live set plus the bring-up that precedes it, so a new relay-live status joins both.
 const CONNECT_PHASE: Status[] = ['preparing', ...RELAY_LIVE];
-// Non-relay-live statuses the monitor polls; an infra failure downgrades these (never a relay-live one) to 'unreachable'.
-const MONITORABLE_OFFLINE: Status[] = ['submitting', 'queued', 'preparing', 'unreachable'];
 
 export const isTerminal = (status: Status): boolean => TERMINAL.includes(status);
 export const isCloseable = (status: Status): boolean => isTerminal(status) || status === 'not_started';
 export const isStoppable = (status: Status): boolean => STOPPABLE.includes(status);
 export const isRelayLive = (status: Status): boolean => RELAY_LIVE.includes(status);
 
-export const unreachableStatus = (status: Status): Status | undefined =>
-    MONITORABLE_OFFLINE.includes(status) ? 'unreachable' : undefined;
-
-export const isReattachable = (status: Status, hasRefs: boolean): boolean => !isTerminal(status) && hasRefs;
-
-// RUNNING-while-'preparing' is handled by the monitor instead (side effect: SessionMonitor.prepareRemote).
 export function computeStatusTransition(current: Status, slurm: SlurmJobStatus): StatusTransition {
     // A stopping session is tearing down; a still-live RUNNING/QUEUED reading (scancel/accounting lag) must not revive it.
     if (current === 'stopping' && (slurm === SlurmJobStatus.RUNNING || slurm === SlurmJobStatus.QUEUED)) { return {}; }
     switch (slurm) {
         case SlurmJobStatus.RUNNING:
-            // Promote a freshly-running job to 'preparing'; never pull a connect-phase session back (would thrash reattach).
+            // Promote a freshly-running job to 'preparing'; never pull a connect-phase session back (would flicker Connect).
             return CONNECT_PHASE.includes(current) ? {} : { next: 'preparing' };
         case SlurmJobStatus.COMPLETED:
             // Completed collapses into 'stopped' — the job is gone, the session is restartable, same as a wall-time stop.

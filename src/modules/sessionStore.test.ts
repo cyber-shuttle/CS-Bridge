@@ -1,18 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { SlurmSession, SessionConnectionInfo } from '../models';
-import { mergeFromDisk, mergeRecord, toPersistedRecord } from './sessionStore';
+import type { SlurmSession } from '../models';
+import { mergeFromDisk, mergeRecord } from './sessionStore';
 
-const ci = (over: Partial<SessionConnectionInfo> = {}): SessionConnectionInfo => ({ sshTunnelId: 't', sshPort: 1, region: 'r', ...over });
 const sess = (id: string, over: Partial<SlurmSession> = {}): SlurmSession => ({ id, status: 'queued', ...over } as SlurmSession);
 
-test('mergeFromDisk refreshes existing instances in place (identity kept), preserves in-memory connectionInfo, reports change', () => {
-    const a = sess('a', { status: 'connected', connectionInfo: ci({ sshTunnelForwardPort: 5000 }) });
+test('mergeFromDisk refreshes existing instances in place (identity kept), reports change', () => {
+    const a = sess('a', { status: 'connected' });
     const mem = [a];
-    assert.equal(mergeFromDisk(mem, [sess('a', { status: 'stopped', connectionInfo: ci() }), sess('b')]), true);
-    assert.equal(mem[0], a); // same object — references held by the monitor / in-flight connect stay valid
+    assert.equal(mergeFromDisk(mem, [sess('a', { status: 'stopped' }), sess('b')]), true);
+    assert.equal(mem[0], a); // same object — references held by an in-flight launch / connect stay valid
     assert.equal(a.status, 'stopped'); // status refreshed from disk
-    assert.equal(a.connectionInfo?.sshTunnelForwardPort, 5000); // live forward port kept
     assert.deepEqual(mem.map(s => s.id), ['a', 'b']); // new id appended
 });
 
@@ -23,13 +21,13 @@ test('mergeFromDisk drops ids no longer on disk; reports no change on an identic
     assert.equal(mergeFromDisk(mem, [sess('b')]), false);
 });
 
-test('mergeRecord upserts one record in place (identity kept, in-memory connectionInfo preserved), reports change', () => {
-    const a = sess('a', { status: 'connected', connectionInfo: ci({ sshTunnelForwardPort: 5000 }) });
+test('mergeRecord upserts one record in place (identity kept), reports change', () => {
+    const a = sess('a', { status: 'connected' });
     const mem = [a];
-    assert.equal(mergeRecord(mem, 'a', sess('a', { status: 'stopped', connectionInfo: ci() })), true);
-    assert.equal(mem[0], a); // same object — monitor/connect refs stay valid
+    assert.equal(mergeRecord(mem, 'a', sess('a', { status: 'stopped' })), true);
+    assert.equal(mem[0], a); // same object — launch/connect refs stay valid
     assert.equal(a.status, 'stopped');
-    assert.equal(mergeRecord(mem, 'a', sess('a', { status: 'stopped', connectionInfo: ci() })), false); // identical → no change
+    assert.equal(mergeRecord(mem, 'a', sess('a', { status: 'stopped' })), false); // identical → no change
 });
 
 test('mergeRecord appends an unknown id and removes on a deleted (undefined) record', () => {
@@ -39,19 +37,4 @@ test('mergeRecord appends an unknown id and removes on a deleted (undefined) rec
     assert.equal(mergeRecord(mem, 'a', undefined), true); // file gone → drop it
     assert.deepEqual(mem.map(s => s.id), ['b']);
     assert.equal(mergeRecord(mem, 'z', undefined), false); // deleting an id we never had → no change
-});
-
-test('toPersistedRecord strips secrets and keeps the given windowPids', () => {
-    const rec = toPersistedRecord(sess('a', { status: 'connected', windowPids: [1], connectionInfo: ci() }), [42]);
-    assert.equal(rec.status, 'connected');
-    assert.deepEqual(rec.windowPids, [42]); // disk windowPids preserved (owned by mutateWindowPids)
-});
-
-test('toPersistedRecord falls back to the session windowPids when none on disk', () => {
-    assert.deepEqual(toPersistedRecord(sess('a', { windowPids: [7] }), undefined).windowPids, [7]);
-});
-
-test('toPersistedRecord never writes the batch script, which carries the tunnel host token', () => {
-    const rec = toPersistedRecord(sess('a', { status: 'queued', batchScript: '#!/bin/bash\n--tunnel-host-token SECRET' }));
-    assert.equal(rec.batchScript, undefined);
 });

@@ -1,36 +1,19 @@
 import { render } from 'preact';
 import { useWebviewState } from '@/ui/platform/vscode';
-import { Stack, Row, Text, Card, Icon, Spinner } from '@/ui/components/base';
+import { Stack, Row, Text, Card, Icon } from '@/ui/components/base';
 import { fmtTime, wallMs, elapsedRunMs } from '@/ui/logic/session';
 import { StatsView, MetricRow as Field } from '@/ui/components/StatsView';
 import { MetricGraphs } from '@/ui/components/MetricGraphs';
-import { isTerminal, isWallTimeExpired } from '@/modules/sessionMachine';
 import type { SlurmSession, SummaryState } from '@/models';
 
 const STATUS_LABEL: Partial<Record<SlurmSession['status'], string>> = {
     stopped: 'Stopped', failed: 'Failed',
 };
 
-// The record may not be terminal yet at summary time: the wall-time path tears down at the deadline,
-// ~30s before any sidebar marks it 'stopped' (and a reload demotes 'connected' → 'ready_to_connect').
-// So derive the ended-state label rather than trusting the raw status.
-function finalStateLabel(s: SlurmSession): string {
-    if (isTerminal(s.status)) { return STATUS_LABEL[s.status] ?? s.status; }
-    if (isWallTimeExpired(s, Date.now())) { return 'Wall-time reached'; }
-    return 'Ended';
-}
-
 function Root() {
     const state = useWebviewState<SummaryState>();
     const s = state?.session;
     if (!s) { return <Stack pad="12px"><Text muted>Loading summary…</Text></Stack>; }
-    const loadingMsg = s.status === 'stopping' ? 'Closing session and preparing summary…'
-        : !state?.stats ? 'Fetching utilization stats…'
-                : null;
-    if (loadingMsg) {
-        return <Stack gap={12} pad="48px" style={{ alignItems: 'center' }}><Spinner size={28} /><Text muted>{loadingMsg}</Text></Stack>;
-    }
-
     const gpus = s.gpuCount > 0 ? `${s.gpuCount} × ${s.gpuClass}` : 'None';
     const usedMs = elapsedRunMs(s, Date.now());
     const limitMs = wallMs(s.wallTime);
@@ -41,7 +24,7 @@ function Root() {
                 <Icon name="server-environment" />
                 <Text size={16} weight={600}>{s.name}</Text>
                 <Text muted>· {s.cluster}</Text>
-                <Text muted>· {finalStateLabel(s)}</Text>
+                <Text muted>· {STATUS_LABEL[s.status] ?? s.status}</Text>
             </Row>
 
             <Card>
@@ -51,7 +34,7 @@ function Root() {
                 <Field label="GPUs" value={gpus} />
                 <Field label="Partition" value={s.queue} />
                 <Field label="Account" value={s.allocation} />
-                <Field label="Job ID" value={s.jobId} />
+                <Field label="Run" value={s.jobId} />
             </Card>
 
             <Card>

@@ -43,7 +43,6 @@ function sess(status: SlurmSession['status'], extra: Partial<ViewSession> = {}) 
 
 test('dotColor: orange error, green live, grey otherwise', () => {
     assert.equal(dotColor('failed'), 'var(--vscode-charts-orange)');
-    assert.equal(dotColor('unreachable'), 'var(--vscode-charts-orange)');
     assert.equal(dotColor('ready_to_connect'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connecting'), 'var(--vscode-charts-green)');
     assert.equal(dotColor('connected'), 'var(--vscode-charts-green)');
@@ -57,20 +56,12 @@ test('sessionActions returns the right buttons per status', () => {
     assert.deepEqual(sessionActions(sess('failed')).map(a => a.kind), ['start']);
     assert.deepEqual(sessionActions(sess('preparing')).map(a => a.kind), ['stop']);
     assert.deepEqual(sessionActions(sess('ready_to_connect')).map(a => a.kind), ['stop', 'connect']);
-    assert.deepEqual(sessionActions(sess('unreachable')).map(a => a.kind), ['stop', 'connect']);
-    assert.equal(sessionActions(sess('unreachable'))[1].label, 'Reconnect'); // Connect rebuilds the relay → off the login node
     assert.deepEqual(sessionActions(sess('stopped')), [{ kind: 'start', label: 'Start', icon: 'play' }]);
     assert.deepEqual(sessionActions(sess('stopping')).map(a => a.kind), []); // stop in flight: spinner only, no Stop button
 });
 
-test('connected session: Current when this window, else Switch/Connect by window liveness', () => {
-    assert.deepEqual(sessionActions(sess('connected', { isCurrent: true })).map(a => a.kind), ['stop', 'current']);
-    const switchBtn = sessionActions(sess('connected', { isCurrent: false, windowAlive: true }))[1];
-    assert.equal(switchBtn.label, 'Switch');
-    const connectBtn = sessionActions(sess('connected', { isCurrent: false, windowAlive: false }))[1];
-    assert.equal(connectBtn.label, 'Connect');
-    const openingBtn = sessionActions(sess('connected', { isCurrent: false, windowAlive: false, opening: true }))[1];
-    assert.deepEqual([openingBtn.kind, openingBtn.label], ['opening', 'Opening…']);
+test('connected session: Current in its own window', () => {
+    assert.deepEqual(sessionActions(sess('connected')).map(a => a.kind), ['stop', 'current']);
     const connectingBtn = sessionActions(sess('connecting'))[1];
     assert.deepEqual([connectingBtn.kind, connectingBtn.label], ['opening', 'Connecting…']);
 });

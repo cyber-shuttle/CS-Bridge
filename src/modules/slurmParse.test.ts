@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSlurmScript, classifySchedulerState, parseAccounts, parsePartitionLine, parseSacctStatus, parseSacctUtil, slurmAccount } from './slurmParse';
+import { buildSlurmScript, classifySchedulerState, parseAccounts, parsePartitionLine, parseSacctStatus, slurmAccount, tunnelLaunch } from './slurmParse';
 import { SlurmJobStatus, SlurmSession } from '../models';
+import type { Attachment } from '../control';
 
 test('parseAccounts de-duplicates per-partition associations', () => {
     const out = 'pearc26-tutorial\npearc26-tutorial\ndelta-cpu\n';
@@ -57,17 +58,28 @@ test('buildSlurmScript emits the resource #SBATCH directives and the linkspan in
     const session = {
         id: 'sess-1',
         cpus: 4, memory: '8 GB', wallTime: '02:00:00', queue: 'gpu', allocation: 'acct1',
-        gpuClass: 'gpu:a100', gpuCount: 1, tunnelId: 'tid', tunnelCluster: 'use',
-        connectionInfo: { apiPort: 25000, sshPort: 0, sshTunnelId: '', region: '' },
+        gpuClass: 'gpu:a100', gpuCount: 1,
     } as SlurmSession;
-    const script = buildSlurmScript(session, 'tok');
+    const script = buildSlurmScript(session, '--tunnel-mode websocket', 25000);
     assert.match(script, /^#SBATCH --nodes=1$/m);
     assert.match(script, /^#SBATCH --cpus-per-task=4$/m);
     assert.match(script, /^#SBATCH --mem=8GB$/m);
     assert.match(script, /^#SBATCH --partition=gpu$/m);
     assert.match(script, /^#SBATCH --account=acct1$/m);
     assert.match(script, /^#SBATCH --gres=gpu:a100$/m);
-    assert.match(script, /^LINKSPAN_TUNNEL_HOST_TOKEN='tok' "\$LINKSPAN_BIN" --port 25000 --tunnel-enable --tunnel-mode devtunnel --tunnel-devtunnel-args '--id tid --cluster use'$/m);
+    assert.match(script, /--port 25000 --tunnel-enable --tunnel-mode websocket$/);
+});
+
+test('tunnelLaunch passes the attached tunnel, with its token only in the environment', () => {
+    const cases: Array<[Partial<Attachment>, string, Record<string, string>]> = [
+        [{ link: { url: 'wss://link', token: 'link-secret' } }, `--tunnel-mode websocket --tunnel-websocket-args '--url wss://link'`, { LINKSPAN_LINK_TOKEN: 'link-secret' }],
+        [{ devtunnel: { id: 'tid', cluster: 'usw2', hostToken: 'host-secret' } }, `--tunnel-mode devtunnel --tunnel-devtunnel-args '--id tid --cluster usw2'`, { LINKSPAN_TUNNEL_HOST_TOKEN: 'host-secret' }],
+    ];
+    for (const [attachment, args, env] of cases) {
+        const launch = tunnelLaunch(attachment as Attachment);
+        assert.deepEqual(launch, { args, env });
+        assert.doesNotMatch(buildSlurmScript(scriptSession(), launch.args), /secret/);
+    }
 });
 
 // The allocation every script test starts from; each names only what it varies.
@@ -97,46 +109,6 @@ test('slurmAccount keeps real account tokens and blanks anything else', () => {
     assert.equal(slurmAccount(undefined), '');
 });
 
-test('parseSacctUtil reads allocation fields, ignoring the empty usage on the main row', () => {
-    const out = '20041571|2|2097152K|1573|3146||';
-    assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2.0 GB', elapsedSec: 1573 });
-});
-
-test('parseSacctUtil derives CPU and memory efficiency from the batch step usage', () => {
-    const out = [
-        '20041571|2|2097152K|1573|3146||',
-        '20041571.batch|2|2097152K|1573|3146|1048576K|00:26:00',
-    ].join('\n');
-    const m = parseSacctUtil(out);
-    assert.equal(m.cores, 2);
-    assert.equal(m.elapsedSec, 1573);
-    assert.equal(m.maxRss, '1.0 GB'); // 1048576K = 1 GiB
-    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 1 GiB used / 2 GiB requested
-    assert.equal(Math.round(m.cpuEfficiencyPct!), 50); // 1560s used / 3146s allocated = 49.6%
-});
-
-test('parseSacctUtil derives efficiency across a day-spanning TotalCPU', () => {
-    const out = '55|4|4194304K|86400|345600||\n55.batch|4|4194304K|86400|345600|2097152K|1-00:00:00';
-    const m = parseSacctUtil(out);
-    assert.equal(Math.round(m.memEfficiencyPct!), 50); // 2 GiB used / 4 GiB requested
-    assert.equal(Math.round(m.cpuEfficiencyPct!), 25); // 86400s used / 345600s allocated = 25%
-});
-
-test('parseSacctUtil ignores srun poll steps and the empty running batch (no efficiency until it flushes)', () => {
-    const out = [
-        '20240108|2|2097152K|1641|3282||00:00:00',
-        '20240108.batch|2||1641|3282||00:00:00', // batch usage not flushed yet
-        '20240108.extern|2||1641|3282||00:00:00',
-        '20240108.0|2||1|2|24K|00:00:00', // our srun metric-poll steps — tiny, must not be read
-        '20240108.77|2||0|0|64K|00:00:00',
-    ].join('\n');
-    assert.deepEqual(parseSacctUtil(out), { cores: 2, reqMem: '2.0 GB', elapsedSec: 1641 });
-});
-
-test('parseSacctUtil returns an empty object for no output', () => {
-    assert.deepEqual(parseSacctUtil(''), {});
-});
-
 test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launching linkspan', () => {
     const session = scriptSession();
     const script = buildSlurmScript(session, 't');
@@ -146,7 +118,7 @@ test('buildSlurmScript unsets the inherited XDG_RUNTIME_DIR/TMPDIR before launch
     assert.match(script, /^unset XDG_RUNTIME_DIR TMPDIR$/m);
 
     // linkspan must inherit the cleaned env, so the unset has to precede its invocation.
-    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('LINKSPAN_TUNNEL_HOST_TOKEN'),
+    assert.ok(script.indexOf('unset XDG_RUNTIME_DIR') < script.indexOf('--tunnel-enable'),
         'unset precedes linkspan invocation');
 });
 

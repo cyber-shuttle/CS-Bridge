@@ -77,14 +77,16 @@ test('validateSlurmConfig resolves on exit 0 and throws the site filter error ot
 
 test('submitJobToSlurm records the job without touching status, and throws on missing script / bad output', async () => {
     const s = session({ batchScript: '#!/bin/bash' });
-    await submitJobToSlurm(s, runner([{ match: 'sbatch', stdout: 'Submitted batch job 4242' }]), noopLog);
+    const commands: string[] = [];
+    await submitJobToSlurm(s, { runRemoteCommand: async (_h, c) => (commands.push(c), { stdout: 'Submitted batch job 4242', stderr: '', code: 0 }) }, noopLog, { LINKSPAN_TUNNEL_HOST_TOKEN: 'h', LINKSPAN_LINK_TOKEN: 'tok\'en' });
+    assert.match(commands[0], /\| LINKSPAN_TUNNEL_HOST_TOKEN='h' LINKSPAN_LINK_TOKEN='tok'\\''en' sbatch --export=ALL,LINKSPAN_TUNNEL_HOST_TOKEN,LINKSPAN_LINK_TOKEN$/, 'tokens ride the environment only');
     assert.equal(s.jobId, '4242');
     assert.equal(s.status, undefined, 'status belongs to setStatus, not the submit step');
     assert.ok((s.submittedAt ?? 0) > 0);
 
-    await assert.rejects(() => submitJobToSlurm(session(), runner([]), noopLog), /missing batch script/);
+    await assert.rejects(() => submitJobToSlurm(session(), runner([]), noopLog, {}), /missing batch script/);
     await assert.rejects(
-        () => submitJobToSlurm(session({ batchScript: 'x' }), runner([{ match: 'sbatch', stdout: 'no id here' }]), noopLog),
+        () => submitJobToSlurm(session({ batchScript: 'x' }), runner([{ match: 'sbatch', stdout: 'no id here' }]), noopLog, {}),
         /Failed to parse job ID/);
 });
 

@@ -2,10 +2,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Logger } from './logger';
-import { readJson, lockedUpdateJson, deleteFile, isPidAlive } from './modules/fsSupport';
+import { readJson, lockedUpdateJson, deleteFile } from './modules/fsSupport';
 import { SlurmSession } from './models';
 import { mergeFromDisk, mergeRecord, toPersistedRecord } from './modules/sessionStore';
-import { deleteSessionMetrics } from './modules/sessionMetricsStore';
 
 const CS_HOME = path.join(os.homedir(), '.cybershuttle');
 
@@ -25,9 +24,8 @@ function readAllRecords(): SlurmSession[] {
     catch { return []; }
 }
 
-// Keeps the on-disk windowPids so a record write can't clobber another window's pids.
 function writeRecord(session: SlurmSession): void {
-    lockedUpdateJson<SlurmSession>(recordPath(session.id), cur => toPersistedRecord(session, cur?.windowPids),
+    lockedUpdateJson<SlurmSession>(recordPath(session.id), () => toPersistedRecord(session),
         err => logger.error(`Failed to save session ${session.id}`, err));
 }
 
@@ -36,8 +34,8 @@ export function initSessionStore(): string {
     fs.mkdirSync(sessionsDir, { recursive: true });
     sessions = readAllRecords();
     for (const s of sessions) {
-        // The relay is gone after a reload; demote so the UI offers Connect (which reattaches from the persisted refs).
-        if (s.status === 'connected' || s.status === 'connecting') { s.status = 'ready_to_connect'; }
+        // Connecting and connected are per-window, and 0.1.8 persisted unreachable; demote so the UI offers Connect.
+        if (['connected', 'connecting', 'unreachable'].includes(s.status)) { s.status = 'ready_to_connect'; }
     }
     logger.info(`Loaded ${sessions.length} session(s) from ${sessionsDir}`);
     return sessionsDir;
@@ -73,27 +71,9 @@ export function removeSession(sessionId: string) {
     const index = sessions.findIndex(s => s.id === sessionId);
     if (index !== -1) { sessions.splice(index, 1); }
     deleteFile(recordPath(sessionId));
-    deleteSessionMetrics(sessionId);
 }
 
-export function mutateWindowPids(sessionId: string, transform: (pids: number[]) => number[]): void {
-    lockedUpdateJson<SlurmSession>(recordPath(sessionId), (cur) => {
-        if (!cur) { return null; }
-        cur.windowPids = transform(cur.windowPids ?? []);
-        const mem = sessions.find(s => s.id === sessionId);
-        if (mem) { mem.windowPids = cur.windowPids; }
-        return cur;
-    }, err => logger.error(`Failed to update windowPids for ${sessionId}`, err));
-}
-
-export function liveAndCleanup(s: SlurmSession): { isCurrent: boolean; windowAlive: boolean } {
-    const pids = s.windowPids ?? [];
-    const live = pids.filter(isPidAlive);
-    if (live.length !== pids.length) { mutateWindowPids(s.id, () => live); }
-    return { isCurrent: live.includes(process.pid), windowAlive: live.length > 0 };
-}
-
-// Cross-window sync: reconcile in-memory from disk in place (never swap identity, so monitor/connect refs stay valid).
+// Cross-window sync: reconcile in-memory from disk in place (never swap identity, so launch/connect refs stay valid).
 // Every open window watches this dir, so the callback fires on every record write in every window — read only the one
 // file that changed (undefined = deleted), never all of them, or an unrelated session's write stutters every window.
 // Changed ids are coalesced over a short window: an atomic temp+rename fires 2-3 raw events per write on macOS, and a

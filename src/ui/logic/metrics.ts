@@ -1,4 +1,5 @@
-import type { Metric, SessionRunRecord } from '@/models';
+import type { Metric } from '@/models';
+import type { PlaneRun } from '@/control';
 
 // Cores busy per gap: Δcpu-usec / Δwall-usec. Gaps missing a cpu reading or with dt≤0 are dropped.
 export function cpuCoreSeries(samples: Metric[]): number[] {
@@ -22,9 +23,9 @@ export function fmtPct(pct?: number): string {
 }
 
 // Group runs by session, preserving input order across groups (each session ordered by its most recent run) and within
-// each group. Assumes `runs` is already newest-first, as readAllRuns returns it; each group is non-empty.
-export function groupRunsBySession(runs: SessionRunRecord[]): SessionRunRecord[][] {
-    const byId = new Map<string, SessionRunRecord[]>();
+// each group. Assumes `runs` is already newest-first, as cs-plane's telemetry returns it; each group is non-empty.
+export function groupRunsBySession(runs: PlaneRun[]): PlaneRun[][] {
+    const byId = new Map<string, PlaneRun[]>();
     for (const run of runs) {
         const group = byId.get(run.sessionId);
         if (group) { group.push(run); }

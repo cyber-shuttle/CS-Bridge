@@ -8,7 +8,7 @@ privately — see [SECURITY.md](SECURITY.md).
 
 - [Git](https://git-scm.com/)
 - [Node.js](https://nodejs.org/) 20 or newer (CI runs Node 24)
-- [VS Code](https://code.visualstudio.com/) 1.98 or newer
+- [VS Code](https://code.visualstudio.com/) 1.101 or newer
 
 ## Development setup
 

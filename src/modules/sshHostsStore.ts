@@ -23,20 +23,18 @@ export const SSH_RESILIENCE_OPTIONS: ReadonlyArray<readonly [string, string]> = 
 ];
 
 // The per-session Host alias, which is also the vscode-remote authority suffix VS Code shows verbatim as the remote
-// window's "[SSH: …]" label — so it reads like the target: <cluster>-<last 6 of the session name> (e.g. delta-493119).
-// Never equals a bare cluster name, so it can't shadow the real login host used for Slurm; unique per session in
-// practice (the name is a creation timestamp). The same function builds the ssh_config Host line, the authority, and
-// the reverse lookup, so all three stay in lockstep.
-export const csHostAlias = (cluster: string, sessionName: string): string =>
-    `${cluster}-${sessionName.slice(-6)}`;
+// window's "[SSH: …]" label — so it reads like the target: <cluster>-<cs-plane session id> (e.g. delta-s-0123456789ab).
+// Never equals a bare cluster name, so it can't shadow the real login host used for Slurm; unique per session. The
+// same function builds the ssh_config Host line, the authority, and the reverse lookup, so all three stay in lockstep.
+export const csHostAlias = (cluster: string, planeId: string): string =>
+    `${cluster}-${planeId}`;
 
 // Per-session block appended to ~/.cybershuttle/ssh_config (4-space indent matches removeSshConfigEntry).
 // hostAlias is always csHostAlias() output.
 export function buildSshConfigBlock(
     sessionId: string,
     hostAlias: string,
-    hostname: string,
-    port: number,
+    proxyCommand: string,
     user: string,
     identityFile: string,
 ): string {
@@ -44,12 +42,12 @@ export function buildSshConfigBlock(
         ``,
         `# CS-Bridge auto-generated for session ${sessionId}`,
         `Host ${hostAlias}`,
-        `    HostName ${hostname}`,
-        `    Port ${port}`,
+        `    ProxyCommand ${proxyCommand}`,
         `    User ${user}`,
         `    StrictHostKeyChecking no`,
         `    UserKnownHostsFile /dev/null`,
         `    IdentityFile ${identityFile}`,
+        `    IdentitiesOnly yes`,
         ...SSH_RESILIENCE_OPTIONS.map(([key, value]) => `    ${key} ${value}`),
     ].join('\n');
 }

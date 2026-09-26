@@ -25,22 +25,6 @@ function ConfigCard({ icon, muted, host, runtime, onDismiss, validating }: {
     );
 }
 
-function ScriptPreviewOverlay({ state }: { state: SessionsState }) {
-    const s = state.previewSession;
-    if (!s) { return null; }
-    return (
-        <Stack gap={8} pad="12px" style={{ position: 'fixed', inset: 0, background: 'var(--vscode-editor-background)', zIndex: 10 }}>
-            <Text weight={600}>Slurm Job Script Preview</Text>
-            <Text muted>Host: {s.cluster}</Text>
-            <Text block style={{ flex: 1, overflow: 'auto', whiteSpace: 'pre', fontFamily: 'var(--vscode-editor-font-family)', fontSize: '12px', background: 'var(--vscode-textCodeBlock-background)', padding: '8px', borderRadius: '4px' }}>{s.batchScript ?? ''}</Text>
-            <Row gap={8} justify="flex-end">
-                <Button secondary onClick={() => post({ command: 'dismissPreview' })}>Close</Button>
-                <Button onClick={() => post({ command: 'launchSession', sessionId: s.id })}>Submit Job</Button>
-            </Row>
-        </Stack>
-    );
-}
-
 function AlertOverlay({ alert }: { alert: NonNullable<SessionsState['alert']> }) {
     return (
         <Row style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.4)', zIndex: 20, justifyContent: 'center' }}>
@@ -65,6 +49,9 @@ function SessionsView({ state }: { state: SessionsState }) {
             ? <SessionCard key={session.id} session={session} remote />
             : <Text muted style={{ margin: '2px 0' }}>No active session.</Text>;
     }
+    if (!state.account) {
+        return <Button icon="account" onClick={() => post({ command: 'signIn' })}>Log in to CyberShuttle</Button>;
+    }
     return (
         <>
             {state.draftHost ? <ConfigCard key={state.draftHost} icon="circle-outline" muted host={state.draftHost} runtime={state.hostRuntime[state.draftHost]} onDismiss={() => post({ command: 'dismissDraftSession' })} validating={state.validating} /> : null}
@@ -72,7 +59,6 @@ function SessionsView({ state }: { state: SessionsState }) {
             {!state.sessions.length && !state.draftHost
                 ? <Text muted block style={{ margin: '4px', textAlign: 'center' }}>No sessions yet. Click on + to create one.</Text>
                 : null}
-            <ScriptPreviewOverlay state={state} />
             {state.alert ? <AlertOverlay alert={state.alert} /> : null}
         </>
     );
