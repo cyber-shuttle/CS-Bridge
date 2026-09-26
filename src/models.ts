@@ -1,3 +1,5 @@
+import type { PlaneRun } from './control';
+
 export interface SlurmSession extends Session {
     jobId: string;
     queue: string;
@@ -8,48 +10,24 @@ export interface SlurmSession extends Session {
     memory: string;
     allocation: string;
     batchScript?: string;
-    tunnelId?: string;
-    tunnelCluster?: string;
 }
 
-// Lifecycle: not_started → submitting → queued → preparing (job + Step-1 sshd/tunnel) →
-// ready_to_connect → connecting → connected; unreachable on a dropped link or cluster outage; stopping → stopped/failed.
+// Lifecycle: not_started → submitting → queued → preparing (job running, link not up yet) →
+// ready_to_connect → connecting → connected; stopping → stopped/failed.
 // Job end (completed or wall-time killed) → stopped (restartable).
 interface Session {
     id: string;
+    planeId?: string;
     name: string;
     cluster: string;
     status:
         | 'not_started' | 'submitting' | 'queued' | 'preparing'
         | 'ready_to_connect' | 'connecting' | 'connected'
-        | 'stopping' | 'stopped' | 'failed'
-        | 'unreachable';
+        | 'stopping' | 'stopped' | 'failed';
     submittedAt: number;
     startedAt?: number;
     errorMessage: string;
-    connectionInfo?: SessionConnectionInfo;
     workingDirectory?: string;
-    windowPids?: number[];
-}
-
-export interface PersistedConnectionInfo {
-    sshPort: number;
-    sshTunnelId: string;
-    region: string;
-    apiPort?: number;
-}
-
-export interface SessionConnectionInfo extends PersistedConnectionInfo {
-    sshTunnelForwardPort?: number;
-    apiTunnelId?: string;
-    apiTunnelAccessToken?: string;
-}
-
-export function persistableConnectionInfo(ci: SessionConnectionInfo | undefined): PersistedConnectionInfo | undefined {
-    // A session preparing on the tunnel has an apiPort but no sshd yet; drop it and a reload orphans it.
-    if (!ci?.sshTunnelId && !ci?.apiPort) { return undefined; }
-    const { sshTunnelId, sshPort, region, apiPort } = ci;
-    return { sshTunnelId, sshPort, region, apiPort };
 }
 
 export interface SshHost {
@@ -90,7 +68,7 @@ export enum SlurmJobStatus {
     UNKNOWN = 'unknown',
 }
 
-export type ViewSession = SlurmSession & { isCurrent: boolean; windowAlive: boolean; opening?: boolean; metrics?: Metric[] };
+export type ViewSession = SlurmSession & { metrics?: Metric[] };
 
 export const METRICS_HISTORY_LEN = 20; // rolling live-sample window, also the sparkline slot count
 export const POLLING_INTERVAL_MS = 5000;
@@ -112,27 +90,15 @@ export interface GpuStat {
 
 export interface Stats {
     cores?: number;
-    reqMem?: string;
-    elapsedSec?: number;
+    requestedMemory?: string;
+    elapsedSeconds?: number;
     maxRss?: string; // peak RSS, human-normalized (e.g. "1.2 GB")
     cpuEfficiencyPct?: number; // used / allocated CPU-seconds
-    memEfficiencyPct?: number; // MaxRSS / ReqMem
-}
-
-export interface SessionRunRecord {
-    sessionId: string;
-    cluster: string;
-    jobId: string;
-    endedAt: number;
-    finalStatus: Session['status'];
-    stats?: Stats;
-    metrics?: Metric[];
-    allocation?: string;
-    queue?: string;
+    memoryEfficiencyPct?: number; // MaxRSS / requested memory
 }
 
 export interface StatsState {
-    runs: SessionRunRecord[];
+    runs: PlaneRun[];
 }
 
 export interface SummaryState {
@@ -149,10 +115,10 @@ export type HostRuntime =
 
 export interface SessionsState {
     isRemote: boolean;
+    account?: string;
     sessions: ViewSession[];
     draftHost: string | null;
     hostRuntime: Record<string, HostRuntime>;
-    previewSession: SlurmSession | null;
     validating: boolean;
     alert: { title: string; message: string } | null;
 }
@@ -173,5 +139,5 @@ export interface WebviewMessage {
     cpus?: string;
     memory?: string;
     allocation?: string;
-    jobId?: string;
+    seq?: number;
 }

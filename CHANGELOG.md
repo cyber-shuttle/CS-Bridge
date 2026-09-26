@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Requires VS Code 1.101, cs-plane 0.4.0 and linkspan 0.21.0.
+
+### Added
+
+- **`csbridge.transport`** picks how a new session is reached: `cybershuttle` (default), where the job's linkspan
+  links out to cs-plane, or `devtunnel`, a Dev Tunnel made with the Dev Tunnels account linked to CyberShuttle.
+- The Stats view filters runs by platform, VS Code or JupyterLab.
+
+### Changed
+
+- **CyberShuttle sign-in replaces the Microsoft sign-in.** A launch still runs over your own `ssh`; it also records the
+  session on cs-plane and attaches its tunnel, whose token reaches linkspan only through `sbatch`'s environment.
+  **Connect** relays SSH through cs-plane and needs macOS or Linux. Live metrics and run history come from cs-plane.
+
+### Removed
+
+- The in-process Dev Tunnels relay and the **Switch Dev Tunnels Account** command.
+- The job-script preview, **Clear Utilization History** and the local metrics store. A session started by 0.1.8 can
+  be stopped, then started again to connect.
+
 ## [0.1.8] - 2026-09-24
 
 Requires linkspan 0.21.0.

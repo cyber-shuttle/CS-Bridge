@@ -1,11 +1,8 @@
 import * as vscode from 'vscode';
-import { getSession, watchSessions } from './extensionStore';
+import { getSession } from './extensionStore';
 import { renderHtml } from './webviewProvider';
-import { readAllRuns, readRecentMetrics, readSessionStats, watchSessionMetrics } from './modules/sessionMetricsStore';
-import { Metric, Stats, SlurmSession, SummaryState } from './models';
-
-// A finished run's fixed snapshot (from the Stats view), shown instead of the possibly-relaunched live session.
-interface RunSnapshot { stats?: Stats; metrics?: Metric[] }
+import { SlurmSession, SummaryState } from './models';
+import { Control, runView, toMetrics } from './control';
 
 const PENDING_KEY = 'csbridge.pendingSummaries';
 // Trade-off: hard cap so a never-consumed baton (e.g. an activation that errors before consuming) can't grow globalState unbounded. Bump if summaries ever legitimately queue deeper than this.
@@ -18,35 +15,32 @@ export async function enqueuePendingSummary(context: vscode.ExtensionContext, id
     await context.globalState.update(PENDING_KEY, queue.slice(-MAX_PENDING));
 }
 
-export async function consumePendingSummary(context: vscode.ExtensionContext, extensionUri: vscode.Uri): Promise<SlurmSession | undefined> {
+export async function consumePendingSummary(context: vscode.ExtensionContext, control: Control): Promise<SlurmSession | undefined> {
     const queue = context.globalState.get<string[]>(PENDING_KEY, []);
     if (queue.length === 0) { return undefined; }
     const [id, ...rest] = queue;
     await context.globalState.update(PENDING_KEY, rest);
     const session = getSession(id);
-    if (session) { openSummaryPanel(extensionUri, session); }
+    if (session?.planeId) { openSummaryPanel(context.extensionUri, control, session.planeId, undefined, session.submittedAt); }
     return session;
 }
 
-export function openSummaryPanel(extensionUri: vscode.Uri, session: SlurmSession, runSnapshot?: RunSnapshot): void {
+// A handed-off summary names no seq, so `since` skips earlier runs of a session started again.
+export function openSummaryPanel(extensionUri: vscode.Uri, control: Control, sessionId: string, seq?: number, since = 0): void {
     const panel = vscode.window.createWebviewPanel(
-        'csbridge.summary', `Session ${session.name} summary`,
+        'csbridge.summary', `Session ${sessionId} summary`,
         vscode.ViewColumn.One, { enableScripts: true },
     );
-    // Re-read the session each post: it may still be 'stopping' at open and flip to 'stopped' while the tab is up.
-    const post = () => {
-        const s = getSession(session.id) ?? session;
-        // Past run from Stats: its fixed snapshot. Live: current samples + latest sacct copy (run record or in-run file).
-        const run = runSnapshot ? undefined : readAllRuns().find(r => r.cluster === s.cluster && r.jobId === s.jobId);
-        const metrics = runSnapshot ? runSnapshot.metrics : readRecentMetrics(s.id);
-        const stats = runSnapshot ? runSnapshot.stats : (run?.stats ?? readSessionStats(s.id));
-        const state: SummaryState = { session: s, metrics, stats };
+    let complete = false; // a found run is frozen, and cs-plane gathers no stats for a client's run
+    const post = async () => {
+        const run = (await control.listRuns().catch(() => [])).find(r => r.sessionId === sessionId && (seq === undefined || r.seq === seq) && Date.parse(r.endedAt) >= since);
+        if (!run) { return; }
+        complete = true;
+        const state: SummaryState = { session: runView(run), metrics: toMetrics(run.samples), stats: run.stats };
         void panel.webview.postMessage({ command: 'state', state });
     };
-    const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { post(); } });
-    // One watcher covers both: run records and live samples land in the same store.
-    const metricsSub = watchSessionMetrics(() => post());
-    const sessSub = watchSessions(() => post());
+    const msgSub = panel.webview.onDidReceiveMessage((m: { command?: string }) => { if (m?.command === 'ready') { void post(); } });
+    const timer = setInterval(() => { if (!complete) { void post(); } }, 15_000);
     panel.webview.html = renderHtml(panel.webview, extensionUri, 'summary');
-    panel.onDidDispose(() => { msgSub.dispose(); sessSub.close(); metricsSub.close(); });
+    panel.onDidDispose(() => { msgSub.dispose(); clearInterval(timer); });
 }

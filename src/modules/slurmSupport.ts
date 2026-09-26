@@ -1,4 +1,4 @@
-import { Metric, SlurmClusterInfo, SlurmJobStatus, SlurmSession } from '../models';
+import { SlurmClusterInfo, SlurmJobStatus, SlurmSession } from '../models';
 import { Logger, errMsg } from '../logger';
 import { SshManager } from './sshSupport';
 import { parseAccounts, parsePartitionLine, parseSacctStatus } from './slurmParse';
@@ -10,16 +10,6 @@ export async function getSlurmJobStatus(slurmSession: SlurmSession): Promise<{ s
         throw new Error(`Failed to get job status. SSH command error: ${commandResult.stderr}`);
     }
     return parseSacctStatus(commandResult.stdout.trim());
-}
-
-// linkspan's /metrics on its loopback API port from inside the allocation. --input none is load-bearing: srun forwards
-// stdin to the task, which would otherwise swallow the persistent shell's completion marker (sshShell) and hang.
-export async function getMetricsViaSrun(session: SlurmSession): Promise<Metric> {
-    const command = `srun --jobid=${session.jobId} --overlap --quiet --input none `
-        + `curl -sf --max-time 4 http://127.0.0.1:${session.connectionInfo?.apiPort}/api/v1/metrics`;
-    const res = await SshManager.getInstance().runRemoteCommand(session.cluster, command, { batch: true });
-    if (res.code !== 0) { throw new Error(`live metrics via srun failed (${res.code}): ${res.stderr}`); }
-    return JSON.parse(res.stdout) as Metric;
 }
 
 export async function getSlurmClusterInfo(hostName: string): Promise<SlurmClusterInfo> {

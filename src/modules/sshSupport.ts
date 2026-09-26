@@ -40,7 +40,7 @@ export class SshManager {
     private readonly shells = new Map<string, HostShell>();
     private readonly queues = new Map<string, Promise<unknown>>();
 
-    private constructor(private readonly extensionUri: vscode.Uri) {
+    private constructor(readonly extensionUri: vscode.Uri) {
         if (!fs.existsSync(CS_SSH_CONTROL_DIR)) {
             fs.mkdirSync(CS_SSH_CONTROL_DIR, { recursive: true, mode: 0o700 });
         }
@@ -324,15 +324,18 @@ async function setServerInstallPath(hostAlias: string, dir: string | undefined):
     }
 }
 
-export async function addSshConfigEntry(session: SlurmSession, localPort: number): Promise<string> {
-    const hostAlias = csHostAlias(session.cluster, session.name);
+export async function addSshConfigEntry(session: SlurmSession, forwardUrl: string, token: string): Promise<string> {
+    const hostAlias = csHostAlias(session.cluster, session.planeId!);
     await removeSshConfigEntry(session.id, hostAlias, false); // keep the key: it is this session's, generated locally
 
-    const hostname = '127.0.0.1';
+    const tokenFile = `${sessionKeyPath(session.id)}.token`;
+    fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+    const forwardJs = path.join(SshManager.getInstance().extensionUri.fsPath, 'scripts', 'forward.js');
+    const proxyCommand = `env ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${forwardJs}" ${forwardUrl} "${tokenFile}"`;
     const user = 'cs-ssh-user'; // any non-empty value works; the custom SSH server ignores the username
-    const configBlock = buildSshConfigBlock(session.id, hostAlias, hostname, localPort, user, sessionKeyPath(session.id));
+    const configBlock = buildSshConfigBlock(session.id, hostAlias, proxyCommand, user, sessionKeyPath(session.id));
 
-    // Locked: startup reattach can rewrite this concurrently, so the append must not interleave.
+    // Locked: another window can rewrite this concurrently, so the append must not interleave.
     lock(CS_SSH_CONFIG_PATH);
     try {
         fs.appendFileSync(CS_SSH_CONFIG_PATH, `\n${configBlock}\n`);
@@ -352,23 +355,19 @@ export async function addSshConfigEntry(session: SlurmSession, localPort: number
 // Mint the session key pair locally and return only the public half; the private key never leaves this machine.
 export function createSessionKeyPair(sessionId: string): string {
     fs.mkdirSync(CS_SSH_KEYS_DIR, { recursive: true, mode: 0o700 });
-    removeSessionPrivateKey(sessionId);
     const keyPath = sessionKeyPath(sessionId);
-    const generated = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', keyPath], { encoding: 'utf-8' });
-    if (generated.error || generated.status !== 0) { throw new Error(`Failed to generate SSH key: ${generated.error?.message ?? generated.stderr.trim()}`); }
-    const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf-8').trim();
-    fs.unlinkSync(`${keyPath}.pub`);
-    return publicKey;
+    if (!fs.existsSync(`${keyPath}.pub`)) {
+        removeSessionPrivateKey(sessionId);
+        const generated = spawnSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-C', '', '-f', keyPath], { encoding: 'utf-8' });
+        if (generated.error || generated.status !== 0) { throw new Error(`Failed to generate SSH key: ${generated.error?.message ?? generated.stderr.trim()}`); }
+    }
+    return fs.readFileSync(`${keyPath}.pub`, 'utf-8').trim();
 }
-
-export const hasSessionKey = (sessionId: string): boolean => fs.existsSync(sessionKeyPath(sessionId));
 
 function removeSessionPrivateKey(sessionId: string): void {
     const privateKeyPath = sessionKeyPath(sessionId);
     try {
-        if (fs.existsSync(privateKeyPath)) {
-            fs.unlinkSync(privateKeyPath);
-        }
+        ['', '.pub', '.token'].forEach(suffix => fs.rmSync(`${privateKeyPath}${suffix}`, { force: true }));
     }
     catch (err) {
         logger.error(`Failed to remove SSH private key for session ${sessionId}:`, err);
@@ -379,10 +378,9 @@ export async function removeSshConfigEntry(sessionId: string, hostAlias: string,
     lock(CS_SSH_CONFIG_PATH);
     try {
         const content = fs.readFileSync(CS_SSH_CONFIG_PATH, 'utf-8');
-        // Escape the alias (a cluster name may contain '.') so it can't over-match; the id marker is a regex-safe uuid.
-        const aliasRe = hostAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // The id marker is a regex-safe uuid, unique per session, so any alias under it (0.1.8's included) goes.
         const re = new RegExp(
-            `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost ${aliasRe}\\n(?:    [^\\n]+\\n)*`,
+            `(?:\\n|^)# CS-Bridge auto-generated for session ${sessionId}\\nHost [^\\n]+\\n(?:    [^\\n]+\\n)*`,
             'gm',
         );
         const cleaned = content.replace(re, '');

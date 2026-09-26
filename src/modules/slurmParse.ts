@@ -1,6 +1,9 @@
-import { GresInfo, Stats, SlurmJobStatus, SlurmPartitionInfo, SlurmSession } from '../models';
+import { GresInfo, SlurmJobStatus, SlurmPartitionInfo, SlurmSession } from '../models';
+import type { Attachment } from '../control';
 
 // Pure Slurm text helpers (no SSH/vscode), so they unit-test in isolation. See slurmParse.test.ts.
+
+export const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 // A Slurm account is a bare token; a blank or a sentinel like "(No Allocation)" yields '' (no --account).
 export const slurmAccount = (raw: string | undefined): string => (raw ?? '').trim().match(/^[\w.-]+$/)?.[0] ?? '';
@@ -14,7 +17,14 @@ export function parseAccounts(output: string): string[] {
     return [...new Set(names)];
 }
 
-export function buildSlurmScript(session: SlurmSession, hostToken: string): string {
+// Linkspan's flags for the one tunnel cs-plane attached; its token goes only in the environment.
+export function tunnelLaunch({ link, devtunnel }: Attachment): { args: string; env: Record<string, string> } {
+    return link
+        ? { args: `--tunnel-mode websocket --tunnel-websocket-args ${shellQuote(`--url ${link.url}`)}`, env: { LINKSPAN_LINK_TOKEN: link.token } }
+        : { args: `--tunnel-mode devtunnel --tunnel-devtunnel-args ${shellQuote(`--id ${devtunnel!.id} --cluster ${devtunnel!.cluster}`)}`, env: { LINKSPAN_TUNNEL_HOST_TOKEN: devtunnel!.hostToken } };
+}
+
+export function buildSlurmScript(session: SlurmSession, tunnelArgs: string, port = 0): string {
     const memSlurm = session.memory.replace(/\s+/g, '');
     const account = slurmAccount(session.allocation);
 
@@ -45,8 +55,7 @@ export function buildSlurmScript(session: SlurmSession, hostToken: string): stri
         ``,
         `# --- Run linkspan ---`,
         `LINKSPAN_BIN="$HOME/.cybershuttle/bin/linkspan"`,
-        // Bind the port csbridge pinned at launch so it knows the tunnel URL up front (no log/port discovery).
-        `LINKSPAN_TUNNEL_HOST_TOKEN='${hostToken}' "$LINKSPAN_BIN" --port ${session.connectionInfo?.apiPort ?? 0} --tunnel-enable --tunnel-mode devtunnel --tunnel-devtunnel-args '--id ${session.tunnelId ?? ''} --cluster ${session.tunnelCluster ?? ''}'`,
+        `"$LINKSPAN_BIN" --port ${port} --tunnel-enable ${tunnelArgs}`,
     ];
 
     return scriptLines.join('\n');
@@ -75,7 +84,7 @@ export function parseSacctStatus(output: string): { status: SlurmJobStatus; elap
 }
 
 // The scheduler's vocabulary in one place, mirroring cs-control's own table. An
-// absent state reads as UNKNOWN, which the monitor holds rather than treating as
+// absent state reads as UNKNOWN, which the poll holds rather than treating as
 // job death, so an unlisted state strands a session until its wall time.
 // SUSPENDED and STOPPED still hold an allocation, so they read as QUEUED.
 const SCHEDULER_STATES: Readonly<Record<string, SlurmJobStatus>> = {
@@ -114,56 +123,10 @@ export function classifySchedulerState(raw: string): SlurmJobStatus {
     return SCHEDULER_STATES[token.replace(/\+$/, '').toUpperCase()] ?? SlurmJobStatus.UNKNOWN;
 }
 
-// With `--units=K`, sacct emits every memory field (MaxRSS, ReqMem) in KiB, so a value is just its leading number —
-// parseFloat drops the trailing 'K' and any legacy per-CPU/node 'c'/'n'. Blank/unparseable → undefined.
-function parseKib(s: string | undefined): number | undefined {
-    const n = parseFloat((s ?? '').trim());
-    return Number.isFinite(n) ? n : undefined;
-}
-
-// Slurm "[DD-]HH:MM:SS" / "MM:SS" duration → seconds. Consumed CPU (TotalCPU) has no raw-seconds field, so this stays.
-function hmsSeconds(s: string | undefined): number | undefined {
-    const t = s?.trim();
-    if (!t) { return undefined; }
-    const [days, rest] = t.includes('-') ? t.split('-') : ['0', t];
-    const parts = rest.split(':').map(Number);
-    if (parts.length < 2 || parts.some(n => !Number.isFinite(n))) { return undefined; }
-    return Number(days) * 86400 + parts.reduce((sec, p) => sec * 60 + p, 0);
-}
-
 export function humanKib(kib: number): string {
     if (kib >= 1024 ** 2) { return `${(kib / 1024 ** 2).toFixed(1)} GB`; }
     if (kib >= 1024) { return `${(kib / 1024).toFixed(1)} MB`; }
     return `${Math.round(kib)} KB`;
-}
-
-// Parse `sacct -P -n --units=K` rows (JobID|AllocCPUs|ReqMem|ElapsedRaw|CPUTimeRAW|MaxRSS|TotalCPU).
-// Usage lives on the .batch step where the workload runs; .extern and our own srun
-// poll steps would mask it with their near-zero values.
-export function parseSacctUtil(output: string): Stats {
-    const rows = output.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => l.split('|'));
-    if (rows.length === 0) { return {}; }
-    const alloc = rows.find(r => !r[0].includes('.')) ?? rows[0];
-    const usage = rows.find(r => r[0].endsWith('.batch')) ?? alloc;
-
-    const m: Stats = {};
-    const cores = Number(alloc[1]);
-    if (Number.isFinite(cores) && cores > 0) { m.cores = cores; }
-    const reqMemKib = parseKib(alloc[2]);
-    if (alloc[3] && Number.isFinite(Number(alloc[3]))) { m.elapsedSec = Number(alloc[3]); }
-    const allocCpuSec = Number(alloc[4]); // CPUTimeRAW = elapsed × cpus
-
-    const maxRssKib = parseKib(usage[5]);
-    const usedCpuSec = hmsSeconds(usage[6]);
-
-    if (reqMemKib !== undefined) { m.reqMem = humanKib(reqMemKib); }
-    if (maxRssKib !== undefined) { m.maxRss = humanKib(maxRssKib); }
-    // TotalCPU is 00:00:00 until the step ends, so a zero means "not flushed yet", not a truly idle job — skip it.
-    if (usedCpuSec && Number.isFinite(allocCpuSec) && allocCpuSec > 0) {
-        m.cpuEfficiencyPct = usedCpuSec / allocCpuSec * 100;
-    }
-    if (maxRssKib !== undefined && reqMemKib) { m.memEfficiencyPct = maxRssKib / reqMemKib * 100; }
-    return m;
 }
 
 // One `sinfo -h -o "%P|%c|%m|%G"` line: name|cpuCount|memory|gres

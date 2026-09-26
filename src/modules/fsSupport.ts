@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 
-export function isPidAlive(pid: number | undefined): boolean {
+function isPidAlive(pid: number | undefined): boolean {
     if (pid === undefined) { return false; }
     // signal 0 is the POSIX null-signal probe - doesn't actually send anything; throws ESRCH if pid is gone.
     try { process.kill(pid, 0); return true; }

@@ -26,16 +26,16 @@ export function StatsView({ stats }: { stats?: Stats }) {
     if (!stats || Object.keys(stats).length === 0) {
         return <Text muted>No utilization stats were recorded for this run.</Text>;
     }
-    const { cpuEfficiencyPct, memEfficiencyPct, cores, reqMem, maxRss, elapsedSec } = stats;
+    const { cpuEfficiencyPct, memoryEfficiencyPct, cores, requestedMemory, maxRss, elapsedSeconds } = stats;
     return (
         <Stack gap={4}>
             <Row gap={6} wrap>
                 <EfficiencyChip label="CPU" pct={cpuEfficiencyPct} />
-                <EfficiencyChip label="Memory" pct={memEfficiencyPct} />
+                <EfficiencyChip label="Memory" pct={memoryEfficiencyPct} />
             </Row>
             {cores !== undefined && <MetricRow label="Cores allocated" value={String(cores)} />}
-            {elapsedSec !== undefined && <MetricRow label="Elapsed" value={fmtTime(elapsedSec * 1000)} />}
-            {(maxRss || reqMem) && <MetricRow label="Memory used / requested" value={`${maxRss ?? '—'} / ${reqMem ?? '—'}`} />}
+            {elapsedSeconds !== undefined && <MetricRow label="Elapsed" value={fmtTime(elapsedSeconds * 1000)} />}
+            {(maxRss || requestedMemory) && <MetricRow label="Memory used / requested" value={`${maxRss ?? '—'} / ${requestedMemory ?? '—'}`} />}
         </Stack>
     );
 }
